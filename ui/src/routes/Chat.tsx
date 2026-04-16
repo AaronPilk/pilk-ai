@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { pilk } from "../state/api";
+import { pilk, type ApprovalRequest } from "../state/api";
 import { useLivePlans } from "../state/plans";
 import PlanCard from "../components/PlanCard";
+import ApprovalInline from "../components/ApprovalInline";
 
 type Msg =
   | { kind: "user"; id: string; text: string }
   | { kind: "assistant"; id: string; text: string; plan_id?: string }
   | { kind: "system"; id: string; text: string }
-  | { kind: "plan"; plan_id: string };
+  | { kind: "plan"; plan_id: string }
+  | { kind: "approval"; approval_id: string };
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -16,6 +18,8 @@ function uid() {
 export default function Chat() {
   const { plans } = useLivePlans();
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [approvals, setApprovals] = useState<Record<string, ApprovalRequest>>({});
+  const [resolvedApprovals, setResolvedApprovals] = useState<Record<string, { decision: string; reason?: string }>>({});
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -48,13 +52,31 @@ export default function Chat() {
           { kind: "system", id: uid(), text: `error: ${m.text ?? ""}` },
         ]);
         setBusy(false);
+      } else if (m.type === "approval.created") {
+        const req = m as ApprovalRequest & { type: string };
+        setApprovals((prev) => ({ ...prev, [req.id]: req }));
+        setMessages((prev) => [
+          ...prev,
+          { kind: "approval", approval_id: req.id },
+        ]);
+      } else if (m.type === "approval.resolved") {
+        setResolvedApprovals((prev) => ({
+          ...prev,
+          [m.id]: { decision: m.decision, reason: m.reason },
+        }));
+        setApprovals((prev) => {
+          if (!(m.id in prev)) return prev;
+          const next = { ...prev };
+          delete next[m.id];
+          return next;
+        });
       }
     });
   }, []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, plans]);
+  }, [messages, plans, approvals]);
 
   const submit = useCallback(() => {
     const text = input.trim();
@@ -80,13 +102,35 @@ export default function Chat() {
             Give PILK a goal and it will plan, execute, and report back.
             <br />
             ⌘/Ctrl+Enter to send. Tools available this batch: fs_read, fs_write,
-            shell_exec, llm_ask — all scoped to <code>~/PILK/workspace/</code>.
+            shell_exec, llm_ask, net_fetch, finance_*. Network, financial, and
+            comms calls pause for approval inline.
           </div>
         )}
         {messages.map((m, i) => {
           if (m.kind === "plan") {
             const plan = plans[m.plan_id];
             return plan ? <PlanCard key={`plan-${m.plan_id}`} plan={plan} /> : null;
+          }
+          if (m.kind === "approval") {
+            const pending = approvals[m.approval_id];
+            if (pending) {
+              return <ApprovalInline key={`appr-${m.approval_id}`} approval={pending} />;
+            }
+            const resolved = resolvedApprovals[m.approval_id];
+            if (resolved) {
+              return (
+                <div
+                  key={`appr-${m.approval_id}`}
+                  className={`msg msg--system appr-inline-closed appr-inline-closed--${resolved.decision}`}
+                >
+                  <div className="msg-role">approval · {resolved.decision}</div>
+                  {resolved.reason && (
+                    <div className="msg-text">{resolved.reason}</div>
+                  )}
+                </div>
+              );
+            }
+            return null;
           }
           return (
             <div key={m.id ?? i} className={`msg msg--${m.kind}`}>

@@ -146,6 +146,29 @@ class PlanStore:
             }
         )
 
+    async def set_step_status(
+        self, step_id: str, *, status: str
+    ) -> dict[str, Any]:
+        """Change a step's status without finishing it.
+
+        Used when the gateway pauses a step for approval — we flip to
+        `awaiting_approval` and back to `running` without touching
+        started_at / finished_at.
+        """
+        async with connect(self.db_path) as conn:
+            await conn.execute(
+                "UPDATE steps SET status = ? WHERE id = ?", (status, step_id)
+            )
+            await conn.commit()
+            async with conn.execute(
+                "SELECT id, plan_id, idx, kind, description, status, risk_class, "
+                "input_json, output_json, started_at, finished_at, cost_usd, error "
+                "FROM steps WHERE id = ?",
+                (step_id,),
+            ) as cur:
+                row = await cur.fetchone()
+        return _hydrate_step(dict(row))
+
     async def finish_step(
         self,
         step_id: str,

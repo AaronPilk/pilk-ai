@@ -138,6 +138,71 @@ export async function fetchSandboxes(): Promise<{ sandboxes: SandboxRow[] }> {
   return r.json();
 }
 
+export async function fetchApprovals(): Promise<{
+  pending: ApprovalRequest[];
+  recent: ApprovalHistoryRow[];
+}> {
+  const r = await fetch(`${API_URL}/approvals`);
+  if (!r.ok) throw new Error(`GET /approvals failed: ${r.status}`);
+  return r.json();
+}
+
+export async function approveApproval(
+  id: string,
+  body: { reason?: string; trust?: { scope: TrustScope; ttl_seconds: number } },
+): Promise<void> {
+  const r = await fetch(`${API_URL}/approvals/${id}/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+}
+
+export async function rejectApproval(
+  id: string,
+  body: { reason?: string },
+): Promise<void> {
+  const r = await fetch(`${API_URL}/approvals/${id}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+}
+
+export async function approveAllPending(reason?: string): Promise<{
+  approved: string[];
+  count: number;
+}> {
+  const r = await fetch(`${API_URL}/approvals/batch/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason: reason ?? null }),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function fetchTrust(): Promise<{ rules: TrustRule[] }> {
+  const r = await fetch(`${API_URL}/trust`);
+  if (!r.ok) throw new Error(`GET /trust failed: ${r.status}`);
+  return r.json();
+}
+
+export async function revokeTrust(id: string): Promise<void> {
+  const r = await fetch(`${API_URL}/trust/${id}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(await detail(r));
+}
+
+async function detail(r: Response): Promise<string> {
+  try {
+    const body = await r.json();
+    if (body?.detail) return String(body.detail);
+  } catch {}
+  return `HTTP ${r.status}`;
+}
+
 // ── Shared types ─────────────────────────────────────────────────────
 
 export type PlanStatus =
@@ -228,4 +293,47 @@ export interface SandboxRow {
   destroyed_at: string | null;
   workspace?: string;
   profile?: string;
+  capabilities?: string[];
+}
+
+export type TrustScope = "none" | "agent" | "agent+args";
+
+export interface ApprovalRequest {
+  id: string;
+  plan_id: string | null;
+  step_id: string | null;
+  agent_name: string | null;
+  tool_name: string;
+  args: Record<string, unknown>;
+  risk_class: string;
+  reason: string;
+  created_at: string;
+  bypass_trust: boolean;
+}
+
+export interface ApprovalHistoryRow {
+  id: string;
+  plan_id: string | null;
+  step_id: string | null;
+  agent_name: string | null;
+  tool: string;
+  args: Record<string, unknown>;
+  risk_class: string;
+  status: "pending" | "approved" | "rejected" | "expired";
+  created_at: string;
+  decided_at: string | null;
+  decision_reason: string | null;
+}
+
+export interface TrustRule {
+  id: string;
+  agent_name: string | null;
+  tool_name: string;
+  args_matcher: Record<string, unknown>;
+  expires_at: number;
+  expires_in_s: number;
+  created_at: number;
+  created_by: string;
+  reason: string | null;
+  uses: number;
 }

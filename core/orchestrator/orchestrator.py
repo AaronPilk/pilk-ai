@@ -70,6 +70,7 @@ class RunContext:
     agent_name: str | None
     sandbox_id: str | None
     sandbox_root: Path | None
+    sandbox_capabilities: frozenset[str]
     metadata: dict[str, Any]
 
 
@@ -116,6 +117,7 @@ class Orchestrator:
             agent_name=None,
             sandbox_id=None,
             sandbox_root=None,
+            sandbox_capabilities=frozenset(),
             metadata={},
         )
         await self._execute(ctx)
@@ -125,10 +127,12 @@ class Orchestrator:
         if self.agents is None or self.sandboxes is None:
             raise RuntimeError("agent subsystem not initialized")
         manifest = self.agents.get(name)
+        capabilities = frozenset(manifest.sandbox.capabilities)
         sandbox = await self.sandboxes.get_or_create(
             type=manifest.sandbox.type,
             agent_name=manifest.name,
             profile=manifest.sandbox.profile,
+            capabilities=capabilities,
         )
         ctx = RunContext(
             goal=task,
@@ -137,10 +141,12 @@ class Orchestrator:
             agent_name=manifest.name,
             sandbox_id=sandbox.description.id,
             sandbox_root=sandbox.description.workspace,
+            sandbox_capabilities=capabilities,
             metadata={
                 "agent": manifest.name,
                 "agent_version": manifest.version,
                 "sandbox_id": sandbox.description.id,
+                "capabilities": sorted(capabilities),
                 "budget": manifest.policy.budget.model_dump(),
             },
         )
@@ -274,6 +280,7 @@ class Orchestrator:
                         agent_name=rc.agent_name,
                         sandbox_id=rc.sandbox_id,
                         sandbox_root=rc.sandbox_root,
+                        sandbox_capabilities=rc.sandbox_capabilities,
                     ),
                 )
 

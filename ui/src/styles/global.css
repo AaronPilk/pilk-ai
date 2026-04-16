@@ -621,3 +621,193 @@ body {
   font-size: 12.5px;
   color: var(--text-dim);
 }
+
+/* Approvals tab */
+.approvals {
+  flex: 1;
+  padding: 24px 28px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 980px;
+}
+.approvals-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.approvals-head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+.approvals-section h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+.appr-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.appr-card-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.appr-card-tool {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.appr-card-agent {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-elev-2);
+}
+.appr-card-reason {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.appr-args {
+  max-height: 200px;
+  margin: 0;
+}
+.appr-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.appr-trust {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.appr-trust select {
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  font-family: var(--font);
+}
+.appr-trust--locked {
+  color: var(--warn);
+  font-style: italic;
+}
+.appr-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.appr-risk {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: var(--bg-elev-2);
+}
+.appr-risk--NET_READ,
+.appr-risk--NET_WRITE {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.appr-risk--COMMS {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.appr-risk--FINANCIAL,
+.appr-risk--IRREVERSIBLE {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.tasks-row-status--approved { color: var(--ok); }
+.tasks-row-status--rejected { color: var(--danger); }
+.tasks-row-status--expired { color: var(--text-faint); }
+.tasks-row-status--pending { color: var(--warn); }
+
+/* Inline approval card in Chat */
+.appr-inline {
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  padding: 14px 16px;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.appr-inline-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.appr-inline-label {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--warn);
+  font-weight: 500;
+}
+.appr-inline-reason {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.appr-inline-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.appr-inline-remember {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.appr-inline-lock {
+  font-size: 12px;
+  color: var(--warn);
+  font-style: italic;
+}
+.appr-inline-closed {
+  max-width: 760px;
+}
+.appr-inline-closed--approved .msg-role {
+  color: var(--ok);
+}
+.appr-inline-closed--rejected .msg-role {
+  color: var(--danger);
+}

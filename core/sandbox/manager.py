@@ -38,11 +38,17 @@ class SandboxManager:
         type: str,
         agent_name: str | None,
         profile: str,
+        capabilities: frozenset[str] | None = None,
     ) -> Sandbox:
         sb_id = self._sandbox_id(type=type, agent_name=agent_name, profile=profile)
+        caps = capabilities or frozenset()
         async with self._lock:
             existing = self._by_id.get(sb_id)
             if existing is not None and existing.description.state != "destroyed":
+                # Capabilities travel with the manifest; a restart may widen or
+                # narrow them. Refresh the live description rather than trust
+                # stale state.
+                existing.description.capabilities = caps
                 return existing
 
             root = self.sandboxes_dir / sb_id
@@ -52,6 +58,7 @@ class SandboxManager:
                     agent_name=agent_name,
                     profile=profile,
                     root=root,
+                    capabilities=caps,
                 )
             else:
                 raise NotImplementedError(
@@ -94,6 +101,9 @@ class SandboxManager:
                 d["workspace"] = str(live.description.workspace)
                 d["profile"] = live.description.profile
                 d["state"] = live.description.state
+                d["capabilities"] = sorted(live.description.capabilities)
+            else:
+                d["capabilities"] = []
             out.append(d)
         return out
 

@@ -69,6 +69,23 @@ CREATE TABLE IF NOT EXISTS approvals (
 );
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
 
+-- Durable audit of trust rules. The live store is in-memory; this table
+-- is written every time a rule is installed so the Approvals tab can
+-- show a history across sessions even after rules expire or are revoked.
+CREATE TABLE IF NOT EXISTS trust_audit (
+    id            TEXT PRIMARY KEY,
+    agent_name    TEXT,
+    tool_name     TEXT NOT NULL,
+    args_json     TEXT,
+    ttl_seconds   INTEGER NOT NULL,
+    expires_at    TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    created_by    TEXT NOT NULL DEFAULT 'user',
+    reason        TEXT,
+    approval_id   TEXT REFERENCES approvals(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_trust_audit_created ON trust_audit(created_at);
+
 CREATE TABLE IF NOT EXISTS cost_entries (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     plan_id       TEXT,

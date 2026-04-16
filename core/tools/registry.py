@@ -33,6 +33,7 @@ class ToolContext:
     agent_name: str | None = None
     sandbox_id: str | None = None
     sandbox_root: Path | None = None  # if set, fs/shell tools scope here
+    sandbox_capabilities: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass

@@ -28,6 +28,14 @@ class SandboxSpec(BaseModel):
             "runs so persistent state (cookies, a working dir) survives."
         ),
     )
+    capabilities: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Opt-in capability flags this sandbox carries. Policy checks "
+            "them for class-specific overrides (e.g. 'trading' unlocks "
+            "trade_execute). Unknown flags are ignored."
+        ),
+    )
 
     @field_validator("profile")
     @classmethod

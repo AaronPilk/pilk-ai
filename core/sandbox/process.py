@@ -24,6 +24,7 @@ class ProcessSandbox:
         agent_name: str | None,
         profile: str,
         root: Path,
+        capabilities: frozenset[str] = frozenset(),
     ) -> None:
         self._root = root
         self.description = SandboxDescription(
@@ -34,6 +35,7 @@ class ProcessSandbox:
             workspace=root / "workspace",
             state="creating",
             created_at=datetime.now(UTC).isoformat(),
+            capabilities=capabilities,
         )
 
     @property

@@ -12,7 +12,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-CURRENT_VERSION = 2
+CURRENT_VERSION = 3
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
 
@@ -33,6 +33,23 @@ MIGRATIONS: dict[int, list[str]] = {
             destroyed_at  TEXT,
             metadata_json TEXT
         )""",
+    ],
+    # v3: trust_audit table for the approval/trust layer (batch 3). The
+    # live trust store is in-memory; this table is the historical mirror.
+    3: [
+        """CREATE TABLE IF NOT EXISTS trust_audit (
+            id            TEXT PRIMARY KEY,
+            agent_name    TEXT,
+            tool_name     TEXT NOT NULL,
+            args_json     TEXT,
+            ttl_seconds   INTEGER NOT NULL,
+            expires_at    TEXT NOT NULL,
+            created_at    TEXT NOT NULL,
+            created_by    TEXT NOT NULL DEFAULT 'user',
+            reason        TEXT,
+            approval_id   TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_trust_audit_created ON trust_audit(created_at)",
     ],
 }
 

@@ -1,21 +1,33 @@
 """Tool gateway.
 
-Every tool call — whether initiated by the orchestrator or a future agent —
-passes through here. The gateway evaluates policy, invokes the handler,
-and returns a normalized `ToolResult`. This is the single choke point for
-risk enforcement and cost attribution.
+Every tool call passes through here. The gateway:
+
+  1. Looks the tool up in the registry.
+  2. Asks the policy gate what to do (ALLOW / APPROVE / REJECT).
+  3. On APPROVE: opens an approval request and awaits the user's decision.
+     During that wait the current step is marked `awaiting_approval` so
+     the dashboard can show the pause.
+  4. Runs the handler, normalises the result, returns it.
+
+The gateway is the only place that pauses the orchestrator. Keeping the
+wait inside gateway.execute means the orchestrator loop stays a simple
+sequential pipeline — it just sees a tool call that took a while.
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from core.logging import get_logger
-from core.policy import Decision, Gate
+from core.policy import ApprovalManager, Decision, Gate, GateInput
 from core.tools.registry import ToolContext, ToolRegistry
 
 log = get_logger("pilkd.gateway")
+
+StepStatusCallback = Callable[[str, str], Awaitable[None]]
+"""(step_id, status) — called when the gateway toggles awaiting_approval."""
 
 
 @dataclass
@@ -30,9 +42,18 @@ class ToolResult:
 
 
 class Gateway:
-    def __init__(self, registry: ToolRegistry, gate: Gate) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        gate: Gate,
+        *,
+        approvals: ApprovalManager | None = None,
+        on_step_status: StepStatusCallback | None = None,
+    ) -> None:
         self.registry = registry
         self.gate = gate
+        self.approvals = approvals
+        self.on_step_status = on_step_status
 
     async def execute(
         self,
@@ -49,8 +70,17 @@ class Gateway:
                 tool=name, ok=False, content=msg, is_error=True, data={}, risk="",
             )
 
-        outcome = self.gate.evaluate(tool.risk)
-        if outcome.decision is not Decision.ALLOW:
+        outcome = self.gate.evaluate(
+            GateInput(
+                tool_name=name,
+                risk=tool.risk,
+                args=args,
+                agent_name=ctx.agent_name,
+                sandbox_capabilities=ctx.sandbox_capabilities,
+            )
+        )
+
+        if outcome.decision is Decision.REJECT:
             log.info(
                 "tool_rejected",
                 tool=name,
@@ -66,6 +96,46 @@ class Gateway:
                 risk=tool.risk.value,
                 rejection_reason=outcome.reason,
             )
+
+        if outcome.decision is Decision.APPROVE:
+            if self.approvals is None:
+                reason = "approval required but approval manager is offline"
+                log.warning("approval_unavailable", tool=name)
+                return ToolResult(
+                    tool=name,
+                    ok=False,
+                    content=f"refused: {reason}",
+                    is_error=True,
+                    data={},
+                    risk=tool.risk.value,
+                    rejection_reason=reason,
+                )
+            if ctx.step_id and self.on_step_status:
+                await self.on_step_status(ctx.step_id, "awaiting_approval")
+            request = await self.approvals.request(
+                plan_id=ctx.plan_id,
+                step_id=ctx.step_id,
+                agent_name=ctx.agent_name,
+                tool_name=name,
+                args=args,
+                risk_class=tool.risk,
+                reason=outcome.reason,
+                bypass_trust=outcome.bypass_trust,
+            )
+            decision = await request.future
+            if ctx.step_id and self.on_step_status:
+                await self.on_step_status(ctx.step_id, "running")
+            if decision.decision != "approved":
+                reason = f"user rejected: {decision.reason or 'no reason given'}"
+                return ToolResult(
+                    tool=name,
+                    ok=False,
+                    content=f"refused: {reason}",
+                    is_error=True,
+                    data={},
+                    risk=tool.risk.value,
+                    rejection_reason=reason,
+                )
 
         log.info("tool_invoke", tool=name, risk=tool.risk.value)
         try:

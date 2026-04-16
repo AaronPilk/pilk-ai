@@ -8,6 +8,9 @@ const STATUS_COLOR: Record<string, string> = {
   pending: "#606775",
   paused: "#9ba2b0",
   cancelled: "#606775",
+  awaiting_approval: "#e0b84a",
+  done: "#4fbf7a",
+  skipped: "#606775",
 };
 
 export default function PlanCard({ plan }: { plan: PlanDetail }) {

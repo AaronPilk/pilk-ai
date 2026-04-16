@@ -22,6 +22,7 @@ class SandboxDescription:
     workspace: Path
     state: str
     created_at: str
+    capabilities: frozenset[str] = field(default_factory=frozenset)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_public_dict(self) -> dict[str, Any]:
@@ -33,6 +34,7 @@ class SandboxDescription:
             "workspace": str(self.workspace),
             "state": self.state,
             "created_at": self.created_at,
+            "capabilities": sorted(self.capabilities),
             "metadata": self.metadata,
         }
 
