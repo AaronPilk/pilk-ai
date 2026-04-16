@@ -7,18 +7,27 @@ export default function Agents() {
   const [task, setTask] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  const [justCreated, setJustCreated] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    fetchAgents().then((r) => {
-      setAgents(r.agents);
-      if (r.agents.length > 0 && selected === null) setSelected(r.agents[0].name);
-    }).catch(() => {});
+    fetchAgents()
+      .then((r) => {
+        setAgents(r.agents);
+        if (r.agents.length > 0 && selected === null) setSelected(r.agents[0].name);
+      })
+      .catch(() => {});
   }, [selected]);
 
   useEffect(() => {
     refresh();
     return pilk.onMessage((m) => {
       if (m.type === "plan.completed" || m.type === "plan.created") refresh();
+      if (m.type === "agent.created") {
+        refresh();
+        setSelected(m.name);
+        setJustCreated(m.name);
+        setTimeout(() => setJustCreated((current) => (current === m.name ? null : current)), 4000);
+      }
     });
   }, [refresh]);
 
@@ -45,14 +54,13 @@ export default function Agents() {
         <div className="tasks-list-head">Registered agents</div>
         {agents.length === 0 && (
           <div className="tasks-empty">
-            No agents registered. Add one under <code>/agents/</code> and
-            restart pilkd.
+            No agents registered yet. Ask PILK in Chat: <em>"Build me a sales agent."</em>
           </div>
         )}
         {agents.map((a) => (
           <button
             key={a.name}
-            className={`tasks-row ${selected === a.name ? "tasks-row--active" : ""}`}
+            className={`tasks-row ${selected === a.name ? "tasks-row--active" : ""} ${justCreated === a.name ? "tasks-row--just-created" : ""}`}
             onClick={() => setSelected(a.name)}
           >
             <div className="tasks-row-goal">{a.name}</div>
@@ -69,7 +77,12 @@ export default function Agents() {
         {current ? (
           <>
             <div className="tasks-detail-head">
-              <div className="tasks-detail-goal">{current.name}</div>
+              <div className="tasks-detail-goal">
+                {current.name}
+                {justCreated === current.name && (
+                  <span className="agent-new-badge">new</span>
+                )}
+              </div>
               <div className="tasks-detail-meta">
                 <span>v{current.version}</span>
                 <span>{current.state}</span>
@@ -79,6 +92,9 @@ export default function Agents() {
                     ${current.budget.per_run_usd}/run · $
                     {current.budget.daily_usd}/day
                   </span>
+                )}
+                {current.last_run_at && (
+                  <span>last run: {new Date(current.last_run_at).toLocaleString()}</span>
                 )}
               </div>
             </div>
@@ -95,12 +111,22 @@ export default function Agents() {
                 </div>
               </div>
             )}
+            {current.sandbox?.capabilities && current.sandbox.capabilities.length > 0 && (
+              <div className="agent-tools">
+                <div className="agent-tools-head">Sandbox capabilities</div>
+                <div className="agent-tools-list">
+                  {current.sandbox.capabilities.map((c) => (
+                    <span key={c} className="agent-tool agent-tool--cap">{c}</span>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="agent-run">
-              <div className="agent-tools-head">Run a task</div>
+              <div className="agent-tools-head">Assign a task</div>
               <textarea
                 value={task}
                 onChange={(e) => setTask(e.target.value)}
-                placeholder={`Ask ${current.name} to…`}
+                placeholder={`Tell ${current.name} what to do…`}
                 rows={3}
                 disabled={submitting}
               />

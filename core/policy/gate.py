@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from core.policy import financial
+from core.policy import financial, system
 from core.policy.risk import RiskClass
 from core.policy.trust import TrustStore
 
@@ -72,8 +72,18 @@ class Gate:
                 decision=Decision.REJECT, reason=ruling.reason
             )
 
-        # 2) Trust rules, unless the sub-policy forbids them for this call.
-        if not ruling.bypass_trust:
+        # 2) System sub-policy — tools that modify PILK itself.
+        sys_ruling = system.evaluate(tool_name=inp.tool_name)
+        bypass_trust = ruling.bypass_trust or sys_ruling.bypass_trust
+        if sys_ruling.requires_approval:
+            return PolicyOutcome(
+                decision=Decision.APPROVE,
+                reason=sys_ruling.reason,
+                bypass_trust=True,
+            )
+
+        # 3) Trust rules, unless a sub-policy forbids them.
+        if not bypass_trust:
             rule = self.trust.match(
                 agent_name=inp.agent_name,
                 tool_name=inp.tool_name,
@@ -85,16 +95,16 @@ class Gate:
                     reason=f"trust rule {rule.id} (uses={rule.uses})",
                 )
 
-        # 3) Risk-based auto-allow for low-risk, locally-scoped work.
+        # 4) Risk-based auto-allow for low-risk, locally-scoped work.
         if inp.risk in AUTO_ALLOW:
             return PolicyOutcome(
                 decision=Decision.ALLOW,
                 reason=f"{inp.risk.value}: auto-allow (workspace scope)",
             )
 
-        # 4) Everything else queues for user approval.
+        # 5) Everything else queues for user approval.
         return PolicyOutcome(
             decision=Decision.APPROVE,
             reason=(ruling.reason or f"{inp.risk.value}: requires approval"),
-            bypass_trust=ruling.bypass_trust,
+            bypass_trust=bypass_trust,
         )

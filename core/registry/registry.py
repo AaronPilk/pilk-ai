@@ -133,7 +133,10 @@ class AgentRegistry:
             if m:
                 d["description"] = m.description
                 d["tools"] = m.tools
-                d["sandbox"] = m.sandbox.model_dump()
+                sandbox_dict = m.sandbox.model_dump()
+                # Ensure capabilities is always present (older manifests default to []).
+                sandbox_dict.setdefault("capabilities", [])
+                d["sandbox"] = sandbox_dict
                 d["budget"] = m.policy.budget.model_dump()
             out.append(d)
         return out

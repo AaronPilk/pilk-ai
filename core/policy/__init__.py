@@ -1,4 +1,4 @@
-from core.policy import financial
+from core.policy import financial, system
 from core.policy.approvals import ApprovalDecision, ApprovalManager, ApprovalRequest
 from core.policy.gate import Decision, Gate, GateInput, PolicyOutcome
 from core.policy.risk import RiskClass
@@ -16,4 +16,5 @@ __all__ = [
     "TrustRule",
     "TrustStore",
     "financial",
+    "system",
 ]

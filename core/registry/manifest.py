@@ -72,6 +72,15 @@ class Manifest(BaseModel):
             raise ValueError(f"invalid agent name: {v!r}")
         return v
 
+    @field_validator("tools")
+    @classmethod
+    def _tools(cls, v: list[str]) -> list[str]:
+        # agents can never create other agents — only the top-level
+        # orchestrator gets agent_create.
+        if "agent_create" in v:
+            raise ValueError("agent_create cannot appear in an agent's tool list")
+        return v
+
     @classmethod
     def load(cls, path: Path) -> Manifest:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))

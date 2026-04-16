@@ -318,7 +318,7 @@ export interface AgentRow {
   last_run_at: string | null;
   description?: string;
   tools?: string[];
-  sandbox?: { type: string; profile: string };
+  sandbox?: { type: string; profile: string; capabilities?: string[] };
   budget?: { per_run_usd: number; daily_usd: number };
 }
 

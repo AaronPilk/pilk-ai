@@ -44,6 +44,7 @@ from core.tools.builtin import (
     finance_withdraw_tool,
     fs_read_tool,
     fs_write_tool,
+    make_agent_create_tool,
     make_llm_ask_tool,
     net_fetch_tool,
     shell_exec_tool,
@@ -107,6 +108,18 @@ async def lifespan(app: FastAPI):
 
     sandboxes = SandboxManager(
         sandboxes_dir=settings.sandboxes_dir, db_path=settings.db_path
+    )
+
+    # Register the COO meta-tool. This lives only on the top-level chat
+    # path — agents cannot spawn other agents (enforced in Manifest).
+    registry.register(
+        make_agent_create_tool(
+            tool_registry=registry,
+            agent_registry=agents,
+            sandboxes=sandboxes,
+            agents_dir=AGENTS_DIR,
+            broadcast=broadcast,
+        )
     )
 
     orchestrator: Orchestrator | None = None
