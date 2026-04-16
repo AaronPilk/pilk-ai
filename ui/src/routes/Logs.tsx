@@ -1,8 +1,15 @@
 export default function Logs() {
   return (
     <div className="placeholder">
-      <h2>Logs</h2>
-      <p>Structured event log, filter by agent/sandbox/risk class. Lands in batch 1.</p>
+      <div className="placeholder-card">
+        <div className="placeholder-eyebrow">Logs</div>
+        <h2>Everything PILK has done, searchable</h2>
+        <p>
+          A structured timeline of every tool call, approval, and plan — with
+          filters by agent, sandbox, and risk class. Wiring up in a follow-up
+          batch.
+        </p>
+      </div>
     </div>
   );
 }
