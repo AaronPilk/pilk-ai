@@ -99,11 +99,17 @@ export default function Chat() {
       <div className="chat-thread">
         {messages.length === 0 && (
           <div className="chat-empty">
-            Give PILK a goal and it will plan, execute, and report back.
+            I'm PILK — your COO. Tell me what you want done and I'll execute,
+            or ask me to build a specialist agent and I will.
             <br />
-            ⌘/Ctrl+Enter to send. Tools available this batch: fs_read, fs_write,
-            shell_exec, llm_ask, net_fetch, finance_*. Network, financial, and
-            comms calls pause for approval inline.
+            <br />
+            Try: <em>"Build me a file_cleanup_agent that organizes files in
+            its sandbox, proposes a structure before moving anything, and
+            never deletes files."</em>
+            <br />
+            <br />
+            ⌘/Ctrl+Enter to send. Hold the top-right button to talk. Network,
+            financial, and system changes pause for your approval inline.
           </div>
         )}
         {messages.map((m, i) => {
