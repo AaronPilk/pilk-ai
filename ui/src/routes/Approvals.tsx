@@ -219,7 +219,11 @@ function PendingCard({
           </div>
         ) : (
           <div className="appr-trust appr-trust--locked">
-            financial — trust rules disabled
+            {approval.tool_name === "agent_create"
+              ? "system change — trust rules disabled"
+              : approval.risk_class === "FINANCIAL"
+                ? "financial — trust rules disabled"
+                : "trust rules disabled"}
           </div>
         )}
         <div className="appr-buttons">

@@ -13,6 +13,7 @@ export default function ApprovalInline({ approval }: { approval: ApprovalRequest
 
   const trustAllowed = !approval.bypass_trust;
   const scope: TrustScope = "agent+args";
+  const lockReason = describeLock(approval);
 
   const act = async (kind: "approve" | "reject") => {
     setBusy(true);
@@ -63,7 +64,7 @@ export default function ApprovalInline({ approval }: { approval: ApprovalRequest
             remember for 30 min
           </label>
         ) : (
-          <span className="appr-inline-lock">financial — trust disabled</span>
+          <span className="appr-inline-lock">{lockReason}</span>
         )}
         <div className="appr-buttons">
           <button className="btn" onClick={() => act("reject")} disabled={busy}>
@@ -81,4 +82,10 @@ export default function ApprovalInline({ approval }: { approval: ApprovalRequest
       {err && <div className="step-error">{err}</div>}
     </div>
   );
+}
+
+function describeLock(a: ApprovalRequest): string {
+  if (a.tool_name === "agent_create") return "system change — trust disabled";
+  if (a.risk_class === "FINANCIAL") return "financial — trust disabled";
+  return "trust disabled";
 }
