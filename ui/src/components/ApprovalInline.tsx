@@ -10,10 +10,15 @@ export default function ApprovalInline({ approval }: { approval: ApprovalRequest
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [remember, setRemember] = useState(false);
+  const [showArgs, setShowArgs] = useState(false);
 
   const trustAllowed = !approval.bypass_trust;
   const scope: TrustScope = "agent+args";
   const lockReason = describeLock(approval);
+  const hasArgs =
+    approval.args &&
+    typeof approval.args === "object" &&
+    Object.keys(approval.args as object).length > 0;
 
   const act = async (kind: "approve" | "reject") => {
     setBusy(true);
@@ -49,9 +54,28 @@ export default function ApprovalInline({ approval }: { approval: ApprovalRequest
         )}
       </div>
       <div className="appr-inline-reason">{approval.reason}</div>
-      <pre className="step-io appr-args">
-        {JSON.stringify(approval.args, null, 2)}
-      </pre>
+
+      {hasArgs && (
+        <div className="appr-args-wrap">
+          <button
+            type="button"
+            className="appr-args-toggle"
+            onClick={() => setShowArgs((s) => !s)}
+            aria-expanded={showArgs}
+          >
+            {showArgs ? "Hide" : "View"} arguments
+            <span className="appr-args-chev" aria-hidden>
+              {showArgs ? "▾" : "▸"}
+            </span>
+          </button>
+          {showArgs && (
+            <pre className="step-io appr-args">
+              {JSON.stringify(approval.args, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+
       <div className="appr-inline-actions">
         {trustAllowed ? (
           <label className="appr-inline-remember">
@@ -61,7 +85,7 @@ export default function ApprovalInline({ approval }: { approval: ApprovalRequest
               onChange={(e) => setRemember(e.target.checked)}
               disabled={busy}
             />
-            remember for 30 min
+            Remember for 30 min
           </label>
         ) : (
           <span className="appr-inline-lock">{lockReason}</span>
@@ -85,7 +109,7 @@ export default function ApprovalInline({ approval }: { approval: ApprovalRequest
 }
 
 function describeLock(a: ApprovalRequest): string {
-  if (a.tool_name === "agent_create") return "system change — trust disabled";
-  if (a.risk_class === "FINANCIAL") return "financial — trust disabled";
-  return "trust disabled";
+  if (a.tool_name === "agent_create") return "System change — trust disabled";
+  if (a.risk_class === "FINANCIAL") return "Financial — trust disabled";
+  return "Trust disabled";
 }
