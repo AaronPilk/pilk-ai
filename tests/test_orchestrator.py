@@ -76,7 +76,7 @@ async def test_orchestrator_runs_tool_and_completes() -> None:
     ensure_schema(settings.db_path)
 
     # Two-turn scripted interaction:
-    #   turn 1: Claude asks to write a file via fs.write  → tool_use stop
+    #   turn 1: Claude asks to write a file via fs_write  → tool_use stop
     #   turn 2: Claude returns a final text              → end_turn
     responses = [
         _Response(
@@ -84,7 +84,7 @@ async def test_orchestrator_runs_tool_and_completes() -> None:
                 _Block(
                     type="tool_use",
                     id="tu_1",
-                    name="fs.write",
+                    name="fs_write",
                     input={"path": "report.txt", "content": "all green"},
                 )
             ],

@@ -50,7 +50,7 @@ def make_llm_ask_tool(client: AsyncAnthropic, ledger: Ledger, default_model: str
         return ToolOutcome(content=text, data={"model": model})
 
     return Tool(
-        name="llm.ask",
+        name="llm_ask",
         description=(
             "Run a one-shot Claude call for cheap sub-reasoning (classification, "
             "extraction, short summarization). Defaults to Haiku 4.5. Use this "

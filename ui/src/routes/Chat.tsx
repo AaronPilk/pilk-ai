@@ -79,8 +79,8 @@ export default function Chat() {
           <div className="chat-empty">
             Give PILK a goal and it will plan, execute, and report back.
             <br />
-            ⌘/Ctrl+Enter to send. Tools available this batch: fs.read, fs.write,
-            shell.exec, llm.ask — all scoped to <code>~/PILK/workspace/</code>.
+            ⌘/Ctrl+Enter to send. Tools available this batch: fs_read, fs_write,
+            shell_exec, llm_ask — all scoped to <code>~/PILK/workspace/</code>.
           </div>
         )}
         {messages.map((m, i) => {

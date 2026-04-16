@@ -38,7 +38,7 @@ available to you. You run locally on the user's laptop.
 
 Rules of engagement:
 - Prefer the cheapest adequate action. Read files before editing them.
-  Use shell.exec only when a dedicated tool won't do. Use llm.ask for
+  Use shell_exec only when a dedicated tool won't do. Use llm_ask for
   bounded sub-tasks where a smaller model suffices.
 - All filesystem and shell work is scoped to the PILK workspace. If a
   tool refuses a path, don't retry with a different absolute path — it

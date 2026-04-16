@@ -255,7 +255,7 @@ with left nav and a working typed-chat pane wired to the echo endpoint.
 ### Batch 1 — Orchestrator + typed chat MVP
 Intent normalizer, orchestrator with a real planner (one LLM call),
 executor, policy stub (`READ`/`WRITE_LOCAL` auto in workspace), cost ledger
-+ estimator, built-in tools (`fs.read`, `fs.write`, `shell.exec`, `llm.ask`),
++ estimator, built-in tools (`fs_read`, `fs_write`, `shell_exec`, `llm_ask`),
 Tasks tab live, Cost tab live. End state: typed prompt → plan → execute →
 report.
 

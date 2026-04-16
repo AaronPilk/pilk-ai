@@ -68,7 +68,7 @@ async def _fs_write(args: dict, _ctx: ToolContext) -> ToolOutcome:
 
 
 fs_read_tool = Tool(
-    name="fs.read",
+    name="fs_read",
     description=(
         "Read a UTF-8 text file from the PILK workspace. Paths are relative "
         "to the workspace root; absolute paths and paths that escape the "
@@ -90,7 +90,7 @@ fs_read_tool = Tool(
 
 
 fs_write_tool = Tool(
-    name="fs.write",
+    name="fs_write",
     description=(
         "Write a UTF-8 text file to the PILK workspace. Creates parent "
         "directories as needed. Overwrites existing files. Paths must be "

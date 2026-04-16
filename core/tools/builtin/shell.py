@@ -69,7 +69,7 @@ async def _shell_exec(args: dict, _ctx: ToolContext) -> ToolOutcome:
 
 
 shell_exec_tool = Tool(
-    name="shell.exec",
+    name="shell_exec",
     description=(
         "Run a shell command inside the PILK workspace. Working directory is "
         "fixed to ~/PILK/workspace/; the environment is sanitized (PATH, HOME, "
