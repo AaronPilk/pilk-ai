@@ -811,3 +811,56 @@ body {
 .appr-inline-closed--rejected .msg-role {
   color: var(--danger);
 }
+
+/* Push-to-talk */
+.ptt {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+}
+.ptt-btn {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms, border-color 120ms;
+}
+.ptt-btn:hover {
+  background: #222736;
+}
+.ptt-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ptt-btn--recording {
+  background: rgba(229, 90, 90, 0.16);
+  border-color: var(--danger);
+  color: var(--text);
+}
+.ptt-btn--uploading {
+  background: rgba(224, 184, 74, 0.14);
+  border-color: var(--warn);
+}
+.ptt-btn--playing {
+  background: rgba(122, 167, 255, 0.16);
+  border-color: var(--accent);
+}
+.ptt-btn--error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.ptt-hint {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

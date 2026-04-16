@@ -34,6 +34,16 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("ANTHROPIC_API_KEY", "PILK_ANTHROPIC_API_KEY"),
     )
+    openai_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("OPENAI_API_KEY", "PILK_OPENAI_API_KEY"),
+    )
+    elevenlabs_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ELEVENLABS_API_KEY", "PILK_ELEVENLABS_API_KEY"),
+    )
+    elevenlabs_voice_id: str | None = Field(default=None)
+    tts_voice: str | None = Field(default=None)
 
     @property
     def db_path(self) -> Path:

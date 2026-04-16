@@ -27,6 +27,7 @@ from core.api.routes.cost import router as cost_router
 from core.api.routes.health import router as health_router
 from core.api.routes.plans import router as plans_router
 from core.api.routes.sandboxes import router as sandboxes_router
+from core.api.routes.voice import router as voice_router
 from core.api.ws import router as ws_router
 from core.config import get_settings
 from core.db import ensure_schema
@@ -48,6 +49,10 @@ from core.tools.builtin import (
     shell_exec_tool,
     trade_execute_tool,
 )
+from core.voice import StubSTT, StubTTS, VoicePipeline, VoiceStateMachine
+from core.voice.drivers import STTDriver, TTSDriver
+from core.voice.elevenlabs_driver import ElevenLabsTTS
+from core.voice.openai_driver import OpenAISTT, OpenAITTS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / "agents"
@@ -134,6 +139,40 @@ async def lifespan(app: FastAPI):
             detail="pilkd is up but chat will reject until ANTHROPIC_API_KEY is set",
         )
 
+    voice_state = VoiceStateMachine(broadcast=broadcast)
+    stt: STTDriver = (
+        OpenAISTT(settings.openai_api_key) if settings.openai_api_key else StubSTT()
+    )
+    tts: TTSDriver
+    if settings.elevenlabs_api_key:
+        if settings.elevenlabs_voice_id:
+            tts = ElevenLabsTTS(
+                settings.elevenlabs_api_key,
+                voice_id=settings.elevenlabs_voice_id,
+            )
+        else:
+            tts = ElevenLabsTTS(settings.elevenlabs_api_key)
+    elif settings.openai_api_key:
+        tts = OpenAITTS(
+            settings.openai_api_key,
+            voice=settings.tts_voice or "alloy",
+        )
+    else:
+        tts = StubTTS()
+    voice_pipeline = VoicePipeline(
+        state=voice_state,
+        stt=stt,
+        tts=tts,
+        orchestrator=orchestrator,
+        ledger=ledger,
+    )
+    log.info(
+        "voice_ready",
+        stt=stt.name,
+        tts=tts.name,
+        orchestrator=orchestrator is not None,
+    )
+
     app.state.hub = hub
     app.state.ledger = ledger
     app.state.plans = plans
@@ -145,6 +184,8 @@ async def lifespan(app: FastAPI):
     app.state.approvals = approvals
     app.state.orchestrator = orchestrator
     app.state.anthropic = client
+    app.state.voice_state = voice_state
+    app.state.voice_pipeline = voice_pipeline
     app.state.orchestrator_tasks = set()
 
     log.info("pilkd_ready", home=str(home), host=settings.host, port=settings.port)
@@ -180,5 +221,6 @@ def create_app() -> FastAPI:
     app.include_router(agents_router)
     app.include_router(sandboxes_router)
     app.include_router(approvals_router)
+    app.include_router(voice_router)
     app.include_router(ws_router)
     return app

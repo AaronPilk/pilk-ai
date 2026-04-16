@@ -5,6 +5,7 @@ import {
   useConnection,
   type CostSummary,
 } from "../state/api";
+import PttButton from "./PttButton";
 
 export default function TopBar() {
   const { status } = useConnection();
@@ -35,6 +36,7 @@ export default function TopBar() {
         </span>
       </div>
       <div className="topbar-right">
+        <PttButton />
         <span className="topbar-stat">running {running}</span>
         <span className="topbar-stat">
           today ${summary ? summary.day_usd.toFixed(4) : "0.0000"}

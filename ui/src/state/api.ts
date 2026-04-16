@@ -199,6 +199,40 @@ export async function revokeTrust(id: string): Promise<void> {
   if (!r.ok) throw new Error(await detail(r));
 }
 
+export async function fetchVoiceStatus(): Promise<VoiceStatus> {
+  const r = await fetch(`${API_URL}/voice/status`);
+  if (!r.ok) throw new Error(`GET /voice/status failed: ${r.status}`);
+  return r.json();
+}
+
+export async function voiceListen(): Promise<void> {
+  const r = await fetch(`${API_URL}/voice/listen`, { method: "POST" });
+  if (!r.ok) throw new Error(await detail(r));
+}
+
+export async function voiceCancel(): Promise<void> {
+  const r = await fetch(`${API_URL}/voice/cancel`, { method: "POST" });
+  if (!r.ok) throw new Error(await detail(r));
+}
+
+export async function voiceDone(): Promise<void> {
+  const r = await fetch(`${API_URL}/voice/done`, { method: "POST" });
+  if (!r.ok) throw new Error(await detail(r));
+}
+
+export async function voiceUtterance(
+  blob: Blob,
+): Promise<VoiceUtteranceResult> {
+  const form = new FormData();
+  form.append("audio", blob, "utterance.webm");
+  const r = await fetch(`${API_URL}/voice/utterance`, {
+    method: "POST",
+    body: form,
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 async function detail(r: Response): Promise<string> {
   try {
     const body = await r.json();
@@ -327,6 +361,31 @@ export interface ApprovalHistoryRow {
   created_at: string;
   decided_at: string | null;
   decision_reason: string | null;
+}
+
+export type VoicePipelineState =
+  | "idle"
+  | "listening"
+  | "transcribing"
+  | "speaking";
+
+export interface VoiceStatus {
+  state: VoicePipelineState;
+  stt_provider: string | null;
+  tts_provider: string | null;
+  enabled: boolean;
+}
+
+export interface VoiceUtteranceResult {
+  transcript: string;
+  response_text: string;
+  audio_b64: string | null;
+  audio_mime: string;
+  stt_provider: string;
+  tts_provider: string;
+  usd: number;
+  plan_id: string | null;
+  metadata: Record<string, unknown>;
 }
 
 export interface TrustRule {
