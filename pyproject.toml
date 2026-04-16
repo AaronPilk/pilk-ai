@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 license = { text = "Proprietary" }
 authors = [{ name = "Aaron Pilk" }]
 dependencies = [
+    "anthropic>=0.42",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "pydantic>=2.8",

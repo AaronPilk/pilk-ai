@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+const API_URL =
+  (import.meta.env.VITE_PILK_API as string | undefined) ?? "http://127.0.0.1:7424";
 const WS_URL =
   (import.meta.env.VITE_PILK_WS as string | undefined) ?? "ws://127.0.0.1:7424/ws";
 
@@ -79,14 +81,99 @@ export function useConnection() {
   return { status };
 }
 
-export function useMessages(filter?: (m: any) => boolean) {
-  const [messages, setMessages] = useState<any[]>([]);
-  useEffect(
-    () =>
-      pilk.onMessage((m) => {
-        if (!filter || filter(m)) setMessages((prev) => [...prev, m]);
-      }),
-    [filter]
-  );
-  return messages;
+// ── REST helpers ──────────────────────────────────────────────────────
+
+export async function fetchPlans(): Promise<{
+  plans: PlanSummary[];
+  running_plan_id: string | null;
+}> {
+  const r = await fetch(`${API_URL}/plans`);
+  if (!r.ok) throw new Error(`GET /plans failed: ${r.status}`);
+  return r.json();
+}
+
+export async function fetchPlan(id: string): Promise<PlanDetail> {
+  const r = await fetch(`${API_URL}/plans/${id}`);
+  if (!r.ok) throw new Error(`GET /plans/${id} failed: ${r.status}`);
+  return r.json();
+}
+
+export async function fetchCostSummary(): Promise<CostSummary> {
+  const r = await fetch(`${API_URL}/cost/summary`);
+  if (!r.ok) throw new Error(`GET /cost/summary failed: ${r.status}`);
+  return r.json();
+}
+
+export async function fetchCostEntries(limit = 50): Promise<{ entries: CostEntry[] }> {
+  const r = await fetch(`${API_URL}/cost/entries?limit=${limit}`);
+  if (!r.ok) throw new Error(`GET /cost/entries failed: ${r.status}`);
+  return r.json();
+}
+
+// ── Shared types ─────────────────────────────────────────────────────
+
+export type PlanStatus =
+  | "pending"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type StepStatus =
+  | "pending"
+  | "running"
+  | "done"
+  | "failed"
+  | "skipped"
+  | "awaiting_approval";
+
+export interface PlanSummary {
+  id: string;
+  goal: string;
+  status: PlanStatus;
+  created_at: string;
+  updated_at: string;
+  estimated_usd: number | null;
+  actual_usd: number;
+}
+
+export interface Step {
+  id: string;
+  plan_id: string;
+  idx: number;
+  kind: "llm" | "tool" | "agent" | "approval";
+  description: string;
+  status: StepStatus;
+  risk_class: string;
+  input: unknown;
+  output: any;
+  started_at: string | null;
+  finished_at: string | null;
+  cost_usd: number;
+  error: string | null;
+}
+
+export interface PlanDetail extends PlanSummary {
+  steps: Step[];
+}
+
+export interface CostSummary {
+  day_usd: number;
+  week_usd: number;
+  month_usd: number;
+  total_usd: number;
+}
+
+export interface CostEntry {
+  id: number;
+  plan_id: string | null;
+  step_id: string | null;
+  agent_name: string | null;
+  kind: string;
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  usd: number;
+  occurred_at: string;
 }

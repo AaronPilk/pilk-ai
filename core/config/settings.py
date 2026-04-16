@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 7424
     log_level: str = "INFO"
+
+    plan_max_turns: int = 12
+    shell_timeout_s: int = 30
+    planner_model: str = "claude-opus-4-7"
+    llm_ask_model: str = "claude-haiku-4-5"
+    anthropic_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ANTHROPIC_API_KEY", "PILK_ANTHROPIC_API_KEY"),
+    )
 
     @property
     def db_path(self) -> Path:

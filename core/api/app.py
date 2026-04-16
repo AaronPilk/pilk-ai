@@ -1,28 +1,37 @@
 """FastAPI app factory for pilkd.
 
-Batch 0 surface: `/health`, `/version`, and `/ws` (echo). The dashboard
-connects to `/ws` and exchanges JSON envelopes:
+Lifespan wires up the shared singletons: SQLite schema, the connection
+hub, the cost ledger, the tool registry, the gateway, the plan store, and
+(if an API key is present) the Anthropic client + orchestrator.
 
-    {"type": "chat.user",  "id": "...", "text": "..."}
-    {"type": "chat.reply", "id": "...", "text": "..."}
-
-Later batches add more message types on the same socket (plan.updated,
-step.progress, approval.requested, cost.updated, ...).
+If ANTHROPIC_API_KEY is not set, pilkd still boots — but the orchestrator
+is None and the WS layer returns a friendly error on `chat.user`. This
+lets the dashboard render, tabs hydrate, and the user recover by setting
+the key and restarting.
 """
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+import anthropic
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core import __version__
+from core.api.hub import Hub
+from core.api.routes.cost import router as cost_router
 from core.api.routes.health import router as health_router
+from core.api.routes.plans import router as plans_router
 from core.api.ws import router as ws_router
 from core.config import get_settings
 from core.db import ensure_schema
+from core.ledger import Ledger
 from core.logging import configure_logging, get_logger
+from core.orchestrator import Orchestrator, PlanStore
+from core.policy import Gate
+from core.tools import Gateway, ToolRegistry
+from core.tools.builtin import fs_read_tool, fs_write_tool, make_llm_ask_tool, shell_exec_tool
 
 
 @asynccontextmanager
@@ -35,9 +44,62 @@ async def lifespan(app: FastAPI):
     home.mkdir(parents=True, exist_ok=True)
     ensure_schema(settings.db_path)
 
+    hub = Hub()
+    ledger = Ledger(settings.db_path)
+    plans = PlanStore(settings.db_path)
+    registry = ToolRegistry()
+    registry.register(fs_read_tool)
+    registry.register(fs_write_tool)
+    registry.register(shell_exec_tool)
+    gateway = Gateway(registry, Gate())
+
+    orchestrator: Orchestrator | None = None
+    client: anthropic.AsyncAnthropic | None = None
+    if settings.anthropic_api_key:
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        registry.register(make_llm_ask_tool(client, ledger, settings.llm_ask_model))
+
+        async def broadcast(event_type: str, payload: dict) -> None:
+            await hub.broadcast(event_type, payload)
+
+        orchestrator = Orchestrator(
+            client=client,
+            registry=registry,
+            gateway=gateway,
+            ledger=ledger,
+            plans=plans,
+            broadcast=broadcast,
+            planner_model=settings.planner_model,
+            max_turns=settings.plan_max_turns,
+        )
+        log.info(
+            "orchestrator_ready",
+            planner_model=settings.planner_model,
+            llm_ask_model=settings.llm_ask_model,
+            tools=[t.name for t in registry.all()],
+        )
+    else:
+        log.warning(
+            "anthropic_api_key_missing",
+            detail="pilkd is up but chat will reject until ANTHROPIC_API_KEY is set",
+        )
+
+    app.state.hub = hub
+    app.state.ledger = ledger
+    app.state.plans = plans
+    app.state.registry = registry
+    app.state.gateway = gateway
+    app.state.orchestrator = orchestrator
+    app.state.anthropic = client
+    app.state.orchestrator_tasks = set()
+
     log.info("pilkd_ready", home=str(home), host=settings.host, port=settings.port)
-    yield
-    log.info("pilkd_shutdown")
+    try:
+        yield
+    finally:
+        if client is not None:
+            await client.close()
+        log.info("pilkd_shutdown")
 
 
 def create_app() -> FastAPI:
@@ -47,7 +109,6 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Dashboard runs on a different port in dev; loopback-only in both.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -60,5 +121,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health_router)
+    app.include_router(plans_router)
+    app.include_router(cost_router)
     app.include_router(ws_router)
     return app
