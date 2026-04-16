@@ -7,6 +7,11 @@ runner) so every turn can:
   - gate every tool call through the gateway (risk + policy),
   - broadcast live events to connected dashboards.
 
+Two entry points share the loop:
+  - `run(goal)` — free chat, no agent, scoped to the shared workspace.
+  - `agent_run(name, task)` — runs through a registered agent with its
+    manifest's system prompt, tool subset, and sandbox.
+
 Model: Opus 4.7 with adaptive thinking (no budget_tokens, no sampling
 params — both are rejected on 4.7). Prompt caching is applied at the
 top level; tools and system are stable and get the cache hit, messages
@@ -18,6 +23,8 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import anthropic
@@ -25,6 +32,8 @@ import anthropic
 from core.ledger import Ledger, UsageSnapshot
 from core.logging import get_logger
 from core.orchestrator.plans import PlanStore
+from core.registry import AgentRegistry
+from core.sandbox import SandboxManager
 from core.tools import Gateway, ToolRegistry
 from core.tools.registry import ToolContext
 
@@ -32,7 +41,7 @@ log = get_logger("pilkd.orchestrator")
 
 Broadcaster = Callable[[str, dict[str, Any]], Awaitable[None]]
 
-SYSTEM_PROMPT = """You are PILK, a personal execution operating system.
+DEFAULT_SYSTEM_PROMPT = """You are PILK, a personal execution operating system.
 You receive a user goal, build a plan, and execute it by calling the tools
 available to you. You run locally on the user's laptop.
 
@@ -40,7 +49,7 @@ Rules of engagement:
 - Prefer the cheapest adequate action. Read files before editing them.
   Use shell_exec only when a dedicated tool won't do. Use llm_ask for
   bounded sub-tasks where a smaller model suffices.
-- All filesystem and shell work is scoped to the PILK workspace. If a
+- All filesystem and shell work is scoped to your working directory. If a
   tool refuses a path, don't retry with a different absolute path — it
   will also be refused.
 - When a task is complete, finish with a short summary of what you did
@@ -51,6 +60,17 @@ Rules of engagement:
 
 class OrchestratorBusyError(RuntimeError):
     """Raised when a second plan is submitted while one is running."""
+
+
+@dataclass
+class RunContext:
+    goal: str
+    system_prompt: str
+    allowed_tools: list[str] | None  # None = all registered tools
+    agent_name: str | None
+    sandbox_id: str | None
+    sandbox_root: Path | None
+    metadata: dict[str, Any]
 
 
 class Orchestrator:
@@ -65,6 +85,8 @@ class Orchestrator:
         broadcast: Broadcaster,
         planner_model: str,
         max_turns: int,
+        agents: AgentRegistry | None = None,
+        sandboxes: SandboxManager | None = None,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -74,6 +96,8 @@ class Orchestrator:
         self.broadcast = broadcast
         self.planner_model = planner_model
         self.max_turns = max_turns
+        self.agents = agents
+        self.sandboxes = sandboxes
         self._lock = asyncio.Lock()
         self._running_plan_id: str | None = None
 
@@ -81,16 +105,65 @@ class Orchestrator:
     def running_plan_id(self) -> str | None:
         return self._running_plan_id
 
+    # ── Entry points ─────────────────────────────────────────────────
+
     async def run(self, goal: str) -> None:
-        """Execute a user goal end-to-end. Serialized — one plan at a time."""
+        """Free chat path. No agent; shared workspace."""
+        ctx = RunContext(
+            goal=goal,
+            system_prompt=DEFAULT_SYSTEM_PROMPT,
+            allowed_tools=None,
+            agent_name=None,
+            sandbox_id=None,
+            sandbox_root=None,
+            metadata={},
+        )
+        await self._execute(ctx)
+
+    async def agent_run(self, name: str, task: str) -> None:
+        """Run the registered agent `name` against `task`."""
+        if self.agents is None or self.sandboxes is None:
+            raise RuntimeError("agent subsystem not initialized")
+        manifest = self.agents.get(name)
+        sandbox = await self.sandboxes.get_or_create(
+            type=manifest.sandbox.type,
+            agent_name=manifest.name,
+            profile=manifest.sandbox.profile,
+        )
+        ctx = RunContext(
+            goal=task,
+            system_prompt=manifest.system_prompt,
+            allowed_tools=list(manifest.tools),
+            agent_name=manifest.name,
+            sandbox_id=sandbox.description.id,
+            sandbox_root=sandbox.description.workspace,
+            metadata={
+                "agent": manifest.name,
+                "agent_version": manifest.version,
+                "sandbox_id": sandbox.description.id,
+                "budget": manifest.policy.budget.model_dump(),
+            },
+        )
+        try:
+            await self.agents.mark_state(manifest.name, "running")
+            await self._execute(ctx)
+        finally:
+            if self.agents is not None:
+                await self.agents.mark_state(manifest.name, "ready")
+
+    # ── Shared loop ──────────────────────────────────────────────────
+
+    async def _execute(self, rc: RunContext) -> None:
         if self._lock.locked():
             raise OrchestratorBusyError("a plan is already running")
         async with self._lock:
-            plan = await self.plans.create_plan(goal)
+            plan = await self.plans.create_plan(
+                rc.goal, metadata={**rc.metadata, "agent_name": rc.agent_name}
+            )
             self._running_plan_id = plan["id"]
             await self.broadcast("plan.created", plan)
             try:
-                await self._drive(plan["id"], goal)
+                await self._drive(plan["id"], rc)
             except anthropic.APIStatusError as e:
                 log.exception("anthropic_error", plan_id=plan["id"])
                 await self._fail(plan["id"], f"Anthropic API error: {e.message}")
@@ -107,9 +180,9 @@ class Orchestrator:
         )
         await self.broadcast("plan.completed", {**final, "error": reason})
 
-    async def _drive(self, plan_id: str, goal: str) -> None:
-        tools = self.registry.anthropic_schemas()
-        messages: list[dict[str, Any]] = [{"role": "user", "content": goal}]
+    async def _drive(self, plan_id: str, rc: RunContext) -> None:
+        tools = self.registry.anthropic_schemas(allow=rc.allowed_tools)
+        messages: list[dict[str, Any]] = [{"role": "user", "content": rc.goal}]
         final_text: str = ""
 
         for turn in range(self.max_turns):
@@ -124,7 +197,7 @@ class Orchestrator:
             response = await self.client.messages.create(
                 model=self.planner_model,
                 max_tokens=16000,
-                system=SYSTEM_PROMPT,
+                system=rc.system_prompt,
                 tools=tools,
                 messages=messages,
                 thinking={"type": "adaptive"},
@@ -135,7 +208,7 @@ class Orchestrator:
             usd = await self.ledger.record_llm(
                 plan_id=plan_id,
                 step_id=step["id"],
-                agent_name=None,
+                agent_name=rc.agent_name,
                 model=self.planner_model,
                 usage=usage,
             )
@@ -158,8 +231,6 @@ class Orchestrator:
                 "plan_actual_usd": plan["actual_usd"],
             })
 
-            # Always append the full assistant content so tool_use blocks and
-            # any compaction metadata survive for the next turn.
             messages.append({"role": "assistant", "content": response.content})
 
             text_blocks = [
@@ -172,7 +243,6 @@ class Orchestrator:
                 break
 
             if response.stop_reason != "tool_use":
-                # pause_turn is reserved for server-side tools (not used in batch 1)
                 log.warning(
                     "unexpected_stop_reason",
                     plan_id=plan_id,
@@ -198,7 +268,13 @@ class Orchestrator:
                 result = await self.gateway.execute(
                     tu.name,
                     tu_input,
-                    ctx=ToolContext(plan_id=plan_id, step_id=step["id"]),
+                    ctx=ToolContext(
+                        plan_id=plan_id,
+                        step_id=step["id"],
+                        agent_name=rc.agent_name,
+                        sandbox_id=rc.sandbox_id,
+                        sandbox_root=rc.sandbox_root,
+                    ),
                 )
 
                 step = await self.plans.finish_step(
@@ -223,7 +299,9 @@ class Orchestrator:
             messages.append({"role": "user", "content": tool_results_payload})
 
         else:
-            log.warning("plan_max_turns_reached", plan_id=plan_id, turns=self.max_turns)
+            log.warning(
+                "plan_max_turns_reached", plan_id=plan_id, turns=self.max_turns
+            )
             if not final_text:
                 final_text = (
                     f"Stopped after {self.max_turns} planning turns without "

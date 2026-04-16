@@ -110,6 +110,34 @@ export async function fetchCostEntries(limit = 50): Promise<{ entries: CostEntry
   return r.json();
 }
 
+export async function fetchAgents(): Promise<{ agents: AgentRow[] }> {
+  const r = await fetch(`${API_URL}/agents`);
+  if (!r.ok) throw new Error(`GET /agents failed: ${r.status}`);
+  return r.json();
+}
+
+export async function runAgent(name: string, task: string): Promise<void> {
+  const r = await fetch(`${API_URL}/agents/${name}/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task }),
+  });
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try {
+      const body = await r.json();
+      if (body?.detail) detail = body.detail;
+    } catch {}
+    throw new Error(detail);
+  }
+}
+
+export async function fetchSandboxes(): Promise<{ sandboxes: SandboxRow[] }> {
+  const r = await fetch(`${API_URL}/sandboxes`);
+  if (!r.ok) throw new Error(`GET /sandboxes failed: ${r.status}`);
+  return r.json();
+}
+
 // ── Shared types ─────────────────────────────────────────────────────
 
 export type PlanStatus =
@@ -176,4 +204,28 @@ export interface CostEntry {
   output_tokens: number | null;
   usd: number;
   occurred_at: string;
+}
+
+export interface AgentRow {
+  name: string;
+  version: string;
+  manifest_path: string;
+  state: "registered" | "ready" | "running" | "paused" | "stopped" | "errored";
+  installed_at: string;
+  last_run_at: string | null;
+  description?: string;
+  tools?: string[];
+  sandbox?: { type: string; profile: string };
+  budget?: { per_run_usd: number; daily_usd: number };
+}
+
+export interface SandboxRow {
+  id: string;
+  type: string;
+  agent_name: string | null;
+  state: string;
+  created_at: string;
+  destroyed_at: string | null;
+  workspace?: string;
+  profile?: string;
 }

@@ -78,6 +78,43 @@ async def websocket(ws: WebSocket) -> None:
                 task = asyncio.create_task(orchestrator.run(text))
                 tasks.add(task)
                 task.add_done_callback(tasks.discard)
+            elif mtype == "agent.run":
+                agent_name = (msg.get("agent") or "").strip()
+                task = (msg.get("task") or "").strip()
+                if not agent_name or not task:
+                    await ws.send_json(
+                        {"type": "system.error", "text": "agent and task required"}
+                    )
+                    continue
+                if orchestrator is None:
+                    await ws.send_json(
+                        {"type": "system.error", "text": "orchestrator offline"}
+                    )
+                    continue
+                if orchestrator.running_plan_id is not None:
+                    await ws.send_json(
+                        {"type": "system.error", "text": "a plan is already running"}
+                    )
+                    continue
+                registry = ws.app.state.agents
+                if registry is None:
+                    await ws.send_json(
+                        {"type": "system.error", "text": "agent registry offline"}
+                    )
+                    continue
+                try:
+                    registry.get(agent_name)
+                except LookupError as e:
+                    await ws.send_json(
+                        {"type": "system.error", "text": str(e)}
+                    )
+                    continue
+                tasks: set[asyncio.Task] = ws.app.state.orchestrator_tasks
+                task_handle = asyncio.create_task(
+                    orchestrator.agent_run(agent_name, task)
+                )
+                tasks.add(task_handle)
+                task_handle.add_done_callback(tasks.discard)
             elif mtype == "ping":
                 await ws.send_json({"type": "pong", "id": msg.get("id")})
             else:

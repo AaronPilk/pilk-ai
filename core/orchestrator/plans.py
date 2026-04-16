@@ -29,14 +29,17 @@ class PlanStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
 
-    async def create_plan(self, goal: str) -> dict[str, Any]:
+    async def create_plan(
+        self, goal: str, *, metadata: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         pid = _uid("plan")
         now = _now()
+        meta_json = json.dumps(metadata) if metadata else None
         async with connect(self.db_path) as conn:
             await conn.execute(
-                "INSERT INTO plans(id, goal, status, created_at, updated_at) "
-                "VALUES (?, ?, 'running', ?, ?)",
-                (pid, goal, now, now),
+                "INSERT INTO plans(id, goal, status, created_at, updated_at, "
+                "metadata_json) VALUES (?, ?, 'running', ?, ?, ?)",
+                (pid, goal, now, now, meta_json),
             )
             await conn.commit()
         return {
@@ -47,6 +50,8 @@ class PlanStore:
             "updated_at": now,
             "actual_usd": 0.0,
             "estimated_usd": None,
+            "metadata": metadata or {},
+            "agent_name": (metadata or {}).get("agent_name"),
         }
 
     async def finish_plan(self, plan_id: str, status: str) -> dict[str, Any]:
@@ -63,13 +68,13 @@ class PlanStore:
         async with connect(self.db_path) as conn:
             async with conn.execute(
                 "SELECT id, goal, status, created_at, updated_at, "
-                "estimated_usd, actual_usd FROM plans WHERE id = ?",
+                "estimated_usd, actual_usd, metadata_json FROM plans WHERE id = ?",
                 (plan_id,),
             ) as cur:
                 row = await cur.fetchone()
             if row is None:
                 raise LookupError(f"plan {plan_id} not found")
-            plan = dict(row)
+            plan = _hydrate_plan(dict(row))
             async with conn.execute(
                 "SELECT id, plan_id, idx, kind, description, status, risk_class, "
                 "input_json, output_json, started_at, finished_at, cost_usd, error "
@@ -83,12 +88,12 @@ class PlanStore:
     async def list_plans(self, limit: int = 50) -> list[dict[str, Any]]:
         async with connect(self.db_path) as conn, conn.execute(
             "SELECT id, goal, status, created_at, updated_at, "
-            "estimated_usd, actual_usd FROM plans "
+            "estimated_usd, actual_usd, metadata_json FROM plans "
             "ORDER BY created_at DESC LIMIT ?",
             (limit,),
         ) as cur:
             rows = await cur.fetchall()
-        return [dict(r) for r in rows]
+        return [_hydrate_plan(dict(r)) for r in rows]
 
     async def add_step(
         self,
@@ -189,4 +194,20 @@ def _hydrate_step(row: dict) -> dict:
         else:
             out[key.removesuffix("_json")] = None
             out.pop(key, None)
+    return out
+
+
+def _hydrate_plan(row: dict) -> dict:
+    out = dict(row)
+    raw = out.pop("metadata_json", None)
+    meta: dict[str, Any] = {}
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                meta = parsed
+        except json.JSONDecodeError:
+            pass
+    out["metadata"] = meta
+    out["agent_name"] = meta.get("agent_name")
     return out

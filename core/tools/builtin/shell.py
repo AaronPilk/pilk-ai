@@ -18,8 +18,11 @@ from core.tools.registry import Tool, ToolContext, ToolOutcome
 MAX_OUTPUT_BYTES = 32 * 1024
 
 
-def _workspace_cwd() -> str:
-    root = get_settings().workspace_dir.expanduser().resolve()
+def _cwd_for(ctx: ToolContext) -> str:
+    if ctx.sandbox_root is not None:
+        root = ctx.sandbox_root.expanduser().resolve()
+    else:
+        root = get_settings().workspace_dir.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     return str(root)
 
@@ -32,7 +35,7 @@ def _sanitized_env() -> dict[str, str]:
     }
 
 
-async def _shell_exec(args: dict, _ctx: ToolContext) -> ToolOutcome:
+async def _shell_exec(args: dict, ctx: ToolContext) -> ToolOutcome:
     command = str(args["command"])
     settings = get_settings()
     timeout = int(args.get("timeout_s") or settings.shell_timeout_s)
@@ -41,7 +44,7 @@ async def _shell_exec(args: dict, _ctx: ToolContext) -> ToolOutcome:
         command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        cwd=_workspace_cwd(),
+        cwd=_cwd_for(ctx),
         env=_sanitized_env(),
     )
     try:

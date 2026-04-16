@@ -1,8 +1,9 @@
 """Workspace-scoped filesystem tools.
 
-Both tools reject any path that resolves outside `~/PILK/workspace/`.
-There is no absolute-path escape hatch and no symlink following beyond
-the workspace root.
+Path resolution uses `ctx.sandbox_root` when the caller is an agent, and
+falls back to the shared `~/PILK/workspace/` for the default orchestrator
+chat. Either way, paths that escape the chosen root are rejected. No
+absolute-path escape hatch, no symlink following beyond the root.
 """
 
 from __future__ import annotations
@@ -17,15 +18,16 @@ MAX_READ_BYTES = 256 * 1024
 MAX_WRITE_BYTES = 1 * 1024 * 1024
 
 
-def _workspace_root() -> Path:
-    root = get_settings().workspace_dir.expanduser().resolve()
+def _root_for(ctx: ToolContext) -> Path:
+    if ctx.sandbox_root is not None:
+        root = ctx.sandbox_root.expanduser().resolve()
+    else:
+        root = get_settings().workspace_dir.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
-def _resolve_in_workspace(rel: str) -> Path:
-    root = _workspace_root()
-    # Disallow absolute paths outright.
+def _resolve_in(root: Path, rel: str) -> Path:
     candidate = (root / rel).resolve() if not Path(rel).is_absolute() else Path(rel).resolve()
     try:
         candidate.relative_to(root)
@@ -34,8 +36,9 @@ def _resolve_in_workspace(rel: str) -> Path:
     return candidate
 
 
-async def _fs_read(args: dict, _ctx: ToolContext) -> ToolOutcome:
-    path = _resolve_in_workspace(str(args["path"]))
+async def _fs_read(args: dict, ctx: ToolContext) -> ToolOutcome:
+    root = _root_for(ctx)
+    path = _resolve_in(root, str(args["path"]))
     if not path.exists():
         return ToolOutcome(content=f"not found: {path.name}", is_error=True)
     if not path.is_file():
@@ -50,8 +53,9 @@ async def _fs_read(args: dict, _ctx: ToolContext) -> ToolOutcome:
     )
 
 
-async def _fs_write(args: dict, _ctx: ToolContext) -> ToolOutcome:
-    path = _resolve_in_workspace(str(args["path"]))
+async def _fs_write(args: dict, ctx: ToolContext) -> ToolOutcome:
+    root = _root_for(ctx)
+    path = _resolve_in(root, str(args["path"]))
     content: str = str(args["content"])
     data = content.encode("utf-8")
     if len(data) > MAX_WRITE_BYTES:
@@ -62,7 +66,7 @@ async def _fs_write(args: dict, _ctx: ToolContext) -> ToolOutcome:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return ToolOutcome(
-        content=f"wrote {len(data)} bytes to {path.relative_to(_workspace_root())}",
+        content=f"wrote {len(data)} bytes to {path.relative_to(root)}",
         data={"bytes": len(data)},
     )
 

@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS agents (
 CREATE TABLE IF NOT EXISTS sandboxes (
     id            TEXT PRIMARY KEY,
     type          TEXT NOT NULL,               -- browser|process|fs|composite
-    agent_name    TEXT REFERENCES agents(name),
+    agent_name    TEXT,                        -- no FK: sandbox lifecycle decoupled
     state         TEXT NOT NULL,               -- creating|ready|running|suspended|destroyed|errored
     created_at    TEXT NOT NULL,
     destroyed_at  TEXT,
