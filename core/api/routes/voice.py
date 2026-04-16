@@ -91,10 +91,14 @@ async def voice_utterance(
                 "OPENAI_API_KEY / ELEVENLABS_API_KEY to enable cloud drivers"
             ),
         )
-    mime = audio.content_type or "audio/webm"
-    if mime not in ALLOWED_MIMES:
+    # Browsers send `audio/webm;codecs=opus` — strip the parameters for
+    # the allowlist check, but keep the full string for the STT driver
+    # (some accept the codec hint).
+    raw_mime = audio.content_type or "audio/webm"
+    base_mime = raw_mime.split(";", 1)[0].strip().lower()
+    if base_mime not in ALLOWED_MIMES:
         raise HTTPException(
-            status_code=415, detail=f"unsupported audio mime: {mime}"
+            status_code=415, detail=f"unsupported audio mime: {raw_mime}"
         )
     blob = await audio.read()
     if len(blob) == 0:
@@ -105,7 +109,9 @@ async def voice_utterance(
             detail=f"audio too large: {len(blob)} > {MAX_UTTERANCE_BYTES}",
         )
     try:
-        result = await pipeline.utter(audio=blob, mime_type=mime, language=language)
+        result = await pipeline.utter(
+            audio=blob, mime_type=base_mime, language=language
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"voice pipeline: {e}") from e
     return {
