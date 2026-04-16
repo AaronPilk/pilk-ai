@@ -60,15 +60,19 @@ class PilkSocket {
     }
   }
 
-  onMessage(fn: Listener) {
+  onMessage(fn: Listener): () => void {
     this.listeners.add(fn);
-    return () => this.listeners.delete(fn);
+    return () => {
+      this.listeners.delete(fn);
+    };
   }
 
-  onStatus(fn: (s: WsStatus) => void) {
+  onStatus(fn: (s: WsStatus) => void): () => void {
     this.statusListeners.add(fn);
     fn(this.status);
-    return () => this.statusListeners.delete(fn);
+    return () => {
+      this.statusListeners.delete(fn);
+    };
   }
 }
 
