@@ -25,22 +25,36 @@ export default function TopBar() {
     });
   }, []);
 
-  const dot =
-    status === "open" ? "#4fbf7a" : status === "connecting" ? "#e0b84a" : "#e55a5a";
+  const connClass =
+    status === "open"
+      ? "topbar-conn topbar-conn--ok"
+      : status === "connecting"
+        ? "topbar-conn topbar-conn--warn"
+        : "topbar-conn topbar-conn--bad";
+
   return (
     <header className="topbar">
       <div className="topbar-left">
-        <span className="topbar-conn">
-          <span className="dot" style={{ background: dot }} />
-          pilkd · {status}
+        <span className={connClass}>
+          <span className="topbar-conn-dot" />
+          <span className="topbar-conn-label">PILKD</span>
+          <span className="topbar-conn-state">{status}</span>
         </span>
       </div>
       <div className="topbar-right">
+        <div className="topbar-stats">
+          <div className="topbar-stat">
+            <span className="topbar-stat-label">Running</span>
+            <span className="topbar-stat-value">{running}</span>
+          </div>
+          <div className="topbar-stat">
+            <span className="topbar-stat-label">Today</span>
+            <span className="topbar-stat-value">
+              ${summary ? summary.day_usd.toFixed(4) : "0.0000"}
+            </span>
+          </div>
+        </div>
         <PttButton />
-        <span className="topbar-stat">running {running}</span>
-        <span className="topbar-stat">
-          today ${summary ? summary.day_usd.toFixed(4) : "0.0000"}
-        </span>
       </div>
     </header>
   );
