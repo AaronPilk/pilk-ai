@@ -23,6 +23,7 @@ from core import __version__
 from core.api.hub import Hub
 from core.api.routes.agents import router as agents_router
 from core.api.routes.approvals import router as approvals_router
+from core.api.routes.browser import router as browser_router
 from core.api.routes.cost import router as cost_router
 from core.api.routes.health import router as health_router
 from core.api.routes.plans import router as plans_router
@@ -39,12 +40,14 @@ from core.registry import AgentRegistry
 from core.sandbox import SandboxManager
 from core.tools import Gateway, ToolRegistry
 from core.tools.builtin import (
+    BrowserSessionManager,
     finance_deposit_tool,
     finance_transfer_tool,
     finance_withdraw_tool,
     fs_read_tool,
     fs_write_tool,
     make_agent_create_tool,
+    make_browser_tools,
     make_llm_ask_tool,
     net_fetch_tool,
     shell_exec_tool,
@@ -90,6 +93,22 @@ async def lifespan(app: FastAPI):
     registry.register(finance_withdraw_tool)
     registry.register(finance_transfer_tool)
     registry.register(trade_execute_tool)
+
+    browser_sessions: BrowserSessionManager | None = None
+    if settings.browserbase_api_key and settings.browserbase_project_id:
+        browser_sessions = BrowserSessionManager(
+            api_key=settings.browserbase_api_key,
+            project_id=settings.browserbase_project_id,
+            broadcast=broadcast,
+        )
+        for t in make_browser_tools(browser_sessions):
+            registry.register(t)
+        log.info("browserbase_ready", project=settings.browserbase_project_id)
+    else:
+        log.info(
+            "browserbase_disabled",
+            detail="set BROWSERBASE_API_KEY + BROWSERBASE_PROJECT_ID to enable",
+        )
 
     async def on_step_status(step_id: str, status: str) -> None:
         updated = await plans.set_step_status(step_id, status=status)
@@ -200,11 +219,14 @@ async def lifespan(app: FastAPI):
     app.state.voice_state = voice_state
     app.state.voice_pipeline = voice_pipeline
     app.state.orchestrator_tasks = set()
+    app.state.browser_sessions = browser_sessions
 
     log.info("pilkd_ready", home=str(home), host=settings.host, port=settings.port)
     try:
         yield
     finally:
+        if browser_sessions is not None:
+            await browser_sessions.close_all()
         if client is not None:
             await client.close()
         log.info("pilkd_shutdown")
@@ -235,5 +257,6 @@ def create_app() -> FastAPI:
     app.include_router(sandboxes_router)
     app.include_router(approvals_router)
     app.include_router(voice_router)
+    app.include_router(browser_router)
     app.include_router(ws_router)
     return app

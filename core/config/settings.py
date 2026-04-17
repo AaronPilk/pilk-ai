@@ -45,6 +45,19 @@ class Settings(BaseSettings):
     elevenlabs_voice_id: str | None = Field(default=None)
     tts_voice: str | None = Field(default=None)
 
+    browserbase_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "BROWSERBASE_API_KEY", "PILK_BROWSERBASE_API_KEY"
+        ),
+    )
+    browserbase_project_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "BROWSERBASE_PROJECT_ID", "PILK_BROWSERBASE_PROJECT_ID"
+        ),
+    )
+
     @property
     def db_path(self) -> Path:
         return self.home / "pilk.db"

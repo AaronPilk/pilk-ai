@@ -142,6 +142,27 @@ export async function fetchSandboxes(): Promise<{ sandboxes: SandboxRow[] }> {
   return r.json();
 }
 
+export interface BrowserSession {
+  id: string;
+  live_view_url: string;
+  agent_name: string | null;
+  sandbox_id: string | null;
+  status: "open" | "closed" | "errored";
+  current_url: string | null;
+  page_title: string | null;
+  created_at: number;
+}
+
+export async function fetchBrowserSessions(): Promise<{
+  enabled: boolean;
+  sessions: BrowserSession[];
+  active: BrowserSession[];
+}> {
+  const r = await fetch(`${API_URL}/browser/sessions`);
+  if (!r.ok) throw new Error(`GET /browser/sessions failed: ${r.status}`);
+  return r.json();
+}
+
 export async function fetchApprovals(): Promise<{
   pending: ApprovalRequest[];
   recent: ApprovalHistoryRow[];
