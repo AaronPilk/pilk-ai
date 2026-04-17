@@ -3,6 +3,7 @@ import { pilk, type ApprovalRequest } from "../state/api";
 import { useLivePlans } from "../state/plans";
 import PlanCard from "../components/PlanCard";
 import ApprovalInline from "../components/ApprovalInline";
+import VoiceOrb from "../components/VoiceOrb";
 
 type Msg =
   | { kind: "user"; id: string; text: string }
@@ -108,7 +109,7 @@ export default function Chat() {
             never deletes files."</em>
             <br />
             <br />
-            ⌘/Ctrl+Enter to send. Hold the top-right button to talk. Network,
+            Tap the orb below to talk, or type and press ⌘/Ctrl+Enter. Network,
             financial, and system changes pause for your approval inline.
           </div>
         )}
@@ -147,6 +148,9 @@ export default function Chat() {
         })}
         <div ref={endRef} />
       </div>
+      <div className="chat-orb-dock">
+        <VoiceOrb size="large" />
+      </div>
       <div className="chat-composer">
         <textarea
           value={input}
@@ -157,7 +161,7 @@ export default function Chat() {
               ? "A plan is currently running — wait for it to finish…"
               : "Tell PILK what to do. ⌘/Ctrl+Enter to send."
           }
-          rows={4}
+          rows={3}
           disabled={busy}
         />
         <div className="chat-actions">

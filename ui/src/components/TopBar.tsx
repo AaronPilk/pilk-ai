@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   fetchCostSummary,
   pilk,
   useConnection,
   type CostSummary,
 } from "../state/api";
-import PttButton from "./PttButton";
+import VoiceOrb from "./VoiceOrb";
 
 export default function TopBar() {
   const { status } = useConnection();
+  const { pathname } = useLocation();
   const [running, setRunning] = useState(0);
   const [summary, setSummary] = useState<CostSummary | null>(null);
 
@@ -32,6 +34,8 @@ export default function TopBar() {
         ? "topbar-conn topbar-conn--warn"
         : "topbar-conn topbar-conn--bad";
 
+  const onChat = pathname === "/chat" || pathname === "/";
+
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -54,7 +58,9 @@ export default function TopBar() {
             </span>
           </div>
         </div>
-        <PttButton />
+        {!onChat && (
+          <VoiceOrb size="small" showLabel={false} showCaption={false} />
+        )}
       </div>
     </header>
   );

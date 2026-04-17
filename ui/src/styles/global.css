@@ -396,10 +396,18 @@ body {
   font-size: 12.5px;
 }
 
+.chat-orb-dock {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding: 22px 20px 10px;
+}
 .chat-composer {
   border-top: 1px solid var(--border);
-  padding: 14px 20px 16px;
-  background: var(--bg-elev);
+  padding: 16px 20px 18px;
+  background: var(--surface);
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
   display: flex;
   flex-direction: column;
   gap: 10px;
