@@ -24,13 +24,13 @@ from __future__ import annotations
 import asyncio
 import base64
 from email.mime.text import MIMEText
-from pathlib import Path
 
+from core.identity import AccountsStore
 from core.integrations.google.accounts import GoogleRole
-from core.integrations.google.oauth import load_credentials
+from core.integrations.google.oauth import credentials_from_blob
 from core.logging import get_logger
 from core.policy.risk import RiskClass
-from core.tools.registry import Tool, ToolContext, ToolOutcome
+from core.tools.registry import AccountBinding, Tool, ToolContext, ToolOutcome
 
 log = get_logger("pilkd.gmail")
 
@@ -69,27 +69,52 @@ _ROLE_SENDER_PHRASE: dict[GoogleRole, str] = {
 }
 
 
-def make_gmail_tools(role: GoogleRole, credentials_path: Path) -> list[Tool]:
-    """Factory that produces the Gmail tool set bound to one role's credentials.
+def make_gmail_tools(role: GoogleRole, accounts: AccountsStore) -> list[Tool]:
+    """Factory that produces the Gmail tool set bound to one role.
 
     Tool names are role-suffixed so the planner picks them by intent
-    (e.g. "send from PILK" vs "send as me"). Handlers are shared — only
-    the identity routing and display copy differ.
+    (e.g. "send from PILK" vs "send as me"). Handlers share logic; at
+    call time each one resolves the current default account for
+    (google, role) through AccountsStore and uses its OAuth tokens.
+
+    Re-registering is not needed when the default changes — the binding
+    is resolved freshly on every invocation.
     """
     names = _ROLE_NAMES[role]
     noun = _ROLE_NOUN[role]
     sender = _ROLE_SENDER_PHRASE[role]
+    binding = AccountBinding(provider="google", role=role)
+
+    def _load_creds():
+        account = accounts.resolve_binding(binding)
+        if account is None:
+            return None, None
+        tokens = accounts.load_tokens(account.account_id)
+        if tokens is None:
+            return None, account
+        blob = {
+            "access_token": tokens.access_token,
+            "refresh_token": tokens.refresh_token,
+            "client_id": tokens.client_id,
+            "client_secret": tokens.client_secret,
+            "scopes": tokens.scopes,
+            "token_uri": tokens.token_uri,
+            "email": account.email,
+        }
+        return credentials_from_blob(blob), account
+
+    _not_linked = ToolOutcome(
+        content=(
+            f"{noun} isn't connected yet. Open Settings → Connected accounts "
+            f"and link a {role} Google account."
+        ),
+        is_error=True,
+    )
 
     async def _send(args: dict, ctx: ToolContext) -> ToolOutcome:
-        creds = load_credentials(credentials_path)
+        creds, _account = _load_creds()
         if creds is None:
-            return ToolOutcome(
-                content=(
-                    f"{noun} isn't linked yet. Run "
-                    f"`python -m scripts.link_google --role {role}`."
-                ),
-                is_error=True,
-            )
+            return _not_linked
         to = str(args.get("to") or "").strip()
         subject = str(args.get("subject") or "").strip()
         body = str(args.get("body") or "")
@@ -134,15 +159,9 @@ def make_gmail_tools(role: GoogleRole, credentials_path: Path) -> list[Tool]:
             )
 
     async def _search(args: dict, ctx: ToolContext) -> ToolOutcome:
-        creds = load_credentials(credentials_path)
+        creds, _account = _load_creds()
         if creds is None:
-            return ToolOutcome(
-                content=(
-                    f"{noun} isn't linked yet. Run "
-                    f"`python -m scripts.link_google --role {role}`."
-                ),
-                is_error=True,
-            )
+            return _not_linked
         query = str(args.get("query") or "").strip()
         max_results = int(args.get("max_results") or 10)
         max_results = max(1, min(max_results, 25))
@@ -167,15 +186,9 @@ def make_gmail_tools(role: GoogleRole, credentials_path: Path) -> list[Tool]:
         )
 
     async def _read(args: dict, ctx: ToolContext) -> ToolOutcome:
-        creds = load_credentials(credentials_path)
+        creds, _account = _load_creds()
         if creds is None:
-            return ToolOutcome(
-                content=(
-                    f"{noun} isn't linked yet. Run "
-                    f"`python -m scripts.link_google --role {role}`."
-                ),
-                is_error=True,
-            )
+            return _not_linked
         message_id = str(args.get("message_id") or "").strip()
         if not message_id:
             return ToolOutcome(
@@ -199,15 +212,9 @@ def make_gmail_tools(role: GoogleRole, credentials_path: Path) -> list[Tool]:
         )
 
     async def _thread_read(args: dict, ctx: ToolContext) -> ToolOutcome:
-        creds = load_credentials(credentials_path)
+        creds, _account = _load_creds()
         if creds is None:
-            return ToolOutcome(
-                content=(
-                    f"{noun} isn't linked yet. Run "
-                    f"`python -m scripts.link_google --role {role}`."
-                ),
-                is_error=True,
-            )
+            return _not_linked
         thread_id = str(args.get("thread_id") or "").strip()
         if not thread_id:
             return ToolOutcome(
@@ -263,6 +270,7 @@ def make_gmail_tools(role: GoogleRole, credentials_path: Path) -> list[Tool]:
         },
         risk=RiskClass.COMMS,
         handler=_send,
+        account_binding=binding,
     )
     search_tool = Tool(
         name=names["search"],
@@ -282,6 +290,7 @@ def make_gmail_tools(role: GoogleRole, credentials_path: Path) -> list[Tool]:
         },
         risk=RiskClass.NET_READ,
         handler=_search,
+        account_binding=binding,
     )
     read_tool = Tool(
         name=names["read"],
@@ -296,6 +305,7 @@ def make_gmail_tools(role: GoogleRole, credentials_path: Path) -> list[Tool]:
         },
         risk=RiskClass.NET_READ,
         handler=_read,
+        account_binding=binding,
     )
     thread_read_tool = Tool(
         name=names["thread_read"],
@@ -320,6 +330,7 @@ def make_gmail_tools(role: GoogleRole, credentials_path: Path) -> list[Tool]:
         },
         risk=RiskClass.NET_READ,
         handler=_thread_read,
+        account_binding=binding,
     )
     return [send_tool, search_tool, read_tool, thread_read_tool]
 

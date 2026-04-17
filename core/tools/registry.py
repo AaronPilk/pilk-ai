@@ -17,6 +17,20 @@ from typing import Any
 from core.policy.risk import RiskClass
 
 
+@dataclass(frozen=True)
+class AccountBinding:
+    """Which connected account a tool needs at call time.
+
+    The tool registry does not resolve this — handlers ask the
+    AccountsStore via a closure at invocation time. Keeps the default
+    account switchable without re-registering tools.
+    """
+
+    provider: str
+    role: str              # "system" | "user"
+    account_id: str | None = None
+
+
 @dataclass
 class Tool:
     name: str
@@ -24,6 +38,7 @@ class Tool:
     input_schema: dict[str, Any]
     risk: RiskClass
     handler: Callable[[dict[str, Any], ToolContext], Awaitable[ToolOutcome]]
+    account_binding: AccountBinding | None = None
 
 
 @dataclass

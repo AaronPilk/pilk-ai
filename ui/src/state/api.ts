@@ -319,6 +319,81 @@ export async function setGovernorConfig(body: {
   return { enabled: true, ...s };
 }
 
+// ── Connected accounts (OAuth-first) ─────────────────────────────
+
+export interface ProviderScope {
+  name: string;
+  label: string;
+  risk: string;
+}
+
+export interface ProviderInfo {
+  name: string;
+  label: string;
+  supports_roles: Array<"system" | "user">;
+  scopes: ProviderScope[];
+}
+
+export interface ConnectedAccount {
+  account_id: string;
+  provider: string;
+  role: "system" | "user";
+  label: string;
+  email: string | null;
+  username: string | null;
+  scopes: string[];
+  status: "connected" | "expired" | "revoked" | "pending";
+  linked_at: string;
+  last_refreshed_at: string | null;
+}
+
+export async function fetchProviders(): Promise<{ providers: ProviderInfo[] }> {
+  const r = await fetch(`${API_URL}/integrations/providers`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function fetchConnectedAccounts(): Promise<{
+  accounts: ConnectedAccount[];
+  defaults: Record<string, string>;
+}> {
+  const r = await fetch(`${API_URL}/integrations/accounts`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function startOAuthConnection(body: {
+  provider: string;
+  role: "system" | "user";
+  make_default?: boolean;
+}): Promise<{ auth_url: string; state: string; redirect_uri: string }> {
+  const r = await fetch(`${API_URL}/integrations/accounts/oauth/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function deleteConnectedAccount(accountId: string): Promise<void> {
+  const r = await fetch(
+    `${API_URL}/integrations/accounts/${encodeURIComponent(accountId)}`,
+    { method: "DELETE" },
+  );
+  if (!r.ok) throw new Error(await detail(r));
+}
+
+export async function setDefaultConnectedAccount(
+  accountId: string,
+): Promise<void> {
+  const r = await fetch(
+    `${API_URL}/integrations/accounts/${encodeURIComponent(accountId)}/default`,
+    { method: "POST" },
+  );
+  if (!r.ok) throw new Error(await detail(r));
+}
+
 // ── Integrations ─────────────────────────────────────────────────
 
 export type GoogleRole = "system" | "user";

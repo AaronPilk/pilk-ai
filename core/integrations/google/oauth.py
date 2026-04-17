@@ -109,8 +109,9 @@ def status(credentials_path: Path) -> GoogleLinkStatus:
 def load_credentials(credentials_path: Path) -> GoogleCredentials | None:
     """Return live Credentials or None if not linked.
 
-    The google SDK handles refresh automatically on first API call; we
-    don't need to refresh eagerly here.
+    Legacy Batch-K entrypoint — reads a per-role JSON file directly.
+    New code path resolves credentials through AccountsStore and calls
+    `credentials_from_blob` instead.
     """
     if not credentials_path.exists():
         return None
@@ -119,15 +120,28 @@ def load_credentials(credentials_path: Path) -> GoogleCredentials | None:
     except Exception as e:  # pragma: no cover
         log.warning("google_credentials_unreadable", detail=str(e))
         return None
+    return credentials_from_blob(data)
+
+
+def credentials_from_blob(data: dict) -> GoogleCredentials | None:
+    """Build a live GoogleCredentials from a token dict.
+
+    Accepts either the legacy Batch-K file shape or the AccountsStore
+    secrets shape — they share the fields we care about
+    (access_token, refresh_token, client_id, client_secret, scopes).
+    """
+    refresh = data.get("refresh_token")
+    if not refresh:
+        return None
     try:
         from google.oauth2.credentials import Credentials  # type: ignore
 
         creds = Credentials(
             token=data.get("access_token"),
-            refresh_token=data["refresh_token"],
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=data["client_id"],
-            client_secret=data["client_secret"],
+            refresh_token=refresh,
+            token_uri=data.get("token_uri", "https://oauth2.googleapis.com/token"),
+            client_id=data.get("client_id"),
+            client_secret=data.get("client_secret"),
             scopes=list(data.get("scopes") or DEFAULT_SCOPES),
         )
     except Exception as e:  # pragma: no cover — SDK missing

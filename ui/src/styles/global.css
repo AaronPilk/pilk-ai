@@ -2495,6 +2495,117 @@ body {
 .connected-account + .connected-account {
   margin-top: 10px;
 }
+.accounts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.connected-account-pills {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.connected-account-tag {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.connected-account-tag--default {
+  color: var(--accent-strong);
+  border-color: var(--accent);
+  background: var(--surface-active);
+}
+.connected-account-pill--warn {
+  color: var(--warn);
+  border-color: rgba(240, 192, 80, 0.4);
+  background: rgba(240, 192, 80, 0.08);
+}
+.connected-account-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+}
+.btn--danger {
+  color: var(--danger);
+  border-color: rgba(255, 107, 107, 0.35);
+  background: rgba(255, 107, 107, 0.06);
+}
+.btn--danger:hover {
+  background: rgba(255, 107, 107, 0.14);
+}
+.accounts-connect {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.accounts-connect-label {
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.accounts-provider-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.accounts-provider-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-hover);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+.accounts-provider-chip:hover {
+  background: var(--surface-active);
+  border-color: var(--border-strong);
+}
+.accounts-provider-chip-label {
+  font-weight: 500;
+}
+.accounts-provider-chip-role {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.accounts-confirm {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  background: var(--surface-active);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.accounts-confirm-text {
+  font-size: 13px;
+  color: var(--text);
+}
+.accounts-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 
 /* Coding engines card rows. */
 .coding-engines {

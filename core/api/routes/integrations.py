@@ -1,16 +1,13 @@
-"""Integrations HTTP surface.
+"""Back-compat Google integration shim over the generic accounts store.
 
-  GET /integrations/status                          which accounts linked
-  GET /integrations/google/{role}/inbox/glance      24h unread summary
+Old Home + Settings code paths want:
 
-Read-only surface. Write actions (send, reply, archive) go through the
-tool gateway + approval queue — never through this router.
+  GET /integrations/status                       {google: {system, user}}
+  GET /integrations/google/{role}/inbox/glance   24h unread summary
 
-A single Google integration has two roles:
-  - system: PILK's operational mail (sends reports to you, handles
-            developer-account signups, etc.)
-  - user:   your real working inbox (triage, drafting replies)
-Each role has its own OAuth blob; see core/integrations/google/accounts.
+Both now read from `AccountsStore` under the hood. New code paths use
+`/integrations/accounts*` directly; this file stays so the UI doesn't
+break mid-refactor.
 """
 
 from __future__ import annotations
@@ -19,13 +16,8 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException, Request
 
-from core.config import get_settings
-from core.integrations.google import (
-    ROLE_LABELS,
-    ROLES,
-    google_status,
-    load_credentials,
-)
+from core.identity import AccountBinding, AccountsStore
+from core.integrations.google.oauth import credentials_from_blob
 from core.logging import get_logger
 
 log = get_logger("pilkd.integrations")
@@ -33,17 +25,47 @@ log = get_logger("pilkd.integrations")
 router = APIRouter(prefix="/integrations")
 
 
+def _store(request: Request) -> AccountsStore:
+    store = getattr(request.app.state, "accounts", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="accounts store offline")
+    return store
+
+
+ROLE_LABELS: dict[str, str] = {
+    "system": "PILK operational mail",
+    "user": "Your working mail",
+}
+
+
 @router.get("/status")
 async def integrations_status(request: Request) -> dict:
-    settings = get_settings()
+    store = _store(request)
     google: dict = {}
-    for role in ROLES:
-        status = google_status(settings.google_role_path(role))
-        google[role] = {
-            **status.to_public(),
-            "role": role,
-            "label": ROLE_LABELS[role],
-        }
+    for role in ("system", "user"):
+        account = store.default("google", role)  # type: ignore[arg-type]
+        if account is not None:
+            google[role] = {
+                "linked": True,
+                "email": account.email,
+                "scopes": list(account.scopes),
+                "linked_at": account.linked_at,
+                "error": None,
+                "role": role,
+                "label": ROLE_LABELS[role],
+                "account_id": account.account_id,
+            }
+        else:
+            google[role] = {
+                "linked": False,
+                "email": None,
+                "scopes": [],
+                "linked_at": None,
+                "error": None,
+                "role": role,
+                "label": ROLE_LABELS[role],
+                "account_id": None,
+            }
     return {"google": google}
 
 
@@ -55,19 +77,13 @@ INBOX_GLANCE_MAX = 25
 
 
 @router.get("/google/{role}/inbox/glance")
-async def google_inbox_glance(role: str) -> dict:
-    """Cheap unread-today summary for the Home command center.
-
-    Returns unread count + a handful of senders/subjects, nothing
-    expensive. Role must be "system" or "user"; Home calls this with
-    `user` so the tile reflects the real inbox, not the operational
-    mailbox.
-    """
-    if role not in ROLES:
+async def google_inbox_glance(role: str, request: Request) -> dict:
+    if role not in ("system", "user"):
         raise HTTPException(status_code=400, detail=f"unknown role: {role}")
-    settings = get_settings()
-    creds = load_credentials(settings.google_role_path(role))
-    if creds is None:
+    store = _store(request)
+    binding = AccountBinding(provider="google", role=role)
+    account = store.resolve_binding(binding)
+    if account is None:
         return {
             "linked": False,
             "email": None,
@@ -75,13 +91,43 @@ async def google_inbox_glance(role: str) -> dict:
             "preview": [],
             "role": role,
         }
+    tokens = store.load_tokens(account.account_id)
+    if tokens is None:
+        return {
+            "linked": False,
+            "email": account.email,
+            "unread": 0,
+            "preview": [],
+            "role": role,
+            "error": "tokens missing on disk; try re-linking",
+        }
+    creds = credentials_from_blob(
+        {
+            "access_token": tokens.access_token,
+            "refresh_token": tokens.refresh_token,
+            "client_id": tokens.client_id,
+            "client_secret": tokens.client_secret,
+            "scopes": tokens.scopes,
+            "token_uri": tokens.token_uri,
+            "email": account.email,
+        }
+    )
+    if creds is None:
+        return {
+            "linked": True,
+            "email": account.email,
+            "unread": 0,
+            "preview": [],
+            "role": role,
+            "error": "couldn't build Google credentials",
+        }
     try:
         result = await asyncio.to_thread(_inbox_glance_sync, creds)
     except Exception as e:
-        log.exception("inbox_glance_failed", role=role)
+        log.exception("inbox_glance_failed", role=role, account_id=account.account_id)
         return {
             "linked": True,
-            "email": creds.email,
+            "email": account.email,
             "unread": 0,
             "preview": [],
             "role": role,
@@ -89,7 +135,7 @@ async def google_inbox_glance(role: str) -> dict:
         }
     return {
         "linked": True,
-        "email": creds.email,
+        "email": account.email,
         "unread": result["unread"],
         "preview": result["preview"],
         "role": role,

@@ -7,18 +7,21 @@ import {
   type WakePhrase,
 } from "../voice/ambient";
 import {
+  deleteConnectedAccount,
   fetchCodingEngines,
+  fetchConnectedAccounts,
   fetchGovernorStatus,
-  fetchIntegrationsStatus,
+  fetchProviders,
   pilk,
+  setDefaultConnectedAccount,
   setGovernorConfig,
   setGovernorOverride,
+  startOAuthConnection,
   type CodingEngineHealth,
-  type GoogleIntegrationStatus,
-  type GoogleRole,
+  type ConnectedAccount,
   type GovernorStatus,
-  type IntegrationsStatus,
   type OverrideMode,
+  type ProviderInfo,
 } from "../state/api";
 
 const WAKE_LABELS: Record<WakePhrase, string> = {
@@ -71,7 +74,16 @@ export default function Settings() {
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [gov, setGov] = useState<GovernorStatus | null>(null);
   const [govBusy, setGovBusy] = useState(false);
-  const [integrations, setIntegrations] = useState<IntegrationsStatus | null>(null);
+  const [accounts, setAccounts] = useState<ConnectedAccount[] | null>(null);
+  const [accountDefaults, setAccountDefaults] = useState<Record<string, string>>(
+    {},
+  );
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [connectOpen, setConnectOpen] = useState<
+    null | { provider: string; role: "system" | "user" }
+  >(null);
+  const [connectBusy, setConnectBusy] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const [codingEngines, setCodingEngines] = useState<CodingEngineHealth[] | null>(
     null,
   );
@@ -89,8 +101,16 @@ export default function Settings() {
     fetchGovernorStatus().then(setGov).catch(() => {});
   }, []);
 
-  const refreshIntegrations = useCallback(() => {
-    fetchIntegrationsStatus().then(setIntegrations).catch(() => {});
+  const refreshAccounts = useCallback(() => {
+    fetchConnectedAccounts()
+      .then((r) => {
+        setAccounts(r.accounts);
+        setAccountDefaults(r.defaults);
+      })
+      .catch(() => setAccounts([]));
+    fetchProviders()
+      .then((r) => setProviders(r.providers))
+      .catch(() => setProviders([]));
   }, []);
 
   const refreshCodingEngines = useCallback(() => {
@@ -101,12 +121,19 @@ export default function Settings() {
 
   useEffect(() => {
     refreshGov();
-    refreshIntegrations();
+    refreshAccounts();
     refreshCodingEngines();
     return pilk.onMessage((m) => {
       if (m.type === "cost.updated" || m.type === "plan.completed") refreshGov();
+      if (
+        m.type === "account.linked" ||
+        m.type === "account.removed" ||
+        m.type === "account.default_changed"
+      ) {
+        refreshAccounts();
+      }
     });
-  }, [refreshGov, refreshIntegrations, refreshCodingEngines]);
+  }, [refreshGov, refreshAccounts, refreshCodingEngines]);
 
   const onOverride = async (mode: OverrideMode) => {
     setGovBusy(true);
@@ -439,32 +466,125 @@ export default function Settings() {
           <button
             type="button"
             className="btn"
-            onClick={refreshIntegrations}
+            onClick={refreshAccounts}
             title="Refresh connection status"
           >
             Refresh
           </button>
         </div>
         <p className="settings-card-body">
-          Two Gmail identities with different purposes. PILK's operational
-          mail signs itself up for tools, receives verification emails, and
-          sends you reports. Your working mail is your real inbox — PILK
-          reads and helps triage, and every outgoing message from it is
-          reviewed one-by-one in the approval queue.
+          OAuth-connected services PILK can use. <strong>PILK</strong>{" "}
+          accounts are PILK acting as itself (signups, verifications,
+          reports). <strong>You</strong> accounts are PILK acting on your
+          behalf (triage, replies). Every outgoing message from a{" "}
+          <em>You</em> account requires fresh approval.
         </p>
 
-        <GoogleAccountRow
-          role="system"
-          label="PILK operational mail"
-          description="Signups, verifications, reports, and outbound from PILK itself."
-          status={integrations?.google?.system}
-        />
-        <GoogleAccountRow
-          role="user"
-          label="Your working mail"
-          description="Your real inbox. Outgoing from this identity always requires your approval."
-          status={integrations?.google?.user}
-        />
+        {accounts === null ? (
+          <div className="settings-note">Reading connected accounts…</div>
+        ) : accounts.length === 0 ? (
+          <div className="settings-note">
+            No accounts connected yet. Click Connect below to link a Gmail
+            account.
+          </div>
+        ) : (
+          <div className="accounts-list">
+            {accounts.map((a) => {
+              const isDefault =
+                accountDefaults[`${a.provider}:${a.role}`] === a.account_id;
+              return (
+                <AccountRow
+                  key={a.account_id}
+                  account={a}
+                  isDefault={isDefault}
+                  onRemove={async () => {
+                    await deleteConnectedAccount(a.account_id).catch(() => {});
+                    refreshAccounts();
+                  }}
+                  onSetDefault={async () => {
+                    await setDefaultConnectedAccount(a.account_id).catch(
+                      () => {},
+                    );
+                    refreshAccounts();
+                  }}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        <div className="accounts-connect">
+          <div className="accounts-connect-label">Connect a new account</div>
+          <div className="accounts-provider-grid">
+            {providers.flatMap((p) =>
+              p.supports_roles.map((r) => (
+                <button
+                  key={`${p.name}:${r}`}
+                  type="button"
+                  className="accounts-provider-chip"
+                  onClick={() => {
+                    setConnectError(null);
+                    setConnectOpen({ provider: p.name, role: r });
+                  }}
+                >
+                  <span className="accounts-provider-chip-label">{p.label}</span>
+                  <span className="accounts-provider-chip-role">
+                    {r === "system" ? "PILK" : "You"}
+                  </span>
+                </button>
+              )),
+            )}
+          </div>
+        </div>
+
+        {connectOpen && (
+          <div className="accounts-confirm">
+            <div className="accounts-confirm-text">
+              About to open Google sign-in for the{" "}
+              <strong>{connectOpen.role === "system" ? "PILK" : "You"}</strong>{" "}
+              role.
+            </div>
+            <div className="accounts-confirm-actions">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setConnectOpen(null)}
+                disabled={connectBusy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn--primary"
+                disabled={connectBusy}
+                onClick={async () => {
+                  if (!connectOpen) return;
+                  setConnectBusy(true);
+                  setConnectError(null);
+                  try {
+                    const r = await startOAuthConnection({
+                      provider: connectOpen.provider,
+                      role: connectOpen.role,
+                    });
+                    window.open(r.auth_url, "_blank", "noopener,noreferrer");
+                    setConnectOpen(null);
+                  } catch (e) {
+                    setConnectError(
+                      e instanceof Error ? e.message : String(e),
+                    );
+                  } finally {
+                    setConnectBusy(false);
+                  }
+                }}
+              >
+                {connectBusy ? "Opening…" : "Open sign-in"}
+              </button>
+            </div>
+          </div>
+        )}
+        {connectError && (
+          <div className="settings-note settings-note--warn">{connectError}</div>
+        )}
       </section>
 
       <section className="settings-card">
@@ -531,56 +651,78 @@ function clamp01(x: number): number {
   return x;
 }
 
-function GoogleAccountRow({
-  role,
-  label,
-  description,
-  status,
+function AccountRow({
+  account,
+  isDefault,
+  onRemove,
+  onSetDefault,
 }: {
-  role: GoogleRole;
-  label: string;
-  description: string;
-  status: GoogleIntegrationStatus | undefined;
+  account: ConnectedAccount;
+  isDefault: boolean;
+  onRemove: () => Promise<void> | void;
+  onSetDefault: () => Promise<void> | void;
 }) {
-  const linked = status?.linked === true;
+  const roleWord = account.role === "system" ? "PILK" : "You";
+  const statusLabel =
+    account.status === "connected"
+      ? "Connected"
+      : account.status === "expired"
+        ? "Needs re-auth"
+        : account.status === "revoked"
+          ? "Revoked"
+          : "Pending";
+  const statusTone = account.status === "connected" ? "ok" : "warn";
   return (
     <div className="connected-account">
       <div className="connected-account-head">
-        <div className="connected-account-label">{label}</div>
-        {linked ? (
-          <span className="connected-account-pill connected-account-pill--ok">
-            Connected
+        <div className="connected-account-label">
+          {account.label || `${account.provider} · ${roleWord}`}
+        </div>
+        <div className="connected-account-pills">
+          <span className="connected-account-tag">{roleWord}</span>
+          {isDefault && (
+            <span className="connected-account-tag connected-account-tag--default">
+              Default
+            </span>
+          )}
+          <span
+            className={`connected-account-pill connected-account-pill--${statusTone}`}
+          >
+            {statusLabel}
           </span>
-        ) : (
-          <span className="connected-account-pill">Not connected</span>
+        </div>
+      </div>
+      <div className="connected-account-email">
+        {account.email ?? account.username ?? "(identity unknown)"}
+      </div>
+      <div className="connected-account-scopes">
+        {account.scopes.length} scope
+        {account.scopes.length === 1 ? "" : "s"} granted
+        {account.linked_at && (
+          <>
+            {" · linked "}
+            {new Date(account.linked_at).toLocaleString()}
+          </>
         )}
       </div>
-      <div className="connected-account-description">{description}</div>
-      {linked ? (
-        <>
-          <div className="connected-account-email">
-            {status?.email ?? "(email unknown)"}
-          </div>
-          <div className="connected-account-scopes">
-            {(status?.scopes.length ?? 0)} scope
-            {(status?.scopes.length ?? 0) === 1 ? "" : "s"} granted
-            {status?.linked_at && (
-              <>
-                {" · linked "}
-                {new Date(status.linked_at).toLocaleString()}
-              </>
-            )}
-          </div>
-        </>
-      ) : (
-        <div className="connected-account-body">
-          Link once with{" "}
-          <code>python -m scripts.link_google --role {role}</code> from the
-          repo root (needs <code>pilk-google-client.json</code> from Google
-          Cloud → Credentials). Gmail tools for this identity register
-          automatically after linking.
-        </div>
-      )}
+      <div className="connected-account-actions">
+        {!isDefault && (
+          <button type="button" className="btn" onClick={() => onSetDefault()}>
+            Set as default
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn btn--danger"
+          onClick={() => {
+            if (confirm(`Remove ${account.email ?? account.label}?`)) {
+              void onRemove();
+            }
+          }}
+        >
+          Remove
+        </button>
+      </div>
     </div>
   );
 }

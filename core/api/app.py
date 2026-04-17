@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core import __version__
 from core.api.hub import Hub
+from core.api.routes.accounts import router as accounts_router
 from core.api.routes.agents import router as agents_router
 from core.api.routes.approvals import router as approvals_router
 from core.api.routes.browser import router as browser_router
@@ -45,12 +46,17 @@ from core.config import get_settings
 from core.db import ensure_schema
 from core.governor import DailyBudget, Governor, Tier, Tiers, TierSpec
 from core.governor.providers import build_providers
+from core.identity import AccountsStore
+from core.integrations.client_secrets import load_client
 from core.integrations.google import (
     ROLES,
-    google_status,
     make_gmail_tools,
     migrate_legacy_if_needed,
 )
+from core.integrations.legacy_migration import migrate_batch_k_google_files
+from core.integrations.oauth_flow import OAuthFlowManager
+from core.integrations.provider import ProviderRegistry
+from core.integrations.providers.google import google_provider
 from core.ledger import Ledger
 from core.logging import configure_logging, get_logger
 from core.memory import MemoryStore
@@ -150,32 +156,42 @@ async def lifespan(app: FastAPI):
     registry.register(finance_transfer_tool)
     registry.register(trade_execute_tool)
 
-    # Google / Gmail integration — PILK distinguishes a *system* identity
-    # (operational mail, PILK acting as itself) from a *user* identity
-    # (the real inbox, PILK acting on your behalf). Each role is a
-    # separate OAuth blob; each gets its own suffixed tool set.
-    migrate_legacy_if_needed(home)
+    # Connected accounts: one AccountsStore + one ProviderRegistry for
+    # every OAuth-backed integration. Provider-specific tool factories
+    # (Gmail, future Slack, etc.) bind to the store via AccountBinding
+    # and resolve the live account at call time.
+    migrate_legacy_if_needed(home)                # Batch K → role files
+    accounts = AccountsStore(home)
+    accounts.ensure_layout()
+    oauth_providers = ProviderRegistry()
+    oauth_providers.register(google_provider)
+    migrated = migrate_batch_k_google_files(home, accounts)
+    if migrated:
+        log.info("accounts_legacy_imported", account_ids=migrated)
+
+    def _load_oauth_client(name: str) -> tuple[str, str] | None:
+        return load_client(name, settings=settings)
+
+    oauth_flow = OAuthFlowManager(
+        providers=oauth_providers,
+        accounts=accounts,
+        client_loader=_load_oauth_client,
+        public_base_url=f"http://{settings.host}:{settings.port}",
+    )
+
+    # Gmail tools bind to (google, role) via the store. Registration is
+    # unconditional — if no account is linked for a role, the tool
+    # itself surfaces a friendly "connect it in Settings" message at
+    # call time. This keeps the tool list stable across link/unlink.
     for role in ROLES:
-        role_path = settings.google_role_path(role)
-        g = google_status(role_path)
-        if g.linked:
-            for t in make_gmail_tools(role, role_path):
-                registry.register(t)
-            log.info(
-                "gmail_role_ready",
-                role=role,
-                email=g.email,
-                scopes=len(g.scopes or []),
-            )
-        else:
-            log.info(
-                "gmail_role_not_linked",
-                role=role,
-                detail=(
-                    f"run `python -m scripts.link_google --role {role}` "
-                    "to connect this identity"
-                ),
-            )
+        for t in make_gmail_tools(role, accounts):
+            registry.register(t)
+        linked = accounts.default("google", role)
+        log.info(
+            "gmail_role_registered",
+            role=role,
+            linked_email=linked.email if linked else None,
+        )
 
     browser_sessions: BrowserSessionManager | None = None
     if settings.browserbase_api_key and settings.browserbase_project_id:
@@ -330,6 +346,9 @@ async def lifespan(app: FastAPI):
     app.state.governor = governor
     app.state.memory = memory
     app.state.coding_router = coding_router
+    app.state.accounts = accounts
+    app.state.oauth_providers = oauth_providers
+    app.state.oauth_flow = oauth_flow
 
     log.info("pilkd_ready", home=str(home), host=settings.host, port=settings.port)
     try:
@@ -370,6 +389,7 @@ def create_app() -> FastAPI:
     app.include_router(browser_router)
     app.include_router(governor_router)
     app.include_router(integrations_router)
+    app.include_router(accounts_router)
     app.include_router(memory_router)
     app.include_router(logs_router)
     app.include_router(coding_http_router)
