@@ -2607,6 +2607,151 @@ body {
   gap: 8px;
 }
 
+.connected-account-grants {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+.connected-account-grants-label {
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 600;
+  margin-right: 4px;
+}
+.connected-account-grants-empty {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+.connected-account-grants-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.connected-account-grant-chip {
+  font-size: 11.5px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+}
+.connected-account-grants-manage {
+  margin-left: auto;
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+.connected-account-grants-manage:hover {
+  color: var(--accent-strong);
+  border-color: var(--accent);
+}
+
+.manage-access-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.manage-access-modal {
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+  background: var(--surface-strong);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.manage-access-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.manage-access-eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.manage-access-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.manage-access-sub {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.manage-access-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.manage-access-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.manage-access-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  flex: 1;
+}
+.manage-access-agent-name {
+  font-size: 13px;
+  color: var(--text);
+}
+.manage-access-agent-state {
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+
+.agent-tool--account {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: var(--surface-active);
+}
+.agent-access-note {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  padding: 6px 0;
+}
+
 /* Coding engines card rows. */
 .coding-engines {
   display: flex;

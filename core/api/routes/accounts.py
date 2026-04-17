@@ -21,7 +21,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from core.identity import AccountsStore
+from core.identity import AccountsStore, GrantsStore
 from core.integrations.oauth_flow import OAuthFlowManager
 from core.integrations.provider import ProviderRegistry
 from core.logging import get_logger
@@ -59,6 +59,13 @@ def _flow(request: Request) -> OAuthFlowManager:
     if flow is None:
         raise HTTPException(status_code=503, detail="oauth flow offline")
     return flow
+
+
+def _grants(request: Request) -> GrantsStore:
+    grants = getattr(request.app.state, "grants", None)
+    if grants is None:
+        raise HTTPException(status_code=503, detail="grants store offline")
+    return grants
 
 
 async def _broadcast(request: Request, event_type: str, payload: dict) -> None:
@@ -133,6 +140,11 @@ async def remove_account(account_id: str, request: Request) -> dict:
     store = _store(request)
     if not store.remove(account_id):
         raise HTTPException(status_code=404, detail=f"no such account: {account_id}")
+    # Drop the removed account from every grant list; agents silently lose
+    # access rather than erroring on the next call.
+    grants = getattr(request.app.state, "grants", None)
+    if grants is not None:
+        grants.remove_account_everywhere(account_id)
     await _broadcast(request, "account.removed", {"account_id": account_id})
     return {"removed": account_id}
 
@@ -144,6 +156,64 @@ async def set_default(account_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail=f"no such account: {account_id}")
     await _broadcast(request, "account.default_changed", {"account_id": account_id})
     return {"default": account_id}
+
+
+# ── Agent access grants ───────────────────────────────────────────────
+
+
+@router.get("/grants")
+async def list_grants(request: Request) -> dict:
+    grants = _grants(request)
+    return {
+        "grants": {
+            name: {
+                "agent_name": g.agent_name,
+                "accounts": g.accounts,
+                "granted_at": g.granted_at,
+                "granted_by": g.granted_by,
+            }
+            for name, g in grants.all().items()
+        },
+    }
+
+
+@router.get("/accounts/{account_id}/agents")
+async def agents_for_account(account_id: str, request: Request) -> dict:
+    _ = _store(request).get(account_id)
+    grants = _grants(request)
+    return {"account_id": account_id, "agents": grants.agents_for(account_id)}
+
+
+@router.post("/accounts/{account_id}/agents/{agent_name}")
+async def grant_access(
+    account_id: str, agent_name: str, request: Request
+) -> dict:
+    store = _store(request)
+    if store.get(account_id) is None:
+        raise HTTPException(status_code=404, detail=f"no such account: {account_id}")
+    grants = _grants(request)
+    added = grants.grant(agent_name, account_id)
+    await _broadcast(
+        request,
+        "agent.grant_added",
+        {"agent": agent_name, "account_id": account_id},
+    )
+    return {"granted": added, "agent": agent_name, "account_id": account_id}
+
+
+@router.delete("/accounts/{account_id}/agents/{agent_name}")
+async def revoke_access(
+    account_id: str, agent_name: str, request: Request
+) -> dict:
+    grants = _grants(request)
+    removed = grants.revoke(agent_name, account_id)
+    if removed:
+        await _broadcast(
+            request,
+            "agent.grant_removed",
+            {"agent": agent_name, "account_id": account_id},
+        )
+    return {"revoked": removed, "agent": agent_name, "account_id": account_id}
 
 
 # ── OAuth flow ────────────────────────────────────────────────────────

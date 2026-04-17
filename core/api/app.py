@@ -46,7 +46,7 @@ from core.config import get_settings
 from core.db import ensure_schema
 from core.governor import DailyBudget, Governor, Tier, Tiers, TierSpec
 from core.governor.providers import build_providers
-from core.identity import AccountsStore
+from core.identity import AccountsStore, GrantsStore
 from core.integrations.client_secrets import load_client
 from core.integrations.google import (
     ROLES,
@@ -163,6 +163,7 @@ async def lifespan(app: FastAPI):
     migrate_legacy_if_needed(home)                # Batch K → role files
     accounts = AccountsStore(home)
     accounts.ensure_layout()
+    grants = GrantsStore(home)
     oauth_providers = ProviderRegistry()
     oauth_providers.register(google_provider)
     migrated = migrate_batch_k_google_files(home, accounts)
@@ -218,6 +219,8 @@ async def lifespan(app: FastAPI):
         Gate(trust=trust),
         approvals=approvals,
         on_step_status=on_step_status,
+        accounts=accounts,
+        grants=grants,
     )
 
     agents = AgentRegistry(manifests_dir=AGENTS_DIR, db_path=settings.db_path)
@@ -237,6 +240,7 @@ async def lifespan(app: FastAPI):
             sandboxes=sandboxes,
             agents_dir=AGENTS_DIR,
             broadcast=broadcast,
+            grants=grants,
         )
     )
 
@@ -347,6 +351,7 @@ async def lifespan(app: FastAPI):
     app.state.memory = memory
     app.state.coding_router = coding_router
     app.state.accounts = accounts
+    app.state.grants = grants
     app.state.oauth_providers = oauth_providers
     app.state.oauth_flow = oauth_flow
 

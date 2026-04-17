@@ -29,10 +29,13 @@ from core.identity.accounts import (
     ConnectedAccount,
     account_id_for,
 )
+from core.identity.grants import AgentGrant, GrantsStore
 
 __all__ = [
     "AccountBinding",
     "AccountsStore",
+    "AgentGrant",
     "ConnectedAccount",
+    "GrantsStore",
     "account_id_for",
 ]

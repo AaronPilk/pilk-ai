@@ -8,21 +8,27 @@ import {
 } from "../voice/ambient";
 import {
   deleteConnectedAccount,
+  fetchAgents,
   fetchCodingEngines,
   fetchConnectedAccounts,
   fetchGovernorStatus,
+  fetchGrants,
   fetchProviders,
+  grantAgentAccess,
   pilk,
+  revokeAgentAccess,
   setDefaultConnectedAccount,
   setGovernorConfig,
   setGovernorOverride,
   startOAuthConnection,
+  type AgentRow,
   type CodingEngineHealth,
   type ConnectedAccount,
   type GovernorStatus,
   type OverrideMode,
   type ProviderInfo,
 } from "../state/api";
+import { humanizeAgentName } from "../lib/humanize";
 
 const WAKE_LABELS: Record<WakePhrase, string> = {
   "hey pilk": "Hey PILK",
@@ -84,6 +90,9 @@ export default function Settings() {
   >(null);
   const [connectBusy, setConnectBusy] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [grants, setGrants] = useState<Record<string, string[]>>({});
+  const [agentsList, setAgentsList] = useState<AgentRow[]>([]);
+  const [manageAccessFor, setManageAccessFor] = useState<string | null>(null);
   const [codingEngines, setCodingEngines] = useState<CodingEngineHealth[] | null>(
     null,
   );
@@ -111,6 +120,23 @@ export default function Settings() {
     fetchProviders()
       .then((r) => setProviders(r.providers))
       .catch(() => setProviders([]));
+    fetchGrants()
+      .then((r) => {
+        const byAccount: Record<string, string[]> = {};
+        for (const [agentName, g] of Object.entries(r.grants)) {
+          for (const accountId of g.accounts) {
+            (byAccount[accountId] ??= []).push(agentName);
+          }
+        }
+        for (const accountId of Object.keys(byAccount)) {
+          byAccount[accountId].sort();
+        }
+        setGrants(byAccount);
+      })
+      .catch(() => setGrants({}));
+    fetchAgents()
+      .then((r) => setAgentsList(r.agents))
+      .catch(() => setAgentsList([]));
   }, []);
 
   const refreshCodingEngines = useCallback(() => {
@@ -128,7 +154,10 @@ export default function Settings() {
       if (
         m.type === "account.linked" ||
         m.type === "account.removed" ||
-        m.type === "account.default_changed"
+        m.type === "account.default_changed" ||
+        m.type === "agent.created" ||
+        m.type === "agent.grant_added" ||
+        m.type === "agent.grant_removed"
       ) {
         refreshAccounts();
       }
@@ -497,6 +526,7 @@ export default function Settings() {
                   key={a.account_id}
                   account={a}
                   isDefault={isDefault}
+                  grantedAgents={grants[a.account_id] ?? []}
                   onRemove={async () => {
                     await deleteConnectedAccount(a.account_id).catch(() => {});
                     refreshAccounts();
@@ -507,6 +537,7 @@ export default function Settings() {
                     );
                     refreshAccounts();
                   }}
+                  onManageAccess={() => setManageAccessFor(a.account_id)}
                 />
               );
             })}
@@ -585,6 +616,17 @@ export default function Settings() {
         {connectError && (
           <div className="settings-note settings-note--warn">{connectError}</div>
         )}
+
+        {manageAccessFor && (
+          <ManageAccessModal
+            accountId={manageAccessFor}
+            account={accounts?.find((a) => a.account_id === manageAccessFor) ?? null}
+            agents={agentsList}
+            grantedAgents={grants[manageAccessFor] ?? []}
+            onClose={() => setManageAccessFor(null)}
+            onChanged={refreshAccounts}
+          />
+        )}
       </section>
 
       <section className="settings-card">
@@ -654,13 +696,17 @@ function clamp01(x: number): number {
 function AccountRow({
   account,
   isDefault,
+  grantedAgents,
   onRemove,
   onSetDefault,
+  onManageAccess,
 }: {
   account: ConnectedAccount;
   isDefault: boolean;
+  grantedAgents: string[];
   onRemove: () => Promise<void> | void;
   onSetDefault: () => Promise<void> | void;
+  onManageAccess: () => void;
 }) {
   const roleWord = account.role === "system" ? "PILK" : "You";
   const statusLabel =
@@ -705,6 +751,29 @@ function AccountRow({
           </>
         )}
       </div>
+      <div className="connected-account-grants">
+        <span className="connected-account-grants-label">Agents with access</span>
+        {grantedAgents.length === 0 ? (
+          <span className="connected-account-grants-empty">
+            none — top-level chat only
+          </span>
+        ) : (
+          <span className="connected-account-grants-list">
+            {grantedAgents.map((name) => (
+              <span key={name} className="connected-account-grant-chip">
+                {humanizeAgentName(name)}
+              </span>
+            ))}
+          </span>
+        )}
+        <button
+          type="button"
+          className="connected-account-grants-manage"
+          onClick={onManageAccess}
+        >
+          Manage access
+        </button>
+      </div>
       <div className="connected-account-actions">
         {!isDefault && (
           <button type="button" className="btn" onClick={() => onSetDefault()}>
@@ -722,6 +791,85 @@ function AccountRow({
         >
           Remove
         </button>
+      </div>
+    </div>
+  );
+}
+
+function ManageAccessModal({
+  accountId,
+  account,
+  agents,
+  grantedAgents,
+  onClose,
+  onChanged,
+}: {
+  accountId: string;
+  account: ConnectedAccount | null;
+  agents: AgentRow[];
+  grantedAgents: string[];
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const granted = new Set(grantedAgents);
+  return (
+    <div className="manage-access-backdrop" onClick={onClose}>
+      <div
+        className="manage-access-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="manage-access-head">
+          <div>
+            <div className="manage-access-eyebrow">Manage access</div>
+            <div className="manage-access-title">
+              {account?.label ?? accountId}
+            </div>
+            <div className="manage-access-sub">
+              {account?.email ?? "(identity unknown)"}
+            </div>
+          </div>
+          <button type="button" className="btn" onClick={onClose}>
+            Done
+          </button>
+        </div>
+        {agents.length === 0 ? (
+          <div className="settings-note">
+            No agents registered yet. Build one from Chat.
+          </div>
+        ) : (
+          <ul className="manage-access-list">
+            {agents.map((a) => {
+              const has = granted.has(a.name);
+              return (
+                <li key={a.name} className="manage-access-row">
+                  <label className="manage-access-label">
+                    <input
+                      type="checkbox"
+                      checked={has}
+                      onChange={async () => {
+                        try {
+                          if (has) {
+                            await revokeAgentAccess(accountId, a.name);
+                          } else {
+                            await grantAgentAccess(accountId, a.name);
+                          }
+                          onChanged();
+                        } catch {
+                          // swallow — refresh anyway
+                          onChanged();
+                        }
+                      }}
+                    />
+                    <span className="manage-access-agent-name">
+                      {humanizeAgentName(a.name)}
+                    </span>
+                  </label>
+                  <span className="manage-access-agent-state">{a.state}</span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
     </div>
   );

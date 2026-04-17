@@ -38,6 +38,7 @@ from typing import Any
 
 import yaml
 
+from core.identity import GrantsStore
 from core.logging import get_logger
 from core.policy.risk import RiskClass
 from core.registry.manifest import NAME_PATTERN, Manifest
@@ -72,6 +73,7 @@ def make_agent_create_tool(
     sandboxes: SandboxManager,
     agents_dir: Path,
     broadcast: Broadcaster,
+    grants: GrantsStore | None = None,
 ) -> Tool:
     async def _handler(args: dict, ctx: ToolContext) -> ToolOutcome:
         name = str(args.get("name", "")).strip()
@@ -201,6 +203,12 @@ def make_agent_create_tool(
 
         # Re-discover — idempotent, picks up the new folder.
         await agent_registry.discover_and_install()
+
+        # New agents start with explicit opt-in semantics: they appear
+        # in grants.json with an empty account allow-list until the
+        # user grants access from Settings / Agents.
+        if grants is not None:
+            grants.register_agent(name, accounts=[])
 
         # Stand up the sandbox so the Agents tab sees it immediately.
         sandbox = await sandboxes.get_or_create(

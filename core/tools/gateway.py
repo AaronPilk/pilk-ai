@@ -20,6 +20,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from core.identity import AccountsStore, GrantsStore
 from core.logging import get_logger
 from core.policy import ApprovalManager, Decision, Gate, GateInput
 from core.tools.registry import ToolContext, ToolRegistry
@@ -49,11 +50,15 @@ class Gateway:
         *,
         approvals: ApprovalManager | None = None,
         on_step_status: StepStatusCallback | None = None,
+        accounts: AccountsStore | None = None,
+        grants: GrantsStore | None = None,
     ) -> None:
         self.registry = registry
         self.gate = gate
         self.approvals = approvals
         self.on_step_status = on_step_status
+        self.accounts = accounts
+        self.grants = grants
 
     async def execute(
         self,
@@ -68,6 +73,26 @@ class Gateway:
             log.warning("tool_unknown", tool=name)
             return ToolResult(
                 tool=name, ok=False, content=msg, is_error=True, data={}, risk="",
+            )
+
+        # Layer 0 — connected-account access grants. Top-level chat
+        # (no agent) bypasses this; only agent calls are gated here.
+        access = self._check_account_access(tool, ctx)
+        if access is not None:
+            log.info(
+                "tool_access_denied",
+                tool=name,
+                agent=ctx.agent_name,
+                reason=access,
+            )
+            return ToolResult(
+                tool=name,
+                ok=False,
+                content=f"refused: {access}",
+                is_error=True,
+                data={},
+                risk=tool.risk.value,
+                rejection_reason=access,
             )
 
         outcome = self.gate.evaluate(
@@ -158,4 +183,28 @@ class Gateway:
             is_error=result.is_error,
             data=result.data,
             risk=tool.risk.value,
+        )
+
+    # ── helpers ───────────────────────────────────────────────────
+
+    def _check_account_access(self, tool, ctx: ToolContext) -> str | None:
+        """Return a denial reason string if access is forbidden, else None."""
+        if ctx.agent_name is None:
+            return None  # top-level chat: the user implicitly trusts themselves
+        binding = tool.account_binding
+        if binding is None:
+            return None  # tool doesn't touch a connected account
+        if self.accounts is None or self.grants is None:
+            return None  # grants layer not wired (tests, old setups)
+        account = self.accounts.resolve_binding(binding)
+        if account is None:
+            # No account linked for this binding. Let the tool handler
+            # surface the friendly "connect it in Settings" message.
+            return None
+        if self.grants.allows(ctx.agent_name, account.account_id):
+            return None
+        return (
+            f"access_denied: agent {ctx.agent_name!r} is not granted access "
+            f"to account {account.label or account.account_id!r}. "
+            "Grant it in Settings → Connected accounts."
         )

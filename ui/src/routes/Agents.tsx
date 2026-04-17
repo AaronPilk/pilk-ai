@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchAgents, pilk, runAgent, type AgentRow } from "../state/api";
+import {
+  fetchAgents,
+  fetchConnectedAccounts,
+  fetchGrants,
+  pilk,
+  runAgent,
+  type AgentRow,
+  type ConnectedAccount,
+} from "../state/api";
 import {
   humanizeAgentName,
   humanizeAgentState,
@@ -13,6 +21,10 @@ export default function Agents() {
   const [submitting, setSubmitting] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [justCreated, setJustCreated] = useState<string | null>(null);
+  const [grantsByAgent, setGrantsByAgent] = useState<Record<string, string[]>>({});
+  const [accountsById, setAccountsById] = useState<Record<string, ConnectedAccount>>(
+    {},
+  );
 
   const refresh = useCallback(() => {
     fetchAgents()
@@ -21,17 +33,44 @@ export default function Agents() {
         if (r.agents.length > 0 && selected === null) setSelected(r.agents[0].name);
       })
       .catch(() => {});
+    fetchGrants()
+      .then((r) => {
+        const out: Record<string, string[]> = {};
+        for (const [agentName, g] of Object.entries(r.grants)) {
+          out[agentName] = [...g.accounts].sort();
+        }
+        setGrantsByAgent(out);
+      })
+      .catch(() => setGrantsByAgent({}));
+    fetchConnectedAccounts()
+      .then((r) => {
+        const out: Record<string, ConnectedAccount> = {};
+        for (const a of r.accounts) out[a.account_id] = a;
+        setAccountsById(out);
+      })
+      .catch(() => setAccountsById({}));
   }, [selected]);
 
   useEffect(() => {
     refresh();
     return pilk.onMessage((m) => {
       if (m.type === "plan.completed" || m.type === "plan.created") refresh();
-      if (m.type === "agent.created") {
+      if (
+        m.type === "agent.created" ||
+        m.type === "agent.grant_added" ||
+        m.type === "agent.grant_removed" ||
+        m.type === "account.linked" ||
+        m.type === "account.removed"
+      ) {
         refresh();
-        setSelected(m.name);
-        setJustCreated(m.name);
-        setTimeout(() => setJustCreated((current) => (current === m.name ? null : current)), 4000);
+        if (m.type === "agent.created") {
+          setSelected(m.name);
+          setJustCreated(m.name);
+          setTimeout(
+            () => setJustCreated((c) => (c === m.name ? null : c)),
+            4000,
+          );
+        }
       }
     });
   }, [refresh]);
@@ -135,6 +174,33 @@ export default function Agents() {
                 </div>
               </div>
             )}
+            <div className="agent-tools">
+              <div className="agent-tools-head">Account access</div>
+              {grantsByAgent[current.name] === undefined ? (
+                <div className="agent-access-note">
+                  No explicit grants set. Inherited from before access control
+                  was introduced — manage grants in Settings → Connected
+                  accounts to lock this down.
+                </div>
+              ) : grantsByAgent[current.name].length === 0 ? (
+                <div className="agent-access-note">
+                  No accounts granted. This agent cannot use any connected
+                  account until you grant access in Settings → Connected
+                  accounts.
+                </div>
+              ) : (
+                <div className="agent-tools-list">
+                  {grantsByAgent[current.name].map((id) => {
+                    const a = accountsById[id];
+                    return (
+                      <span key={id} className="agent-tool agent-tool--account">
+                        {a?.email ?? a?.label ?? id}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             <div className="agent-run">
               <div className="agent-tools-head">Assign a task</div>
               <textarea

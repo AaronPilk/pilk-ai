@@ -394,6 +394,47 @@ export async function setDefaultConnectedAccount(
   if (!r.ok) throw new Error(await detail(r));
 }
 
+export interface AgentGrant {
+  agent_name: string;
+  accounts: string[];
+  granted_at: string | null;
+  granted_by: string;
+}
+
+export async function fetchGrants(): Promise<{
+  grants: Record<string, AgentGrant>;
+}> {
+  const r = await fetch(`${API_URL}/integrations/grants`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function grantAgentAccess(
+  accountId: string,
+  agentName: string,
+): Promise<void> {
+  const r = await fetch(
+    `${API_URL}/integrations/accounts/${encodeURIComponent(
+      accountId,
+    )}/agents/${encodeURIComponent(agentName)}`,
+    { method: "POST" },
+  );
+  if (!r.ok) throw new Error(await detail(r));
+}
+
+export async function revokeAgentAccess(
+  accountId: string,
+  agentName: string,
+): Promise<void> {
+  const r = await fetch(
+    `${API_URL}/integrations/accounts/${encodeURIComponent(
+      accountId,
+    )}/agents/${encodeURIComponent(agentName)}`,
+    { method: "DELETE" },
+  );
+  if (!r.ok) throw new Error(await detail(r));
+}
+
 // ── Integrations ─────────────────────────────────────────────────
 
 export type GoogleRole = "system" | "user";
