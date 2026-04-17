@@ -81,6 +81,7 @@ const TOOL_LABELS: Record<string, string> = {
   finance_withdraw: "Withdraw funds",
   finance_transfer: "Transfer funds",
   trade_execute: "Execute a trade",
+  __premium_escalation: "Use Deep Reasoning for this task?",
 };
 
 export function humanizeToolName(raw: string | null | undefined): string {

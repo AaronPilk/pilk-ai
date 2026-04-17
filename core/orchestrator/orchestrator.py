@@ -29,10 +29,12 @@ from typing import Any
 
 import anthropic
 
+from core.governor import Tier
 from core.governor.providers import PlannerProvider, PlannerResponse
 from core.ledger import Ledger, UsageSnapshot
 from core.logging import get_logger
 from core.orchestrator.plans import PlanStore
+from core.policy.risk import RiskClass
 from core.registry import AgentRegistry
 from core.sandbox import SandboxManager
 from core.tools import Gateway, ToolRegistry
@@ -145,6 +147,52 @@ class Orchestrator:
         """Extended thinking is currently Opus-only on the Messages API."""
         return "opus" in (model or "").lower()
 
+    async def _request_premium_escalation(
+        self,
+        *,
+        plan_id: str,
+        rc: RunContext,
+        tier_choice: Any,
+    ) -> str:
+        """Ask the user whether to run this plan on Deep Reasoning.
+
+        Returns the approval decision string: 'approved', 'rejected', or
+        'expired'. A rejection (or expiry) keeps the downgraded STANDARD
+        tier the Governor already picked.
+        """
+        assert self.gateway.approvals is not None
+        # Read the premium tier so the user sees what they're actually
+        # approving (model name, provider).
+        premium = self.governor.tiers.get(Tier.PREMIUM) if self.governor else None
+        args = {
+            "goal": rc.goal[:280],
+            "requested_tier": "premium",
+            "requested_model": premium.model if premium else "premium",
+            "requested_provider": premium.provider if premium else "anthropic",
+            "downgraded_to_model": tier_choice.model,
+        }
+        req = await self.gateway.approvals.request(
+            plan_id=plan_id,
+            step_id=None,
+            agent_name=rc.agent_name,
+            tool_name="__premium_escalation",
+            args=args,
+            risk_class=RiskClass.READ,
+            reason=(
+                "This task looks like it would benefit from Deep Reasoning "
+                "(Opus). Approve to use it for this one task, or reject to "
+                "run on Balanced. You can disable 'Ask before Deep Reasoning' "
+                "in Settings to skip this prompt."
+            ),
+            bypass_trust=True,
+        )
+        try:
+            decision = await req.future
+        except Exception as e:  # pragma: no cover — unexpected
+            log.warning("premium_escalation_future_failed", detail=str(e))
+            return "rejected"
+        return decision.decision
+
     # ── Entry points ─────────────────────────────────────────────────
 
     async def run(self, goal: str) -> None:
@@ -245,9 +293,26 @@ class Orchestrator:
         final_text: str = ""
 
         # The Governor picks the tier for the whole plan based on the
-        # original goal. Per-turn escalation lands in Batch E.
+        # original goal. If the classifier wanted PREMIUM but the user
+        # has the premium gate on, pick() returns gated=True + a
+        # STANDARD choice. We translate that into a real approval so the
+        # user can escalate-for-this-task with a single click instead of
+        # silently getting Balanced.
         if self.governor is not None:
             tier_choice = self.governor.pick(rc.goal)
+            if tier_choice.gated and self.gateway.approvals is not None:
+                decision = await self._request_premium_escalation(
+                    plan_id=plan_id, rc=rc, tier_choice=tier_choice
+                )
+                if decision == "approved":
+                    # Re-pick with an explicit premium override for this plan.
+                    tier_choice = self.governor.pick(rc.goal, override="premium")
+                    tier_choice.reason = "gate_approved"
+                else:
+                    # Keep the downgraded STANDARD choice but flip the flag
+                    # so the metadata is accurate.
+                    tier_choice.gated = False
+                    tier_choice.reason = "gate_declined"
             planner_model = tier_choice.model
             requested_provider = tier_choice.provider
             tier_meta: dict[str, Any] = tier_choice.to_public()

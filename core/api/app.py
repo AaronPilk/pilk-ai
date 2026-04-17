@@ -109,7 +109,9 @@ async def lifespan(app: FastAPI):
         tiers=tiers,
         budget=DailyBudget(settings.db_path, cap_usd=settings.daily_cap_usd),
         premium_gate="ask" if settings.premium_gate != "auto" else "auto",
+        db_path=settings.db_path,
     )
+    await governor.hydrate_from_db()
     log.info(
         "governor_ready",
         light=f"{tiers.light.provider}/{tiers.light.model}",

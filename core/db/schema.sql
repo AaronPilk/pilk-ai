@@ -124,3 +124,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_used_at  TEXT,
     metadata_json TEXT
 );
+
+-- Runtime-mutable governor preferences. Env vars seed defaults at boot;
+-- anything the user changes in the Settings UI persists here so it
+-- survives pilkd restarts.
+CREATE TABLE IF NOT EXISTS governor_prefs (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);

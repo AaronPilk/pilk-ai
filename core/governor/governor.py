@@ -21,7 +21,10 @@ not configured the orchestrator falls back to Anthropic and logs it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
+
+import aiosqlite
 
 from core.governor.budget import BudgetExceededError, DailyBudget
 from core.governor.router import classify_tier
@@ -58,11 +61,62 @@ class Governor:
         tiers: Tiers,
         budget: DailyBudget,
         premium_gate: PremiumGate = "ask",
+        db_path: Path | str | None = None,
     ) -> None:
         self._tiers = tiers
         self._budget = budget
         self._premium_gate: PremiumGate = premium_gate
         self._override: OverrideMode = "auto"
+        self._db_path: str | None = str(db_path) if db_path else None
+
+    async def hydrate_from_db(self) -> None:
+        """Load any persisted prefs that override the env-seeded defaults.
+
+        Called once at startup, after the schema exists. Silently does
+        nothing if no db path is configured.
+        """
+        if not self._db_path:
+            return
+        try:
+            async with aiosqlite.connect(self._db_path) as db, db.execute(
+                "SELECT key, value FROM governor_prefs"
+            ) as cur:
+                rows = await cur.fetchall()
+        except Exception as e:  # pragma: no cover — schema missing
+            log.warning("governor_hydrate_failed", detail=str(e))
+            return
+        for key, value in rows:
+            if key == "daily_cap_usd":
+                try:
+                    self._budget = DailyBudget(self._budget._db_path, cap_usd=float(value))
+                except ValueError:
+                    continue
+            elif key == "premium_gate" and value in ("ask", "auto"):
+                self._premium_gate = value  # type: ignore[assignment]
+        log.info(
+            "governor_hydrated",
+            daily_cap_usd=self._budget.cap_usd,
+            premium_gate=self._premium_gate,
+        )
+
+    async def _persist(self, key: str, value: str) -> None:
+        if not self._db_path:
+            return
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC).isoformat()
+        try:
+            async with aiosqlite.connect(self._db_path) as db:
+                await db.execute(
+                    "INSERT INTO governor_prefs(key, value, updated_at) "
+                    "VALUES (?, ?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+                    "updated_at=excluded.updated_at",
+                    (key, value, now),
+                )
+                await db.commit()
+        except Exception as e:  # pragma: no cover
+            log.warning("governor_persist_failed", key=key, detail=str(e))
 
     # ── config ───────────────────────────────────────────────────────
 
@@ -80,23 +134,23 @@ class Governor:
         self._override = mode
         log.info("governor_override_set", mode=mode)
 
-    def set_daily_cap(self, usd: float) -> None:
+    async def set_daily_cap(self, usd: float) -> None:
         if usd < 0:
             raise ValueError("daily cap must be >= 0")
         # Rewire the DailyBudget's cap in-place by rebuilding it — simpler
         # than exposing a setter on the budget class.
-        from core.governor.budget import DailyBudget
-
         self._budget = DailyBudget(
             db_path=self._budget._db_path,
             cap_usd=float(usd),
         )
+        await self._persist("daily_cap_usd", str(float(usd)))
         log.info("governor_daily_cap_set", usd=usd)
 
-    def set_premium_gate(self, mode: PremiumGate) -> None:
+    async def set_premium_gate(self, mode: PremiumGate) -> None:
         if mode not in ("ask", "auto"):
             raise ValueError(f"invalid premium_gate: {mode}")
         self._premium_gate = mode
+        await self._persist("premium_gate", mode)
         log.info("governor_premium_gate_set", mode=mode)
 
     @property

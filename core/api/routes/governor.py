@@ -49,9 +49,9 @@ async def governor_config(body: ConfigBody, request: Request) -> dict:
         raise HTTPException(status_code=503, detail="governor offline")
     if body.daily_cap_usd is not None:
         try:
-            gov.set_daily_cap(body.daily_cap_usd)
+            await gov.set_daily_cap(body.daily_cap_usd)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
     if body.premium_gate is not None:
-        gov.set_premium_gate(body.premium_gate)
+        await gov.set_premium_gate(body.premium_gate)
     return await gov.snapshot()
