@@ -135,6 +135,11 @@ class Orchestrator:
     def running_plan_id(self) -> str | None:
         return self._running_plan_id
 
+    @staticmethod
+    def _supports_thinking(model: str) -> bool:
+        """Extended thinking is currently Opus-only on the Messages API."""
+        return "opus" in (model or "").lower()
+
     # ── Entry points ─────────────────────────────────────────────────
 
     async def run(self, goal: str) -> None:
@@ -229,15 +234,20 @@ class Orchestrator:
             )
             await self.broadcast("plan.step_added", step)
 
-            response = await self.client.messages.create(
+            # Extended thinking is Opus-only at the moment — asking Haiku
+            # for adaptive thinking returns a 400. Include the field only
+            # when the configured planner supports it.
+            req: dict[str, Any] = dict(
                 model=self.planner_model,
                 max_tokens=16000,
                 system=rc.system_prompt,
                 tools=tools,
                 messages=messages,
-                thinking={"type": "adaptive"},
                 cache_control={"type": "ephemeral"},
             )
+            if self._supports_thinking(self.planner_model):
+                req["thinking"] = {"type": "adaptive"}
+            response = await self.client.messages.create(**req)
 
             usage = UsageSnapshot.from_anthropic(response.usage)
             usd = await self.ledger.record_llm(
