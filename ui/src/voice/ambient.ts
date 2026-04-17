@@ -26,10 +26,12 @@ export interface AmbientConfig {
   wakePhrase: WakePhrase;
   ack: AckKind;
   useElevenLabsAck: boolean;
+  patience: Patience;
 }
 
 export type WakePhrase = "hey pilk" | "pilk";
 export type AckKind = "yes" | "im-here" | "mm" | "tone" | "none";
+export type Patience = "snappy" | "normal" | "patient" | "very-patient";
 
 const STORAGE_KEY = "pilk.ambient.v1";
 
@@ -38,6 +40,21 @@ const DEFAULT_CONFIG: AmbientConfig = {
   wakePhrase: "hey pilk",
   ack: "yes",
   useElevenLabsAck: false,
+  patience: "patient",
+};
+
+// How long to wait before auto-finalizing the utterance.
+//   wakeGraceMs  — after the wake phrase if the user hasn't started yet
+//   silenceMs    — after any speech activity (interim OR final) stops
+interface PatiencePreset {
+  wakeGraceMs: number;
+  silenceMs: number;
+}
+const PATIENCE: Record<Patience, PatiencePreset> = {
+  snappy: { wakeGraceMs: 3500, silenceMs: 1400 },
+  normal: { wakeGraceMs: 5000, silenceMs: 2200 },
+  patient: { wakeGraceMs: 7000, silenceMs: 3200 },
+  "very-patient": { wakeGraceMs: 10000, silenceMs: 5000 },
 };
 
 const ACK_TEXT: Record<Exclude<AckKind, "tone" | "none">, string> = {
@@ -272,9 +289,13 @@ class AmbientController {
       this.activeBuffer = stripWake(text, this.config.wakePhrase);
       this.setState("active", this.activeBuffer || "Listening…");
       if (this.activeTimer) clearTimeout(this.activeTimer);
-      // Shorter wait after a final result (natural pause) than interim.
-      const wait = isFinal ? 900 : 2200;
-      this.activeTimer = window.setTimeout(() => this.finalizeActive(), wait);
+      // Reset the silence timer on every speech event; only the absence of
+      // new speech for `silenceMs` ends the turn. `isFinal` no longer
+      // shortens the window — Web Speech often emits a final mid-thought,
+      // which previously cut the user off.
+      void isFinal;
+      const { silenceMs } = PATIENCE[this.config.patience];
+      this.activeTimer = window.setTimeout(() => this.finalizeActive(), silenceMs);
     }
   }
 
@@ -290,11 +311,14 @@ class AmbientController {
     this.setState("wake", "Wake phrase detected");
     this.activeBuffer = tail;
     this.playAcknowledgement();
-    // If the user already said the command in the same breath, start the
-    // silence timer immediately; otherwise fall back to active+wait.
     this.setState("active", this.activeBuffer || "Listening…");
     if (this.activeTimer) clearTimeout(this.activeTimer);
-    this.activeTimer = window.setTimeout(() => this.finalizeActive(), 3500);
+    // Initial grace after wake: how long to wait for the user to start
+    // speaking (or continue after a trailing sentence). Every new
+    // transcript resets this via handleTranscript.
+    const preset = PATIENCE[this.config.patience];
+    const grace = tail ? preset.silenceMs : preset.wakeGraceMs;
+    this.activeTimer = window.setTimeout(() => this.finalizeActive(), grace);
   }
 
   private async playAcknowledgement(): Promise<void> {

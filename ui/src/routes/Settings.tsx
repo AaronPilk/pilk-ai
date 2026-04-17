@@ -3,6 +3,7 @@ import {
   ambient,
   type AckKind,
   type AmbientConfig,
+  type Patience,
   type WakePhrase,
 } from "../voice/ambient";
 
@@ -17,6 +18,13 @@ const ACK_LABELS: Record<AckKind, string> = {
   mm: "\u201cMm?\u201d",
   tone: "Subtle tone",
   none: "No acknowledgement",
+};
+
+const PATIENCE_LABELS: Record<Patience, string> = {
+  snappy: "Snappy",
+  normal: "Normal",
+  patient: "Patient",
+  "very-patient": "Very patient",
 };
 
 export default function Settings() {
@@ -126,6 +134,28 @@ export default function Settings() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-label">Listen patience</div>
+          <div className="settings-segmented settings-segmented--wrap">
+            {(Object.keys(PATIENCE_LABELS) as Patience[]).map((p) => (
+              <button
+                key={p}
+                type="button"
+                className={`settings-seg${cfg.patience === p ? " settings-seg--on" : ""}`}
+                onClick={() => ambient.setConfig({ patience: p })}
+                disabled={!cfg.enabled}
+              >
+                {PATIENCE_LABELS[p]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="settings-note">
+          How long PILK waits after the wake phrase, and between pauses
+          mid-sentence, before sending your request. Bump this up if it cuts
+          you off; bring it down for quicker one-liners.
         </div>
 
         <div className="settings-row">
