@@ -1,11 +1,13 @@
 """Gmail tools backed by the authenticated Google account.
 
-Three tools in this MVP:
+Four tools in this MVP:
 
-- gmail_send    — compose + send an email (COMMS risk, always approval).
-- gmail_search  — query the inbox with Gmail's native search syntax
-                  (NET_READ risk; auto-trust friendly).
-- gmail_read    — read a single message by id (NET_READ risk).
+- gmail_send         — compose + send an email (COMMS risk, always approval).
+- gmail_search       — query the inbox with Gmail's native search syntax
+                       (NET_READ risk; auto-trust friendly).
+- gmail_read         — read a single message by id (NET_READ risk).
+- gmail_thread_read  — read the last N messages in a thread in order
+                       (NET_READ risk); used for triage follow-ups.
 
 The SDK call surface is synchronous; we run each blocking call through
 `asyncio.to_thread` so we never block the event loop. Error bodies
@@ -32,6 +34,9 @@ from core.tools.registry import Tool, ToolContext, ToolOutcome
 log = get_logger("pilkd.gmail")
 
 MAX_BODY_PREVIEW = 6000
+MAX_THREAD_MESSAGES = 20
+DEFAULT_THREAD_MESSAGES = 5
+MAX_THREAD_BODY_CHARS = 1200
 
 
 def make_gmail_tools(credentials_path: Path) -> list[Tool]:
@@ -142,6 +147,48 @@ def make_gmail_tools(credentials_path: Path) -> list[Tool]:
             data=msg,
         )
 
+    async def _thread_read(args: dict, ctx: ToolContext) -> ToolOutcome:
+        creds = load_credentials(credentials_path)
+        if creds is None:
+            return ToolOutcome(
+                content="Gmail isn't linked yet. Run `python -m scripts.link_google`.",
+                is_error=True,
+            )
+        thread_id = str(args.get("thread_id") or "").strip()
+        if not thread_id:
+            return ToolOutcome(
+                content="gmail_thread_read requires a 'thread_id'.",
+                is_error=True,
+            )
+        raw_max = args.get("max_messages") or DEFAULT_THREAD_MESSAGES
+        try:
+            max_messages = int(raw_max)
+        except (TypeError, ValueError):
+            max_messages = DEFAULT_THREAD_MESSAGES
+        max_messages = max(1, min(max_messages, MAX_THREAD_MESSAGES))
+        try:
+            thread = await asyncio.to_thread(
+                _do_thread_read, creds, thread_id, max_messages
+            )
+        except Exception as e:
+            log.exception("gmail_thread_read_failed")
+            return ToolOutcome(
+                content=f"gmail_thread_read failed: {type(e).__name__}: {e}",
+                is_error=True,
+            )
+        sections = [
+            (
+                f"[{i + 1}/{thread['returned']}]  {m['from']}  ·  {m['date']}\n"
+                f"{m['body']}"
+            )
+            for i, m in enumerate(thread["messages"])
+        ]
+        header = (
+            f"Thread: {thread['subject']}  "
+            f"({thread['returned']} of {thread['total']} messages)\n\n"
+        )
+        return ToolOutcome(content=header + "\n\n---\n\n".join(sections), data=thread)
+
     send_tool = Tool(
         name="gmail_send",
         description=(
@@ -196,7 +243,30 @@ def make_gmail_tools(credentials_path: Path) -> list[Tool]:
         risk=RiskClass.NET_READ,
         handler=_read,
     )
-    return [send_tool, search_tool, read_tool]
+    thread_read_tool = Tool(
+        name="gmail_thread_read",
+        description=(
+            "Read the last N messages in a Gmail thread in order, with sender, "
+            "date, and body (each trimmed to ~1.2 KB). Use when gmail_read has "
+            "surfaced a message that needs prior context, or when triaging a "
+            "back-and-forth thread. Up to 20 messages per call."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "thread_id": {"type": "string"},
+                "max_messages": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": MAX_THREAD_MESSAGES,
+                },
+            },
+            "required": ["thread_id"],
+        },
+        risk=RiskClass.NET_READ,
+        handler=_thread_read,
+    )
+    return [send_tool, search_tool, read_tool, thread_read_tool]
 
 
 # ── synchronous Google API helpers (run in a thread) ───────────────────
@@ -274,6 +344,49 @@ def _do_read(creds, message_id: str) -> dict:
         "date": headers.get("Date", ""),
         "snippet": m.get("snippet") or "",
         "body": body,
+    }
+
+
+def _do_thread_read(creds, thread_id: str, max_messages: int) -> dict:
+    service = creds.build("gmail", "v1")
+    thread = (
+        service.users()
+        .threads()
+        .get(userId="me", id=thread_id, format="full")
+        .execute()
+    )
+    raw_messages = thread.get("messages") or []
+    total = len(raw_messages)
+    # Take the most recent `max_messages`, keep chronological order.
+    window = raw_messages[-max_messages:]
+    subject = ""
+    parsed: list[dict] = []
+    for m in window:
+        payload = m.get("payload") or {}
+        headers = {
+            h["name"]: h.get("value", "") for h in (payload.get("headers") or [])
+        }
+        if not subject:
+            subject = headers.get("Subject", "(no subject)")
+        body = _extract_plain_body(payload)
+        if len(body) > MAX_THREAD_BODY_CHARS:
+            body = body[:MAX_THREAD_BODY_CHARS].rstrip() + "…"
+        parsed.append(
+            {
+                "id": m.get("id"),
+                "from": headers.get("From", ""),
+                "to": headers.get("To", ""),
+                "subject": headers.get("Subject", "(no subject)"),
+                "date": headers.get("Date", ""),
+                "body": body,
+            }
+        )
+    return {
+        "thread_id": thread_id,
+        "subject": subject or "(no subject)",
+        "total": total,
+        "returned": len(parsed),
+        "messages": parsed,
     }
 
 

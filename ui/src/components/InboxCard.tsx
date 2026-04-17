@@ -3,6 +3,9 @@ import { Link } from "react-router-dom";
 import { fetchInboxGlance, type InboxGlance } from "../state/api";
 import { prettySenderName, relativeTime } from "../lib/humanize";
 
+const TRIAGE_PROMPT =
+  "Summarize my unread email from the last 24 hours. Group by sender, flag anything that needs a reply today, and skip newsletters and receipts.";
+
 export default function InboxCard({ email }: { email: string | null }) {
   const [glance, setGlance] = useState<InboxGlance | null>(null);
   const [loading, setLoading] = useState(true);
@@ -80,7 +83,10 @@ export default function InboxCard({ email }: { email: string | null }) {
               </li>
             ))}
           </ul>
-          <Link to="/chat" className="home-inbox-cta">
+          <Link
+            to={`/chat?prompt=${encodeURIComponent(TRIAGE_PROMPT)}`}
+            className="home-inbox-cta"
+          >
             Ask PILK to triage →
           </Link>
         </>

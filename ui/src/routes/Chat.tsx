@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { pilk, type ApprovalRequest } from "../state/api";
 import { useLivePlans } from "../state/plans";
 import PlanCard from "../components/PlanCard";
@@ -24,6 +25,19 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Prefill the composer when another surface links here with ?prompt=…
+  // (e.g. the Home InboxCard "Ask PILK to triage" CTA). Strip the query
+  // after capture so reload/back doesn't resubmit.
+  useEffect(() => {
+    const prefill = searchParams.get("prompt");
+    if (!prefill) return;
+    setInput((current) => (current ? current : prefill));
+    const next = new URLSearchParams(searchParams);
+    next.delete("prompt");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     return pilk.onMessage((m) => {

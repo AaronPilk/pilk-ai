@@ -85,6 +85,7 @@ const TOOL_LABELS: Record<string, string> = {
   gmail_send: "Send an email",
   gmail_search: "Search PILK's inbox",
   gmail_read: "Read an email",
+  gmail_thread_read: "Read an email thread",
 };
 
 export function humanizeToolName(raw: string | null | undefined): string {
