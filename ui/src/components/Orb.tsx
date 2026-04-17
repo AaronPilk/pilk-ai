@@ -3,6 +3,7 @@ import { forwardRef, type ButtonHTMLAttributes } from "react";
 export type OrbMode =
   | "idle"
   | "passive"
+  | "followup"
   | "listening"
   | "uploading"
   | "speaking"

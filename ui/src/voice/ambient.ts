@@ -19,6 +19,7 @@ export type AmbientState =
   | "active" // capturing the user's request
   | "thinking" // waiting for PILK's reply
   | "speaking" // playing PILK's reply
+  | "followup" // post-reply conversation window (no wake needed)
   | "error";
 
 export interface AmbientConfig {
@@ -44,17 +45,24 @@ const DEFAULT_CONFIG: AmbientConfig = {
 };
 
 // How long to wait before auto-finalizing the utterance.
-//   wakeGraceMs  — after the wake phrase if the user hasn't started yet
-//   silenceMs    — after any speech activity (interim OR final) stops
+//   wakeGraceMs          — after the wake phrase if user hasn't started yet
+//   silenceMs            — after any speech activity (interim OR final) stops
+//   followupWindowMs     — after PILK finishes speaking, stay open for a
+//                          follow-up question without requiring the wake phrase
 interface PatiencePreset {
   wakeGraceMs: number;
   silenceMs: number;
+  followupWindowMs: number;
 }
 const PATIENCE: Record<Patience, PatiencePreset> = {
-  snappy: { wakeGraceMs: 3500, silenceMs: 1400 },
-  normal: { wakeGraceMs: 5000, silenceMs: 2200 },
-  patient: { wakeGraceMs: 7000, silenceMs: 3200 },
-  "very-patient": { wakeGraceMs: 10000, silenceMs: 5000 },
+  snappy: { wakeGraceMs: 3500, silenceMs: 1400, followupWindowMs: 15_000 },
+  normal: { wakeGraceMs: 5000, silenceMs: 2200, followupWindowMs: 20_000 },
+  patient: { wakeGraceMs: 7000, silenceMs: 3200, followupWindowMs: 28_000 },
+  "very-patient": {
+    wakeGraceMs: 10_000,
+    silenceMs: 5000,
+    followupWindowMs: 45_000,
+  },
 };
 
 const ACK_TEXT: Record<Exclude<AckKind, "tone" | "none">, string> = {
@@ -95,6 +103,7 @@ class AmbientController {
   private activeTimer: number | null = null;
   private audio: HTMLAudioElement | null = null;
   private restartTimer: number | null = null;
+  private followupTimer: number | null = null;
   private suppressUntil = 0; // ignore recognizer output until this timestamp
 
   supported =
@@ -219,6 +228,7 @@ class AmbientController {
       clearTimeout(this.restartTimer);
       this.restartTimer = null;
     }
+    this.clearFollowupTimer();
     if (this.recognition) {
       try {
         this.recognition.onend = null;
@@ -274,6 +284,7 @@ class AmbientController {
     if (!text) return;
     if (this.state === "speaking" || this.state === "thinking") return;
     if (Date.now() < this.suppressUntil) return;
+    void isFinal; // reserved for future end-of-speech heuristics
 
     if (this.state === "passive") {
       const idx = this.findWake(text);
@@ -284,18 +295,32 @@ class AmbientController {
       return;
     }
 
+    if (this.state === "followup") {
+      // Post-reply window: any speech counts as a follow-up without the
+      // wake phrase. Cancel the "return to passive" timer and drop
+      // straight into active capture.
+      this.clearFollowupTimer();
+      this.activeBuffer = text;
+      this.setState("active", this.activeBuffer || "Listening…");
+      if (this.activeTimer) clearTimeout(this.activeTimer);
+      const { silenceMs } = PATIENCE[this.config.patience];
+      this.activeTimer = window.setTimeout(() => this.finalizeActive(), silenceMs);
+      return;
+    }
+
     if (this.state === "active" || this.state === "wake") {
-      // Accumulate everything spoken after the wake.
       this.activeBuffer = stripWake(text, this.config.wakePhrase);
       this.setState("active", this.activeBuffer || "Listening…");
       if (this.activeTimer) clearTimeout(this.activeTimer);
-      // Reset the silence timer on every speech event; only the absence of
-      // new speech for `silenceMs` ends the turn. `isFinal` no longer
-      // shortens the window — Web Speech often emits a final mid-thought,
-      // which previously cut the user off.
-      void isFinal;
       const { silenceMs } = PATIENCE[this.config.patience];
       this.activeTimer = window.setTimeout(() => this.finalizeActive(), silenceMs);
+    }
+  }
+
+  private clearFollowupTimer(): void {
+    if (this.followupTimer) {
+      clearTimeout(this.followupTimer);
+      this.followupTimer = null;
     }
   }
 
@@ -408,13 +433,36 @@ class AmbientController {
     }
   }
 
+  /**
+   * Called after a reply is finished or an error resolves. We don't drop all
+   * the way to passive immediately — instead we hold the mic open for a
+   * follow-up window so the user can keep the conversation going without
+   * re-saying the wake phrase. The window resets every time they speak.
+   */
   private resumePassiveSoon(): void {
     this.suppressUntil = Date.now() + 800;
     window.setTimeout(() => {
       if (!this.config.enabled) return;
-      this.setState("passive");
-      this.start();
+      this.enterFollowup();
     }, 400);
+  }
+
+  private enterFollowup(): void {
+    this.activeBuffer = "";
+    if (this.activeTimer) {
+      clearTimeout(this.activeTimer);
+      this.activeTimer = null;
+    }
+    this.clearFollowupTimer();
+    // Need the recognizer live — start() is a no-op if it's already running.
+    this.start();
+    this.setState("followup", "Still listening — keep going");
+    const { followupWindowMs } = PATIENCE[this.config.patience];
+    this.followupTimer = window.setTimeout(() => {
+      this.followupTimer = null;
+      // Only fall back to passive if nobody jumped in.
+      if (this.state === "followup") this.setState("passive");
+    }, followupWindowMs);
   }
 
   private shutRecognizer(): void {

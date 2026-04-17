@@ -219,6 +219,7 @@ function ambientToOrbMode(a: AmbientState, local: Local): OrbMode {
   if (a === "error") return "error";
   if (a === "off") return local === "recording" ? "listening" : "idle";
   if (a === "passive") return "passive";
+  if (a === "followup") return "followup";
   if (a === "wake" || a === "active") return "listening";
   if (a === "thinking") return "uploading";
   if (a === "speaking") return "speaking";
@@ -248,6 +249,8 @@ function describeAmbient(a: AmbientState, status: VoiceStatus | null): string {
       return "Thinking…";
     case "speaking":
       return "Speaking…";
+    case "followup":
+      return "Still listening — keep going";
     case "error":
       return "Ambient error · tap to talk";
   }
