@@ -2353,3 +2353,64 @@ body {
   border: 1px solid var(--border);
   color: var(--text-dim);
 }
+
+/* Connected accounts rows */
+.connected-account {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-hover);
+}
+.connected-account-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.connected-account-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.connected-account-pill {
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.connected-account-pill--ok {
+  background: rgba(101, 209, 155, 0.14);
+  border-color: rgba(101, 209, 155, 0.4);
+  color: var(--ok);
+}
+.connected-account-email {
+  font-size: 13px;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+.connected-account-scopes {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.connected-account-body {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+.connected-account-body code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}

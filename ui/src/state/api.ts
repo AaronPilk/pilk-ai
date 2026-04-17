@@ -319,6 +319,26 @@ export async function setGovernorConfig(body: {
   return { enabled: true, ...s };
 }
 
+// ── Integrations ─────────────────────────────────────────────────
+
+export interface GoogleIntegrationStatus {
+  linked: boolean;
+  email: string | null;
+  scopes: string[];
+  linked_at: string | null;
+  error: string | null;
+}
+
+export interface IntegrationsStatus {
+  google: GoogleIntegrationStatus;
+}
+
+export async function fetchIntegrationsStatus(): Promise<IntegrationsStatus> {
+  const r = await fetch(`${API_URL}/integrations/status`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 export async function voiceSpeak(text: string): Promise<VoiceSpeakResult> {
   const r = await fetch(`${API_URL}/voice/speak`, {
     method: "POST",

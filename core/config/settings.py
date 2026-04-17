@@ -120,6 +120,16 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("PILK_PREMIUM_GATE", "PREMIUM_GATE"),
     )
 
+    # ── Google / Gmail integration ───────────────────────────────
+    # Path to the OAuth client secret JSON downloaded from Google
+    # Cloud (Credentials → OAuth client ID → Desktop → download).
+    google_client_secret_path: Path = Field(
+        default=Path("pilk-google-client.json"),
+        validation_alias=AliasChoices(
+            "PILK_GOOGLE_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET"
+        ),
+    )
+
     @property
     def db_path(self) -> Path:
         return self.home / "pilk.db"
@@ -147,6 +157,15 @@ class Settings(BaseSettings):
     @property
     def memory_dir(self) -> Path:
         return self.home / "memory"
+
+    @property
+    def integrations_dir(self) -> Path:
+        return self.home / "identity" / "integrations"
+
+    @property
+    def google_credentials_path(self) -> Path:
+        """Where the OAuth refresh token lives after `link_google`."""
+        return self.integrations_dir / "google.json"
 
     @property
     def exports_dir(self) -> Path:

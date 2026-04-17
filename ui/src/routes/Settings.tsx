@@ -8,10 +8,12 @@ import {
 } from "../voice/ambient";
 import {
   fetchGovernorStatus,
+  fetchIntegrationsStatus,
   pilk,
   setGovernorConfig,
   setGovernorOverride,
   type GovernorStatus,
+  type IntegrationsStatus,
   type OverrideMode,
 } from "../state/api";
 
@@ -65,6 +67,7 @@ export default function Settings() {
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [gov, setGov] = useState<GovernorStatus | null>(null);
   const [govBusy, setGovBusy] = useState(false);
+  const [integrations, setIntegrations] = useState<IntegrationsStatus | null>(null);
 
   useEffect(() => ambient.subscribeConfig(setCfg), []);
   useEffect(() =>
@@ -79,12 +82,17 @@ export default function Settings() {
     fetchGovernorStatus().then(setGov).catch(() => {});
   }, []);
 
+  const refreshIntegrations = useCallback(() => {
+    fetchIntegrationsStatus().then(setIntegrations).catch(() => {});
+  }, []);
+
   useEffect(() => {
     refreshGov();
+    refreshIntegrations();
     return pilk.onMessage((m) => {
       if (m.type === "cost.updated" || m.type === "plan.completed") refreshGov();
     });
-  }, [refreshGov]);
+  }, [refreshGov, refreshIntegrations]);
 
   const onOverride = async (mode: OverrideMode) => {
     setGovBusy(true);
@@ -411,10 +419,69 @@ export default function Settings() {
         )}
       </section>
 
-      <section className="settings-card settings-card--muted">
-        <div className="settings-card-title">Permissions &amp; session vault</div>
+      <section className="settings-card">
+        <div className="settings-card-head">
+          <div className="settings-card-title">Connected accounts</div>
+          <button
+            type="button"
+            className="btn"
+            onClick={refreshIntegrations}
+            title="Refresh connection status"
+          >
+            Refresh
+          </button>
+        </div>
         <p className="settings-card-body">
-          Trust rules and the key vault arrive in a follow-up batch.
+          External accounts PILK can use on your behalf. Tool calls against
+          connected accounts still respect the approval rules — e.g. sending
+          email is tagged COMMS risk and always asks first.
+        </p>
+
+        <div className="connected-account">
+          <div className="connected-account-head">
+            <div className="connected-account-label">Google / Gmail</div>
+            {integrations?.google?.linked ? (
+              <span className="connected-account-pill connected-account-pill--ok">
+                Connected
+              </span>
+            ) : (
+              <span className="connected-account-pill">Not connected</span>
+            )}
+          </div>
+          {integrations?.google?.linked ? (
+            <>
+              <div className="connected-account-email">
+                {integrations.google.email ?? "(email unknown)"}
+              </div>
+              <div className="connected-account-scopes">
+                {integrations.google.scopes.length} scope
+                {integrations.google.scopes.length === 1 ? "" : "s"} granted
+                {integrations.google.linked_at && (
+                  <>
+                    {" · linked "}
+                    {new Date(integrations.google.linked_at).toLocaleString()}
+                  </>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="connected-account-body">
+              PILK has its own Gmail identity for signups, verifications,
+              outbound reports, and document sharing. Link it once with{" "}
+              <code>python -m scripts.link_google</code> from the repo root
+              (needs <code>pilk-google-client.json</code> from Google Cloud →
+              Credentials). Gmail tools (send / search / read) register
+              automatically after linking.
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="settings-card settings-card--muted">
+        <div className="settings-card-title">Session vault &amp; trust rules</div>
+        <p className="settings-card-body">
+          Encrypted credential vault and fine-grained trust rule editor arrive
+          in a follow-up batch.
         </p>
       </section>
     </div>

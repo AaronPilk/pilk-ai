@@ -27,6 +27,7 @@ from core.api.routes.browser import router as browser_router
 from core.api.routes.cost import router as cost_router
 from core.api.routes.governor import router as governor_router
 from core.api.routes.health import router as health_router
+from core.api.routes.integrations import router as integrations_router
 from core.api.routes.plans import router as plans_router
 from core.api.routes.sandboxes import router as sandboxes_router
 from core.api.routes.voice import router as voice_router
@@ -35,6 +36,7 @@ from core.config import get_settings
 from core.db import ensure_schema
 from core.governor import DailyBudget, Governor, Tier, Tiers, TierSpec
 from core.governor.providers import build_providers
+from core.integrations.google import google_status, make_gmail_tools
 from core.ledger import Ledger
 from core.logging import configure_logging, get_logger
 from core.orchestrator import Orchestrator, PlanStore
@@ -130,6 +132,23 @@ async def lifespan(app: FastAPI):
     registry.register(finance_withdraw_tool)
     registry.register(finance_transfer_tool)
     registry.register(trade_execute_tool)
+
+    # Google / Gmail integration — registers tools only if the user has
+    # linked an account via `python -m scripts.link_google`.
+    g = google_status(settings.google_credentials_path)
+    if g.linked:
+        for t in make_gmail_tools(settings.google_credentials_path):
+            registry.register(t)
+        log.info(
+            "gmail_ready",
+            email=g.email,
+            scopes=len(g.scopes or []),
+        )
+    else:
+        log.info(
+            "gmail_not_linked",
+            detail="run `python -m scripts.link_google` to connect Gmail",
+        )
 
     browser_sessions: BrowserSessionManager | None = None
     if settings.browserbase_api_key and settings.browserbase_project_id:
@@ -304,5 +323,6 @@ def create_app() -> FastAPI:
     app.include_router(voice_router)
     app.include_router(browser_router)
     app.include_router(governor_router)
+    app.include_router(integrations_router)
     app.include_router(ws_router)
     return app
