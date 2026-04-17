@@ -1,3 +1,15 @@
+from core.integrations.google.accounts import (
+    ROLE_LABELS,
+    ROLES,
+    GoogleRole,
+    migrate_legacy_if_needed,
+)
+from core.integrations.google.accounts import (
+    credentials_path as google_credentials_path,
+)
+from core.integrations.google.accounts import (
+    legacy_path as google_legacy_path,
+)
 from core.integrations.google.gmail import make_gmail_tools
 from core.integrations.google.oauth import (
     GoogleCredentials,
@@ -9,9 +21,15 @@ from core.integrations.google.oauth import (
 )
 
 __all__ = [
+    "ROLES",
+    "ROLE_LABELS",
     "GoogleCredentials",
     "GoogleLinkStatus",
+    "GoogleRole",
+    "google_credentials_path",
+    "google_legacy_path",
     "google_status",
     "load_credentials",
     "make_gmail_tools",
+    "migrate_legacy_if_needed",
 ]

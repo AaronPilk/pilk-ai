@@ -101,7 +101,8 @@ export default function Home() {
         plans: plans.plans,
         cost,
         pendingApprovals: approvals.pending.length,
-        google: integrations?.google ?? null,
+        // Home shows your real inbox, not PILK's operational mailbox.
+        google: integrations?.google?.user ?? null,
       });
     };
     load();
@@ -218,8 +219,8 @@ export default function Home() {
         ) : (
           <ConnectCard
             title="Email"
-            body="Unread summaries and drafts you need to send will appear here once Gmail is connected."
-            cta="Connect Gmail"
+            body="Your real inbox will appear here once you link your working Gmail. PILK will read and help triage it without ever sending from your address without approval."
+            cta="Connect your Gmail"
           />
         )}
         <ConnectCard

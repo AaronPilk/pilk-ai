@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from core.policy import financial, system
+from core.policy import comms, financial, system
 from core.policy.risk import RiskClass
 from core.policy.trust import TrustStore
 
@@ -74,7 +74,14 @@ class Gate:
 
         # 2) System sub-policy — tools that modify PILK itself.
         sys_ruling = system.evaluate(tool_name=inp.tool_name)
-        bypass_trust = ruling.bypass_trust or sys_ruling.bypass_trust
+        # 2b) Comms sub-policy — user-identity outbound messages must
+        # always hit the approval queue freshly, never via trust rules.
+        comms_ruling = comms.evaluate(tool_name=inp.tool_name)
+        bypass_trust = (
+            ruling.bypass_trust
+            or sys_ruling.bypass_trust
+            or comms_ruling.bypass_trust
+        )
         if sys_ruling.requires_approval:
             return PolicyOutcome(
                 decision=Decision.APPROVE,
@@ -105,6 +112,10 @@ class Gate:
         # 5) Everything else queues for user approval.
         return PolicyOutcome(
             decision=Decision.APPROVE,
-            reason=(ruling.reason or f"{inp.risk.value}: requires approval"),
+            reason=(
+                comms_ruling.reason
+                or ruling.reason
+                or f"{inp.risk.value}: requires approval"
+            ),
             bypass_trust=bypass_trust,
         )

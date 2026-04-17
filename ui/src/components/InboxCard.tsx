@@ -14,7 +14,7 @@ export default function InboxCard({ email }: { email: string | null }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const g = await fetchInboxGlance();
+      const g = await fetchInboxGlance("user");
       setGlance(g);
       setFetchError(null);
     } catch (e) {

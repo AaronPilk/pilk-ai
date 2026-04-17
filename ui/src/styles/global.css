@@ -2487,6 +2487,14 @@ body {
   font-weight: 600;
   color: var(--text);
 }
+.connected-account-description {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.connected-account + .connected-account {
+  margin-top: 10px;
+}
 .connected-account-pill {
   padding: 3px 10px;
   border-radius: var(--radius-pill);

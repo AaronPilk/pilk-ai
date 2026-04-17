@@ -31,9 +31,18 @@ from core.logging import get_logger
 
 log = get_logger("pilkd.google")
 
-# Keep this list aligned with whatever tools we expose. Narrower is
-# better: we can always re-link to widen.
-DEFAULT_SCOPES: list[str] = [
+# Scopes are split per role. The system account only needs to *send*
+# (it emails the user and signs up for services). The user account
+# needs read+modify so PILK can triage and draft replies on the user's
+# real inbox. Keeping each scope list narrow is a deliberate isolation
+# boundary — we can always re-link to widen.
+SYSTEM_SCOPES: list[str] = [
+    "https://www.googleapis.com/auth/gmail.send",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+]
+USER_SCOPES: list[str] = [
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -41,6 +50,10 @@ DEFAULT_SCOPES: list[str] = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
 ]
+# Back-compat alias for callers that still import DEFAULT_SCOPES.
+# Defaults to the wider scope set so re-linking from pre-Batch-K code
+# doesn't accidentally downgrade permissions.
+DEFAULT_SCOPES: list[str] = USER_SCOPES
 
 
 @dataclass

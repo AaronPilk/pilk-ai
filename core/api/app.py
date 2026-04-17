@@ -38,7 +38,12 @@ from core.config import get_settings
 from core.db import ensure_schema
 from core.governor import DailyBudget, Governor, Tier, Tiers, TierSpec
 from core.governor.providers import build_providers
-from core.integrations.google import google_status, make_gmail_tools
+from core.integrations.google import (
+    ROLES,
+    google_status,
+    make_gmail_tools,
+    migrate_legacy_if_needed,
+)
 from core.ledger import Ledger
 from core.logging import configure_logging, get_logger
 from core.memory import MemoryStore
@@ -137,22 +142,32 @@ async def lifespan(app: FastAPI):
     registry.register(finance_transfer_tool)
     registry.register(trade_execute_tool)
 
-    # Google / Gmail integration — registers tools only if the user has
-    # linked an account via `python -m scripts.link_google`.
-    g = google_status(settings.google_credentials_path)
-    if g.linked:
-        for t in make_gmail_tools(settings.google_credentials_path):
-            registry.register(t)
-        log.info(
-            "gmail_ready",
-            email=g.email,
-            scopes=len(g.scopes or []),
-        )
-    else:
-        log.info(
-            "gmail_not_linked",
-            detail="run `python -m scripts.link_google` to connect Gmail",
-        )
+    # Google / Gmail integration — PILK distinguishes a *system* identity
+    # (operational mail, PILK acting as itself) from a *user* identity
+    # (the real inbox, PILK acting on your behalf). Each role is a
+    # separate OAuth blob; each gets its own suffixed tool set.
+    migrate_legacy_if_needed(home)
+    for role in ROLES:
+        role_path = settings.google_role_path(role)
+        g = google_status(role_path)
+        if g.linked:
+            for t in make_gmail_tools(role, role_path):
+                registry.register(t)
+            log.info(
+                "gmail_role_ready",
+                role=role,
+                email=g.email,
+                scopes=len(g.scopes or []),
+            )
+        else:
+            log.info(
+                "gmail_role_not_linked",
+                role=role,
+                detail=(
+                    f"run `python -m scripts.link_google --role {role}` "
+                    "to connect this identity"
+                ),
+            )
 
     browser_sessions: BrowserSessionManager | None = None
     if settings.browserbase_api_key and settings.browserbase_project_id:

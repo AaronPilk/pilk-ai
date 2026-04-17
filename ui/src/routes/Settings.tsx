@@ -12,6 +12,8 @@ import {
   pilk,
   setGovernorConfig,
   setGovernorOverride,
+  type GoogleIntegrationStatus,
+  type GoogleRole,
   type GovernorStatus,
   type IntegrationsStatus,
   type OverrideMode,
@@ -432,49 +434,25 @@ export default function Settings() {
           </button>
         </div>
         <p className="settings-card-body">
-          External accounts PILK can use on your behalf. Tool calls against
-          connected accounts still respect the approval rules — e.g. sending
-          email is tagged COMMS risk and always asks first.
+          Two Gmail identities with different purposes. PILK's operational
+          mail signs itself up for tools, receives verification emails, and
+          sends you reports. Your working mail is your real inbox — PILK
+          reads and helps triage, and every outgoing message from it is
+          reviewed one-by-one in the approval queue.
         </p>
 
-        <div className="connected-account">
-          <div className="connected-account-head">
-            <div className="connected-account-label">Google / Gmail</div>
-            {integrations?.google?.linked ? (
-              <span className="connected-account-pill connected-account-pill--ok">
-                Connected
-              </span>
-            ) : (
-              <span className="connected-account-pill">Not connected</span>
-            )}
-          </div>
-          {integrations?.google?.linked ? (
-            <>
-              <div className="connected-account-email">
-                {integrations.google.email ?? "(email unknown)"}
-              </div>
-              <div className="connected-account-scopes">
-                {integrations.google.scopes.length} scope
-                {integrations.google.scopes.length === 1 ? "" : "s"} granted
-                {integrations.google.linked_at && (
-                  <>
-                    {" · linked "}
-                    {new Date(integrations.google.linked_at).toLocaleString()}
-                  </>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="connected-account-body">
-              PILK has its own Gmail identity for signups, verifications,
-              outbound reports, and document sharing. Link it once with{" "}
-              <code>python -m scripts.link_google</code> from the repo root
-              (needs <code>pilk-google-client.json</code> from Google Cloud →
-              Credentials). Gmail tools (send / search / read) register
-              automatically after linking.
-            </div>
-          )}
-        </div>
+        <GoogleAccountRow
+          role="system"
+          label="PILK operational mail"
+          description="Signups, verifications, reports, and outbound from PILK itself."
+          status={integrations?.google?.system}
+        />
+        <GoogleAccountRow
+          role="user"
+          label="Your working mail"
+          description="Your real inbox. Outgoing from this identity always requires your approval."
+          status={integrations?.google?.user}
+        />
       </section>
 
       <section className="settings-card settings-card--muted">
@@ -493,4 +471,58 @@ function clamp01(x: number): number {
   if (x < 0) return 0;
   if (x > 1) return 1;
   return x;
+}
+
+function GoogleAccountRow({
+  role,
+  label,
+  description,
+  status,
+}: {
+  role: GoogleRole;
+  label: string;
+  description: string;
+  status: GoogleIntegrationStatus | undefined;
+}) {
+  const linked = status?.linked === true;
+  return (
+    <div className="connected-account">
+      <div className="connected-account-head">
+        <div className="connected-account-label">{label}</div>
+        {linked ? (
+          <span className="connected-account-pill connected-account-pill--ok">
+            Connected
+          </span>
+        ) : (
+          <span className="connected-account-pill">Not connected</span>
+        )}
+      </div>
+      <div className="connected-account-description">{description}</div>
+      {linked ? (
+        <>
+          <div className="connected-account-email">
+            {status?.email ?? "(email unknown)"}
+          </div>
+          <div className="connected-account-scopes">
+            {(status?.scopes.length ?? 0)} scope
+            {(status?.scopes.length ?? 0) === 1 ? "" : "s"} granted
+            {status?.linked_at && (
+              <>
+                {" · linked "}
+                {new Date(status.linked_at).toLocaleString()}
+              </>
+            )}
+          </div>
+        </>
+      ) : (
+        <div className="connected-account-body">
+          Link once with{" "}
+          <code>python -m scripts.link_google --role {role}</code> from the
+          repo root (needs <code>pilk-google-client.json</code> from Google
+          Cloud → Credentials). Gmail tools for this identity register
+          automatically after linking.
+        </div>
+      )}
+    </div>
+  );
 }

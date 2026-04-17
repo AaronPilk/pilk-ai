@@ -26,6 +26,7 @@ import base64
 from email.mime.text import MIMEText
 from pathlib import Path
 
+from core.integrations.google.accounts import GoogleRole
 from core.integrations.google.oauth import load_credentials
 from core.logging import get_logger
 from core.policy.risk import RiskClass
@@ -39,14 +40,54 @@ DEFAULT_THREAD_MESSAGES = 5
 MAX_THREAD_BODY_CHARS = 1200
 
 
-def make_gmail_tools(credentials_path: Path) -> list[Tool]:
-    """Factory that produces the Gmail tool set bound to a credentials file."""
+# Role-specific naming and copy. The planner sees tool names directly,
+# so the suffixes (_as_pilk / _as_me, _pilk_inbox / _my_inbox) are
+# meant to be read literally and picked by intent.
+_ROLE_NAMES: dict[GoogleRole, dict[str, str]] = {
+    "system": {
+        "send": "gmail_send_as_pilk",
+        "search": "gmail_search_pilk_inbox",
+        "read": "gmail_read_pilk",
+        "thread_read": "gmail_thread_read_pilk",
+    },
+    "user": {
+        "send": "gmail_send_as_me",
+        "search": "gmail_search_my_inbox",
+        "read": "gmail_read_me",
+        "thread_read": "gmail_thread_read_me",
+    },
+}
+
+_ROLE_NOUN: dict[GoogleRole, str] = {
+    "system": "PILK's operational Gmail",
+    "user": "your working Gmail",
+}
+
+_ROLE_SENDER_PHRASE: dict[GoogleRole, str] = {
+    "system": "PILK's own Gmail address",
+    "user": "your real Gmail address",
+}
+
+
+def make_gmail_tools(role: GoogleRole, credentials_path: Path) -> list[Tool]:
+    """Factory that produces the Gmail tool set bound to one role's credentials.
+
+    Tool names are role-suffixed so the planner picks them by intent
+    (e.g. "send from PILK" vs "send as me"). Handlers are shared — only
+    the identity routing and display copy differ.
+    """
+    names = _ROLE_NAMES[role]
+    noun = _ROLE_NOUN[role]
+    sender = _ROLE_SENDER_PHRASE[role]
 
     async def _send(args: dict, ctx: ToolContext) -> ToolOutcome:
         creds = load_credentials(credentials_path)
         if creds is None:
             return ToolOutcome(
-                content="Gmail isn't linked yet. Run `python -m scripts.link_google`.",
+                content=(
+                    f"{noun} isn't linked yet. Run "
+                    f"`python -m scripts.link_google --role {role}`."
+                ),
                 is_error=True,
             )
         to = str(args.get("to") or "").strip()
@@ -56,11 +97,13 @@ def make_gmail_tools(credentials_path: Path) -> list[Tool]:
         bcc = str(args.get("bcc") or "").strip()
         if not to or "@" not in to:
             return ToolOutcome(
-                content="gmail_send requires a valid 'to' address.", is_error=True
+                content=f"{names['send']} requires a valid 'to' address.",
+                is_error=True,
             )
         if not subject:
             return ToolOutcome(
-                content="gmail_send requires a 'subject'.", is_error=True
+                content=f"{names['send']} requires a 'subject'.",
+                is_error=True,
             )
         try:
             msg = MIMEText(body, "plain", "utf-8")
@@ -84,16 +127,20 @@ def make_gmail_tools(credentials_path: Path) -> list[Tool]:
                 data={"thread_id": thread_id, "message_id": msg_id, "to": to},
             )
         except Exception as e:
-            log.exception("gmail_send_failed")
+            log.exception("gmail_send_failed", tool=names["send"])
             return ToolOutcome(
-                content=f"gmail_send failed: {type(e).__name__}: {e}", is_error=True
+                content=f"{names['send']} failed: {type(e).__name__}: {e}",
+                is_error=True,
             )
 
     async def _search(args: dict, ctx: ToolContext) -> ToolOutcome:
         creds = load_credentials(credentials_path)
         if creds is None:
             return ToolOutcome(
-                content="Gmail isn't linked yet. Run `python -m scripts.link_google`.",
+                content=(
+                    f"{noun} isn't linked yet. Run "
+                    f"`python -m scripts.link_google --role {role}`."
+                ),
                 is_error=True,
             )
         query = str(args.get("query") or "").strip()
@@ -104,9 +151,9 @@ def make_gmail_tools(credentials_path: Path) -> list[Tool]:
                 _do_search, creds, query, max_results
             )
         except Exception as e:
-            log.exception("gmail_search_failed")
+            log.exception("gmail_search_failed", tool=names["search"])
             return ToolOutcome(
-                content=f"gmail_search failed: {type(e).__name__}: {e}",
+                content=f"{names['search']} failed: {type(e).__name__}: {e}",
                 is_error=True,
             )
         lines = [
@@ -123,20 +170,24 @@ def make_gmail_tools(credentials_path: Path) -> list[Tool]:
         creds = load_credentials(credentials_path)
         if creds is None:
             return ToolOutcome(
-                content="Gmail isn't linked yet. Run `python -m scripts.link_google`.",
+                content=(
+                    f"{noun} isn't linked yet. Run "
+                    f"`python -m scripts.link_google --role {role}`."
+                ),
                 is_error=True,
             )
         message_id = str(args.get("message_id") or "").strip()
         if not message_id:
             return ToolOutcome(
-                content="gmail_read requires a 'message_id'.", is_error=True
+                content=f"{names['read']} requires a 'message_id'.",
+                is_error=True,
             )
         try:
             msg = await asyncio.to_thread(_do_read, creds, message_id)
         except Exception as e:
-            log.exception("gmail_read_failed")
+            log.exception("gmail_read_failed", tool=names["read"])
             return ToolOutcome(
-                content=f"gmail_read failed: {type(e).__name__}: {e}",
+                content=f"{names['read']} failed: {type(e).__name__}: {e}",
                 is_error=True,
             )
         return ToolOutcome(
@@ -151,13 +202,16 @@ def make_gmail_tools(credentials_path: Path) -> list[Tool]:
         creds = load_credentials(credentials_path)
         if creds is None:
             return ToolOutcome(
-                content="Gmail isn't linked yet. Run `python -m scripts.link_google`.",
+                content=(
+                    f"{noun} isn't linked yet. Run "
+                    f"`python -m scripts.link_google --role {role}`."
+                ),
                 is_error=True,
             )
         thread_id = str(args.get("thread_id") or "").strip()
         if not thread_id:
             return ToolOutcome(
-                content="gmail_thread_read requires a 'thread_id'.",
+                content=f"{names['thread_read']} requires a 'thread_id'.",
                 is_error=True,
             )
         raw_max = args.get("max_messages") or DEFAULT_THREAD_MESSAGES
@@ -171,9 +225,9 @@ def make_gmail_tools(credentials_path: Path) -> list[Tool]:
                 _do_thread_read, creds, thread_id, max_messages
             )
         except Exception as e:
-            log.exception("gmail_thread_read_failed")
+            log.exception("gmail_thread_read_failed", tool=names["thread_read"])
             return ToolOutcome(
-                content=f"gmail_thread_read failed: {type(e).__name__}: {e}",
+                content=f"{names['thread_read']} failed: {type(e).__name__}: {e}",
                 is_error=True,
             )
         sections = [
@@ -190,9 +244,9 @@ def make_gmail_tools(credentials_path: Path) -> list[Tool]:
         return ToolOutcome(content=header + "\n\n---\n\n".join(sections), data=thread)
 
     send_tool = Tool(
-        name="gmail_send",
+        name=names["send"],
         description=(
-            "Send an email from PILK's Gmail account. COMMS risk — always "
+            f"Compose and send an email from {sender}. COMMS risk — always "
             "flows through the approval queue so you can review the "
             "recipient, subject, and body before it goes out."
         ),
@@ -211,12 +265,12 @@ def make_gmail_tools(credentials_path: Path) -> list[Tool]:
         handler=_send,
     )
     search_tool = Tool(
-        name="gmail_search",
+        name=names["search"],
         description=(
-            "Search PILK's Gmail inbox using Gmail's native query syntax "
+            f"Search {noun} using Gmail's native query syntax "
             "(e.g. 'from:example.com after:2026/04/01 is:unread'). Returns "
-            "up to 25 messages with id, from, subject. No body — use "
-            "gmail_read to pull a full message."
+            f"up to 25 messages with id, from, subject. No body — use "
+            f"{names['read']} to pull a full message."
         ),
         input_schema={
             "type": "object",
@@ -230,9 +284,9 @@ def make_gmail_tools(credentials_path: Path) -> list[Tool]:
         handler=_search,
     )
     read_tool = Tool(
-        name="gmail_read",
+        name=names["read"],
         description=(
-            "Fetch the full body of a single Gmail message by id. "
+            f"Fetch the full body of a single message from {noun} by id. "
             "Returns From/To/Subject/Date and up to ~6 KB of body text."
         ),
         input_schema={
@@ -244,12 +298,13 @@ def make_gmail_tools(credentials_path: Path) -> list[Tool]:
         handler=_read,
     )
     thread_read_tool = Tool(
-        name="gmail_thread_read",
+        name=names["thread_read"],
         description=(
-            "Read the last N messages in a Gmail thread in order, with sender, "
-            "date, and body (each trimmed to ~1.2 KB). Use when gmail_read has "
-            "surfaced a message that needs prior context, or when triaging a "
-            "back-and-forth thread. Up to 20 messages per call."
+            f"Read the last N messages in a thread on {noun} in order, with "
+            "sender, date, and body (each trimmed to ~1.2 KB). Use when "
+            f"{names['read']} has surfaced a message that needs prior "
+            "context, or when triaging a back-and-forth thread. Up to 20 "
+            "messages per call."
         ),
         input_schema={
             "type": "object",

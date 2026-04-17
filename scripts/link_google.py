@@ -1,27 +1,38 @@
-"""Interactive linker for PILK's Google account.
+"""Interactive linker for a Google account, in one of two roles.
 
-Run once:
+Run once per role:
 
-    python -m scripts.link_google
+    python -m scripts.link_google --role system   # PILK's operational mail
+    python -m scripts.link_google --role user     # your real working inbox
 
 Needs `pilk-google-client.json` (the OAuth *client* secret you downloaded
 from Google Cloud → Credentials → OAuth 2.0 Client ID → Desktop) at the
 repo root, or wherever PILK_GOOGLE_CLIENT_SECRET points.
 
-Opens a browser, asks you to sign in as PILK's Gmail account, then
-writes the refresh token to ~/PILK/identity/integrations/google.json.
-That file replaces any prior link on disk.
+Opens a browser, asks you to sign in as the account for that role,
+then writes the refresh token to:
+
+    ~/PILK/identity/integrations/google/{role}.json
+
+Each role has its own scope list (system is send-only; user also gets
+read + modify so PILK can triage and draft on your real inbox).
 """
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import json
 import sys
 from datetime import UTC, datetime
 
 from core.config import get_settings
-from core.integrations.google.oauth import DEFAULT_SCOPES
+from core.integrations.google import ROLE_LABELS, ROLES
+from core.integrations.google.oauth import SYSTEM_SCOPES, USER_SCOPES
+
+
+def _scopes_for(role: str) -> list[str]:
+    return SYSTEM_SCOPES if role == "system" else USER_SCOPES
 
 
 def _fail(msg: str, code: int = 1) -> int:
@@ -29,13 +40,32 @@ def _fail(msg: str, code: int = 1) -> int:
     return code
 
 
-def main() -> int:
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="python -m scripts.link_google",
+        description="Link a Google account to PILK in a given role.",
+    )
+    parser.add_argument(
+        "--role",
+        choices=ROLES,
+        default="system",
+        help=(
+            "Which role to link. 'system' = PILK's operational mail "
+            "(sends reports, signs up for APIs). 'user' = your real "
+            "working inbox (triage, drafting replies). Default: system."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv if argv is not None else sys.argv[1:])
+    role: str = args.role
     settings = get_settings()
     settings.integrations_dir.mkdir(parents=True, exist_ok=True)
 
     client_path = settings.google_client_secret_path
     if not client_path.is_absolute():
-        # Resolve relative to repo root
         client_path = (client_path).resolve()
     if not client_path.exists():
         return _fail(
@@ -52,12 +82,13 @@ def main() -> int:
             "Run `pip install google-auth google-auth-oauthlib google-api-python-client`"
         )
 
+    scopes = _scopes_for(role)
+    label = ROLE_LABELS[role]
+
+    print(f"Role: {role} ({label})")
     print(f"Loading client secret from {client_path}")
-    flow = InstalledAppFlow.from_client_secrets_file(
-        str(client_path), scopes=DEFAULT_SCOPES
-    )
-    # run_local_server pops a browser and catches the redirect locally.
-    print("Opening browser for Google sign-in — pick PILK's Gmail account…")
+    flow = InstalledAppFlow.from_client_secrets_file(str(client_path), scopes=scopes)
+    print(f"Opening browser — pick the Google account to use as the {role} identity…")
     creds = flow.run_local_server(port=0, prompt="consent", access_type="offline")
     if not creds or not creds.refresh_token:
         return _fail(
@@ -66,7 +97,6 @@ def main() -> int:
             "for consent again."
         )
 
-    # Resolve account email via the userinfo endpoint.
     email: str | None = None
     try:
         from googleapiclient.discovery import build  # type: ignore
@@ -78,22 +108,23 @@ def main() -> int:
         print(f"(couldn't fetch account email: {e}; continuing anyway)")
 
     out = {
+        "role": role,
         "email": email,
         "refresh_token": creds.refresh_token,
         "access_token": creds.token,
         "client_id": creds.client_id,
         "client_secret": creds.client_secret,
-        "scopes": list(creds.scopes or DEFAULT_SCOPES),
+        "scopes": list(creds.scopes or scopes),
         "linked_at": datetime.now(UTC).isoformat(),
     }
-    target = settings.google_credentials_path
+    target = settings.google_role_path(role)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(out, indent=2))
     with contextlib.suppress(Exception):
         target.chmod(0o600)
 
     print()
-    print(f"✓ Linked {email or '(unknown email)'}")
+    print(f"✓ Linked {email or '(unknown email)'} as the {role} identity")
     print(f"  scopes: {', '.join(out['scopes'])}")
     print(f"  stored at {target}")
     print()

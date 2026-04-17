@@ -164,8 +164,23 @@ class Settings(BaseSettings):
 
     @property
     def google_credentials_path(self) -> Path:
-        """Where the OAuth refresh token lives after `link_google`."""
+        """Legacy single-account path (pre-Batch-K).
+
+        Retained only so the migration step on startup knows where to
+        look. New code should call `google_role_path(role)` instead.
+        """
         return self.integrations_dir / "google.json"
+
+    def google_role_path(self, role: str) -> Path:
+        """Per-role OAuth refresh-token path.
+
+        role is "system" (PILK's operational mail) or "user" (your
+        real working mail). Files live under
+        ~/PILK/identity/integrations/google/{role}.json.
+        """
+        if role not in ("system", "user"):
+            raise ValueError(f"unknown google role: {role}")
+        return self.integrations_dir / "google" / f"{role}.json"
 
     @property
     def exports_dir(self) -> Path:

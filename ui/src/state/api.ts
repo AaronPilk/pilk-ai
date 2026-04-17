@@ -321,16 +321,20 @@ export async function setGovernorConfig(body: {
 
 // ── Integrations ─────────────────────────────────────────────────
 
+export type GoogleRole = "system" | "user";
+
 export interface GoogleIntegrationStatus {
   linked: boolean;
   email: string | null;
   scopes: string[];
   linked_at: string | null;
   error: string | null;
+  role: GoogleRole;
+  label: string;
 }
 
 export interface IntegrationsStatus {
-  google: GoogleIntegrationStatus;
+  google: Record<GoogleRole, GoogleIntegrationStatus>;
 }
 
 export async function fetchIntegrationsStatus(): Promise<IntegrationsStatus> {
@@ -350,11 +354,16 @@ export interface InboxGlance {
   email: string | null;
   unread: number;
   preview: InboxGlancePreview[];
+  role: GoogleRole;
   error?: string;
 }
 
-export async function fetchInboxGlance(): Promise<InboxGlance> {
-  const r = await fetch(`${API_URL}/integrations/google/inbox/glance`);
+export async function fetchInboxGlance(
+  role: GoogleRole = "user",
+): Promise<InboxGlance> {
+  const r = await fetch(
+    `${API_URL}/integrations/google/${encodeURIComponent(role)}/inbox/glance`,
+  );
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
