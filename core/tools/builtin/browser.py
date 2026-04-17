@@ -84,9 +84,10 @@ class BrowserSessionManager:
         self, agent_name: str | None, sandbox_id: str | None
     ) -> BrowserSession:
         # Imported lazily so pilkd still boots without the deps installed.
+        import time
+
         from browserbase import Browserbase  # type: ignore
         from playwright.async_api import async_playwright  # type: ignore
-        import time
 
         bb = Browserbase(api_key=self._api_key)
         raw = await asyncio.to_thread(
