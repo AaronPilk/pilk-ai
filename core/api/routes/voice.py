@@ -5,6 +5,7 @@
   POST /voice/cancel       cancel before release (flips state back to idle)
   POST /voice/utterance    multipart audio upload — runs the pipeline
   POST /voice/done         client-side playback finished (flips state to idle)
+  POST /voice/speak        text-only → returns TTS audio (used by ambient mode)
 
 Each call is a JSON response; state change broadcasts happen over the WS
 hub so any dashboard tab can reflect the indicator without polling.
@@ -12,9 +13,11 @@ hub so any dashboard tab can reflect the indicator without polling.
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from pydantic import BaseModel, Field
 
 from core.voice.state import VoiceState, VoiceStateError
 
@@ -124,4 +127,32 @@ async def voice_utterance(
         "usd": result.usd,
         "plan_id": result.plan_id,
         "metadata": result.metadata,
+    }
+
+
+class SpeakBody(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+@router.post("/speak")
+async def voice_speak(body: SpeakBody, request: Request) -> dict[str, Any]:
+    """Synthesize arbitrary text through the configured TTS driver.
+
+    Used by the client-side ambient/wake-word flow to play assistant replies
+    (and optional acknowledgements) using the premium voice rather than the
+    browser's SpeechSynthesis fallback. No state transitions — the client
+    owns UI state for ambient.
+    """
+    pipeline = request.app.state.voice_pipeline
+    if pipeline is None:
+        raise HTTPException(status_code=503, detail="voice pipeline offline")
+    try:
+        spoken = await pipeline.tts.synthesize(text=body.text)
+    except Exception as e:  # pragma: no cover — driver-dependent
+        raise HTTPException(status_code=500, detail=f"tts failed: {e}") from e
+    return {
+        "audio_b64": base64.b64encode(spoken.audio_bytes).decode("ascii"),
+        "audio_mime": spoken.mime_type,
+        "tts_provider": spoken.provider,
+        "usd": spoken.usd,
     }

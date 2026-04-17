@@ -254,6 +254,23 @@ export async function voiceUtterance(
   return r.json();
 }
 
+export interface VoiceSpeakResult {
+  audio_b64: string;
+  audio_mime: string;
+  tts_provider: string;
+  usd: number;
+}
+
+export async function voiceSpeak(text: string): Promise<VoiceSpeakResult> {
+  const r = await fetch(`${API_URL}/voice/speak`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 async function detail(r: Response): Promise<string> {
   try {
     const body = await r.json();
