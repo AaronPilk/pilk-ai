@@ -53,7 +53,13 @@ class ElevenLabsTTS:
                 },
                 json=payload,
             )
-            r.raise_for_status()
+            if r.status_code >= 400:
+                # Surface ElevenLabs' actual error body so the caller knows
+                # whether it's an invalid voice_id, quota, auth, etc.
+                body_preview = r.text[:400] if r.text else ""
+                raise RuntimeError(
+                    f"elevenlabs {r.status_code} (voice_id={voice_id}): {body_preview}"
+                )
             audio = r.content
         # We don't compute usd here — ElevenLabs pricing is subscription-
         # tiered. The char count is recorded in the cost ledger metadata.

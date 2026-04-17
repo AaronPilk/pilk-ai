@@ -625,3 +625,51 @@ interface SpeechRecognitionResultList {
 }
 
 export const ambient = new AmbientController();
+
+// ── audio-unlock ──────────────────────────────────────────────────────
+//
+// Chrome's autoplay policy silently blocks Audio.play() until the user
+// has interacted with the page. A speech-recognition callback does not
+// count as user activation, so the TTS reply can come back and "play"
+// (onended fires) without any sound ever reaching the speakers. The
+// first real click/keydown on the page primes a silent Audio element,
+// which unlocks every subsequent playback for the session.
+
+let audioUnlocked = false;
+
+function primeAudio(): void {
+  if (audioUnlocked || typeof window === "undefined") return;
+  try {
+    const silence =
+      "data:audio/mpeg;base64,/+MYxAAAAANIAAAAAExBTUUzLjk4LjIAAAAAAAAAACQCwAA" +
+      "DAAAAA0gAAAAAAAAAAAAAAAAAAAA//MUZAAAAANIAAAAAExBTUUzLjk4LjJVVQ==";
+    const a = new Audio(silence);
+    a.volume = 0;
+    const p = a.play();
+    if (p && typeof p.then === "function") {
+      p.then(() => {
+        audioUnlocked = true;
+      }).catch(() => {
+        /* not unlocked; we'll try again on the next gesture */
+      });
+    } else {
+      audioUnlocked = true;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+if (typeof window !== "undefined") {
+  const onGesture = () => {
+    primeAudio();
+    if (audioUnlocked) {
+      window.removeEventListener("click", onGesture);
+      window.removeEventListener("keydown", onGesture);
+      window.removeEventListener("touchstart", onGesture);
+    }
+  };
+  window.addEventListener("click", onGesture, { passive: true });
+  window.addEventListener("keydown", onGesture, { passive: true });
+  window.addEventListener("touchstart", onGesture, { passive: true });
+}
