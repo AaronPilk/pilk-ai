@@ -28,8 +28,18 @@ class Settings(BaseSettings):
 
     plan_max_turns: int = 12
     shell_timeout_s: int = 30
-    planner_model: str = "claude-opus-4-7"
-    llm_ask_model: str = "claude-haiku-4-5"
+    planner_model: str = Field(
+        default="claude-haiku-4-5",
+        validation_alias=AliasChoices(
+            "PILK_PLANNER_MODEL", "PLANNER_MODEL", "PILK_PLANNER"
+        ),
+    )
+    llm_ask_model: str = Field(
+        default="claude-haiku-4-5",
+        validation_alias=AliasChoices(
+            "PILK_LLM_ASK_MODEL", "LLM_ASK_MODEL"
+        ),
+    )
     anthropic_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("ANTHROPIC_API_KEY", "PILK_ANTHROPIC_API_KEY"),
@@ -42,7 +52,12 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("ELEVENLABS_API_KEY", "PILK_ELEVENLABS_API_KEY"),
     )
-    elevenlabs_voice_id: str | None = Field(default=None)
+    elevenlabs_voice_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "ELEVENLABS_VOICE_ID", "PILK_ELEVENLABS_VOICE_ID"
+        ),
+    )
     tts_voice: str | None = Field(default=None)
 
     browserbase_api_key: str | None = Field(
