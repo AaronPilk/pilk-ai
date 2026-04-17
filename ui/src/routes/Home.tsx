@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import InboxCard from "../components/InboxCard";
 import VoiceOrb from "../components/VoiceOrb";
 import {
   fetchAgents,
   fetchApprovals,
   fetchCostSummary,
+  fetchIntegrationsStatus,
   fetchPlans,
   pilk,
   type AgentRow,
   type CostSummary,
+  type GoogleIntegrationStatus,
   type PlanSummary,
 } from "../state/api";
 import { greetingFor, humanizeAgentName } from "../lib/humanize";
@@ -18,6 +21,7 @@ interface Snapshot {
   plans: PlanSummary[];
   cost: CostSummary | null;
   pendingApprovals: number;
+  google: GoogleIntegrationStatus | null;
 }
 
 const SUGGESTIONS = [
@@ -32,21 +36,24 @@ export default function Home() {
     plans: [],
     cost: null,
     pendingApprovals: 0,
+    google: null,
   });
 
   useEffect(() => {
     const load = async () => {
-      const [agents, plans, cost, approvals] = await Promise.all([
+      const [agents, plans, cost, approvals, integrations] = await Promise.all([
         fetchAgents().catch(() => ({ agents: [] })),
         fetchPlans().catch(() => ({ plans: [], running_plan_id: null })),
         fetchCostSummary().catch(() => null),
         fetchApprovals().catch(() => ({ pending: [], recent: [] })),
+        fetchIntegrationsStatus().catch(() => null),
       ]);
       setSnap({
         agents: agents.agents,
         plans: plans.plans,
         cost,
         pendingApprovals: approvals.pending.length,
+        google: integrations?.google ?? null,
       });
     };
     load();
@@ -156,11 +163,15 @@ export default function Home() {
           )}
         </div>
 
-        <ConnectCard
-          title="Email"
-          body="Unread summaries and drafts you need to send will appear here once Gmail is connected."
-          cta="Connect Gmail"
-        />
+        {snap.google?.linked ? (
+          <InboxCard email={snap.google.email} />
+        ) : (
+          <ConnectCard
+            title="Email"
+            body="Unread summaries and drafts you need to send will appear here once Gmail is connected."
+            cta="Connect Gmail"
+          />
+        )}
         <ConnectCard
           title="Calendar"
           body="Today's schedule, conflicts, and time you can give back will appear here once your calendar is connected."

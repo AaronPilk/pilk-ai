@@ -339,6 +339,26 @@ export async function fetchIntegrationsStatus(): Promise<IntegrationsStatus> {
   return r.json();
 }
 
+export interface InboxGlancePreview {
+  from: string;
+  subject: string;
+  received_at: string;
+}
+
+export interface InboxGlance {
+  linked: boolean;
+  email: string | null;
+  unread: number;
+  preview: InboxGlancePreview[];
+  error?: string;
+}
+
+export async function fetchInboxGlance(): Promise<InboxGlance> {
+  const r = await fetch(`${API_URL}/integrations/google/inbox/glance`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 export async function voiceSpeak(text: string): Promise<VoiceSpeakResult> {
   const r = await fetch(`${API_URL}/voice/speak`, {
     method: "POST",

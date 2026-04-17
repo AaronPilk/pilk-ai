@@ -153,3 +153,37 @@ export function greetingFor(date: Date = new Date()): string {
   if (h < 22) return "Good evening";
   return "Working late";
 }
+
+/** "Name <name@host>" → "Name"; falls back to the bare email or "" */
+export function prettySenderName(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const match = raw.match(/^\s*"?([^"<]+?)"?\s*<([^>]+)>\s*$/);
+  if (match) {
+    const name = match[1].trim();
+    return name || match[2].trim();
+  }
+  const trimmed = raw.trim();
+  const at = trimmed.indexOf("@");
+  if (at > 0) return trimmed.slice(0, at);
+  return trimmed;
+}
+
+/** RFC-2822 / ISO date → "2h ago", "Yesterday", "Apr 14". */
+export function relativeTime(
+  input: string | number | null | undefined,
+  now: Date = new Date(),
+): string {
+  if (input === null || input === undefined || input === "") return "";
+  const then = typeof input === "number" ? new Date(input) : new Date(input);
+  if (Number.isNaN(then.getTime())) return "";
+  const diffMs = now.getTime() - then.getTime();
+  const mins = Math.round(diffMs / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days}d ago`;
+  return then.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
