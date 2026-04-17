@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchAgents, pilk, runAgent, type AgentRow } from "../state/api";
-import { humanizeAgentName, humanizeToolName } from "../lib/humanize";
+import {
+  humanizeAgentName,
+  humanizeAgentState,
+  humanizeToolName,
+} from "../lib/humanize";
 
 export default function Agents() {
   const [agents, setAgents] = useState<AgentRow[]>([]);
@@ -68,7 +72,7 @@ export default function Agents() {
             <div className="tasks-row-goal">{humanizeAgentName(a.name)}</div>
             <div className="tasks-row-meta">
               <span className={`tasks-row-status tasks-row-status--${a.state}`}>
-                {capitalize(a.state)}
+                {humanizeAgentState(a.state)}
               </span>
               <span className="tasks-row-cost">v{a.version}</span>
             </div>
@@ -87,7 +91,7 @@ export default function Agents() {
               </div>
               <div className="tasks-detail-meta">
                 <span>v{current.version}</span>
-                <span>{capitalize(current.state)}</span>
+                <span>{humanizeAgentState(current.state)}</span>
                 {current.sandbox && (
                   <span>Sandbox · {capitalize(current.sandbox.type)}</span>
                 )}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import InboxCard from "../components/InboxCard";
 import VoiceOrb from "../components/VoiceOrb";
@@ -14,7 +14,11 @@ import {
   type GoogleIntegrationStatus,
   type PlanSummary,
 } from "../state/api";
-import { greetingFor, humanizeAgentName } from "../lib/humanize";
+import {
+  greetingFor,
+  humanizeAgentName,
+  humanizeAgentState,
+} from "../lib/humanize";
 
 interface Snapshot {
   agents: AgentRow[];
@@ -24,11 +28,55 @@ interface Snapshot {
   google: GoogleIntegrationStatus | null;
 }
 
-const SUGGESTIONS = [
-  "Open a browser and visit example.com",
+// Executive-tier prompts. Shown three at a time, rotated on mount so
+// Home doesn't feel static between visits. Order intentionally mixes
+// personal, work, research, and orchestration intents.
+const SUGGESTION_POOL = [
+  "Summarize my unread email from the last 24 hours",
+  "Draft a polite nudge to the last person I emailed about the contract",
+  "Plan my afternoon around the calls I have today",
+  "Find the cheapest nonstop flight to SF next Tuesday",
   "Build me a sales outreach agent",
-  "Scan my downloads and propose a folder layout",
+  "Scan my downloads folder and propose a tidy layout",
+  "Research a competitor and summarize in five bullets",
+  "Pull every invoice I received this month into one table",
 ];
+
+function pickSuggestions(pool: string[], n: number): string[] {
+  // Fisher-Yates slice — small n, rerolled on each mount.
+  const picked: string[] = [];
+  const used = new Set<number>();
+  while (picked.length < n && used.size < pool.length) {
+    const idx = Math.floor(Math.random() * pool.length);
+    if (used.has(idx)) continue;
+    used.add(idx);
+    picked.push(pool[idx]);
+  }
+  return picked;
+}
+
+function pulseLineFor(snap: Snapshot): string {
+  const running = snap.plans.filter((p) => p.status === "running").length;
+  const approvals = snap.pendingApprovals;
+  const agents = snap.agents.length;
+  if (running > 0 && approvals > 0) {
+    return `${running} ${plural(running, "plan")} running · ${approvals} ${plural(approvals, "approval")} need${approvals === 1 ? "s" : ""} your eyes.`;
+  }
+  if (running > 0) {
+    return `${running} ${plural(running, "plan")} running on your behalf.`;
+  }
+  if (approvals > 0) {
+    return `${approvals} ${plural(approvals, "approval")} waiting for your eyes.`;
+  }
+  if (agents > 0) {
+    return `${agents} ${plural(agents, "agent")} ready. Ask when you're ready.`;
+  }
+  return "Standing by. Ask me anything.";
+}
+
+function plural(n: number, word: string): string {
+  return n === 1 ? word : `${word}s`;
+}
 
 export default function Home() {
   const [snap, setSnap] = useState<Snapshot>({
@@ -75,16 +123,16 @@ export default function Home() {
   const recent = snap.plans.slice(0, 4);
   const agentCount = snap.agents.length;
   const today = snap.cost?.day_usd ?? 0;
+  const pulse = pulseLineFor(snap);
+  const suggestions = useMemo(() => pickSuggestions(SUGGESTION_POOL, 3), []);
 
   return (
     <div className="home">
       <section className="home-hero">
         <div className="home-hero-meta">
-          <div className="home-hero-eyebrow">PILK · Command</div>
+          <div className="home-hero-eyebrow">Your command center</div>
           <h1 className="home-hero-greeting">{greetingFor()}.</h1>
-          <div className="home-hero-sub">
-            Tap the orb or say "Hey PILK" when ambient listening is on.
-          </div>
+          <div className="home-pulse">{pulse}</div>
         </div>
         <VoiceOrb size="large" />
       </section>
@@ -128,7 +176,9 @@ export default function Home() {
                   <Link to="/agents" className="home-agent-name">
                     {humanizeAgentName(a.name)}
                   </Link>
-                  <span className="home-agent-state">{a.state}</span>
+                  <span className="home-agent-state">
+                    {humanizeAgentState(a.state)}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -187,8 +237,12 @@ export default function Home() {
       <section className="home-suggestions">
         <div className="home-card-eyebrow">Try asking PILK</div>
         <div className="home-suggest-strip">
-          {SUGGESTIONS.map((s) => (
-            <Link key={s} to="/chat" className="home-suggest">
+          {suggestions.map((s) => (
+            <Link
+              key={s}
+              to={`/chat?prompt=${encodeURIComponent(s)}`}
+              className="home-suggest"
+            >
               {s}
             </Link>
           ))}

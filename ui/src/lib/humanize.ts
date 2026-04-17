@@ -93,6 +93,21 @@ export function humanizeToolName(raw: string | null | undefined): string {
   return TOOL_LABELS[raw] ?? humanize(raw);
 }
 
+/** Human phrases for agent lifecycle states — used on Home and in the Agents table. */
+const AGENT_STATE_LABELS: Record<string, string> = {
+  registered: "Standing by",
+  ready: "Ready",
+  running: "Working on it",
+  paused: "Paused",
+  stopped: "Off",
+  errored: "Needs attention",
+};
+
+export function humanizeAgentState(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return AGENT_STATE_LABELS[raw] ?? humanize(raw);
+}
+
 /** Friendly risk-class labels (approvals, plan detail, step metadata). */
 const RISK_LABELS: Record<string, string> = {
   READ: "Reads local data",
