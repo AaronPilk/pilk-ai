@@ -121,6 +121,13 @@ function StepRow({ step }: { step: Step }) {
 
 function humanizeStep(step: Step): { title: string; summary?: string } {
   const desc = (step.description ?? "").trim();
+  const input = (step.input ?? {}) as {
+    url?: unknown;
+    path?: unknown;
+    command?: unknown;
+    name?: unknown;
+    amount?: unknown;
+  };
 
   if (desc.startsWith("browser_session_open")) {
     return {
@@ -129,7 +136,7 @@ function humanizeStep(step: Step): { title: string; summary?: string } {
     };
   }
   if (desc.startsWith("browser_navigate")) {
-    const url = typeof step.input?.url === "string" ? step.input.url : null;
+    const url = typeof input.url === "string" ? input.url : null;
     return {
       title: url ? `Visited ${shortHost(url)}` : "Navigated in the browser",
       summary: url ? `Loaded ${url} and read the page.` : undefined,
@@ -139,27 +146,27 @@ function humanizeStep(step: Step): { title: string; summary?: string } {
     return { title: "Closed the browser" };
   }
   if (desc.startsWith("fs_read")) {
-    const path = typeof step.input?.path === "string" ? step.input.path : null;
+    const path = typeof input.path === "string" ? input.path : null;
     return {
       title: path ? `Read ${shortenPath(path)}` : "Read a file",
       summary: path ? `Opened ${path}.` : undefined,
     };
   }
   if (desc.startsWith("fs_write")) {
-    const path = typeof step.input?.path === "string" ? step.input.path : null;
+    const path = typeof input.path === "string" ? input.path : null;
     return {
       title: path ? `Wrote ${shortenPath(path)}` : "Wrote a file",
       summary: path ? `Saved content to ${path}.` : undefined,
     };
   }
   if (desc.startsWith("shell_exec")) {
-    const cmd = typeof step.input?.command === "string" ? step.input.command : null;
+    const cmd = typeof input.command === "string" ? input.command : null;
     return {
       title: cmd ? `Ran shell: ${truncate(cmd.split(/\n/)[0], 70)}` : "Ran a shell command",
     };
   }
   if (desc.startsWith("net_fetch")) {
-    const url = typeof step.input?.url === "string" ? step.input.url : null;
+    const url = typeof input.url === "string" ? input.url : null;
     return {
       title: url ? `Fetched ${shortHost(url)}` : "Fetched a URL",
       summary: url ? `GET ${url}` : undefined,
@@ -172,13 +179,13 @@ function humanizeStep(step: Step): { title: string; summary?: string } {
     };
   }
   if (desc.startsWith("agent_create")) {
-    const name = typeof step.input?.name === "string" ? step.input.name : null;
+    const name = typeof input.name === "string" ? input.name : null;
     return {
       title: name ? `Created agent: ${humanizeAgentName(name)}` : "Created a specialist agent",
     };
   }
   if (desc.startsWith("finance_")) {
-    const amt = step.input?.amount;
+    const amt = input.amount;
     return {
       title: amt != null ? `Financial step ($${amt})` : "Financial step",
     };

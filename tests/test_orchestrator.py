@@ -14,6 +14,7 @@ import pytest
 
 from core.config import get_settings
 from core.db import ensure_schema
+from core.governor.providers import AnthropicPlannerProvider
 from core.ledger import Ledger
 from core.orchestrator import Orchestrator, PlanStore
 from core.policy import Gate
@@ -122,6 +123,7 @@ async def test_orchestrator_runs_tool_and_completes() -> None:
         broadcast=broadcast,
         planner_model="claude-opus-4-7",
         max_turns=6,
+        providers={"anthropic": AnthropicPlannerProvider(client)},
     )
 
     await orch.run("write 'all green' to report.txt")
