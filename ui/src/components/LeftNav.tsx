@@ -6,7 +6,10 @@ type Group = { heading: string; items: Item[] };
 const groups: Group[] = [
   {
     heading: "Command",
-    items: [{ to: "/chat", label: "Chat" }],
+    items: [
+      { to: "/", label: "Home" },
+      { to: "/chat", label: "Chat" },
+    ],
   },
   {
     heading: "Operations",
@@ -44,6 +47,7 @@ export default function LeftNav() {
                 <li key={it.to}>
                   <NavLink
                     to={it.to}
+                    end={it.to === "/"}
                     className={({ isActive }) =>
                       isActive ? "nav-item nav-item--active" : "nav-item"
                     }

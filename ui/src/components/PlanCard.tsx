@@ -1,5 +1,11 @@
 import { useState } from "react";
 import type { PlanDetail, Step } from "../state/api";
+import {
+  humanizeAgentName,
+  humanizeRiskClass,
+  shortHost,
+  shortenPath,
+} from "../lib/humanize";
 
 const STATUS_COLOR: Record<string, string> = {
   running: "#f0c050",
@@ -79,7 +85,7 @@ function StepRow({ step }: { step: Step }) {
       {expanded && (
         <div className="step-detail">
           {step.risk_class && (
-            <div className="step-meta">Risk · {step.risk_class.replace(/_/g, " ")}</div>
+            <div className="step-meta">Risk · {humanizeRiskClass(step.risk_class)}</div>
           )}
           {summary && <div className="step-body">{summary}</div>}
           {outputText && <div className="step-body step-body--quote">{outputText}</div>}
@@ -135,14 +141,14 @@ function humanizeStep(step: Step): { title: string; summary?: string } {
   if (desc.startsWith("fs_read")) {
     const path = typeof step.input?.path === "string" ? step.input.path : null;
     return {
-      title: path ? `Read ${shortPath(path)}` : "Read a file",
+      title: path ? `Read ${shortenPath(path)}` : "Read a file",
       summary: path ? `Opened ${path}.` : undefined,
     };
   }
   if (desc.startsWith("fs_write")) {
     const path = typeof step.input?.path === "string" ? step.input.path : null;
     return {
-      title: path ? `Wrote ${shortPath(path)}` : "Wrote a file",
+      title: path ? `Wrote ${shortenPath(path)}` : "Wrote a file",
       summary: path ? `Saved content to ${path}.` : undefined,
     };
   }
@@ -168,7 +174,7 @@ function humanizeStep(step: Step): { title: string; summary?: string } {
   if (desc.startsWith("agent_create")) {
     const name = typeof step.input?.name === "string" ? step.input.name : null;
     return {
-      title: name ? `Created agent: ${humanName(name)}` : "Created a specialist agent",
+      title: name ? `Created agent: ${humanizeAgentName(name)}` : "Created a specialist agent",
     };
   }
   if (desc.startsWith("finance_")) {
@@ -208,36 +214,13 @@ function extractOutputText(step: Step): string | null {
   return null;
 }
 
-function shortHost(url: string): string {
-  try {
-    const u = new URL(url);
-    const path = u.pathname !== "/" ? u.pathname : "";
-    return `${u.host}${truncate(path, 40)}`;
-  } catch {
-    return truncate(url, 60);
-  }
-}
-
-function shortPath(path: string): string {
-  const parts = path.split("/");
-  if (parts.length <= 3) return path;
-  return `…/${parts.slice(-2).join("/")}`;
-}
-
-function humanName(id: string): string {
-  return id
-    .replace(/_/g, " ")
-    .replace(/\bagent\b$/i, "Agent")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 
 function cleanDevDesc(s: string): string {
-  // Strip `tool_name(args_blob)` → "Tool Name"
+  // Strip `tool_name(args_blob)` → humanized tool name.
   const m = s.match(/^([a-z0-9_]+)\s*\(/i);
-  if (m) return humanName(m[1]);
+  if (m) return humanizeAgentName(m[1]);
   return s;
 }

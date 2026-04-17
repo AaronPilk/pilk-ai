@@ -34,7 +34,8 @@ export default function TopBar() {
         ? "topbar-conn topbar-conn--warn"
         : "topbar-conn topbar-conn--bad";
 
-  const onChat = pathname === "/chat" || pathname === "/";
+  // The Home and Chat routes host their own large orb, so the topbar orb hides there.
+  const hasLargeOrb = pathname === "/" || pathname === "/chat";
 
   return (
     <header className="topbar">
@@ -58,7 +59,7 @@ export default function TopBar() {
             </span>
           </div>
         </div>
-        {!onChat && (
+        {!hasLargeOrb && (
           <VoiceOrb size="small" showLabel={false} showCaption={false} />
         )}
       </div>

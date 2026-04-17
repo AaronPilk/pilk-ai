@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchAgents, pilk, runAgent, type AgentRow } from "../state/api";
+import { humanizeAgentName, humanizeToolName } from "../lib/humanize";
 
 export default function Agents() {
   const [agents, setAgents] = useState<AgentRow[]>([]);
@@ -62,11 +63,12 @@ export default function Agents() {
             key={a.name}
             className={`tasks-row ${selected === a.name ? "tasks-row--active" : ""} ${justCreated === a.name ? "tasks-row--just-created" : ""}`}
             onClick={() => setSelected(a.name)}
+            title={a.name}
           >
-            <div className="tasks-row-goal">{a.name}</div>
+            <div className="tasks-row-goal">{humanizeAgentName(a.name)}</div>
             <div className="tasks-row-meta">
               <span className={`tasks-row-status tasks-row-status--${a.state}`}>
-                {a.state}
+                {capitalize(a.state)}
               </span>
               <span className="tasks-row-cost">v{a.version}</span>
             </div>
@@ -77,16 +79,18 @@ export default function Agents() {
         {current ? (
           <>
             <div className="tasks-detail-head">
-              <div className="tasks-detail-goal">
-                {current.name}
+              <div className="tasks-detail-goal" title={current.name}>
+                {humanizeAgentName(current.name)}
                 {justCreated === current.name && (
                   <span className="agent-new-badge">new</span>
                 )}
               </div>
               <div className="tasks-detail-meta">
                 <span>v{current.version}</span>
-                <span>{current.state}</span>
-                {current.sandbox && <span>sandbox: {current.sandbox.type}</span>}
+                <span>{capitalize(current.state)}</span>
+                {current.sandbox && (
+                  <span>Sandbox · {capitalize(current.sandbox.type)}</span>
+                )}
                 {current.budget && (
                   <span>
                     ${current.budget.per_run_usd}/run · $
@@ -94,7 +98,9 @@ export default function Agents() {
                   </span>
                 )}
                 {current.last_run_at && (
-                  <span>last run: {new Date(current.last_run_at).toLocaleString()}</span>
+                  <span>
+                    Last run · {new Date(current.last_run_at).toLocaleString()}
+                  </span>
                 )}
               </div>
             </div>
@@ -106,7 +112,9 @@ export default function Agents() {
                 <div className="agent-tools-head">Tools</div>
                 <div className="agent-tools-list">
                   {current.tools.map((t) => (
-                    <span key={t} className="agent-tool">{t}</span>
+                    <span key={t} className="agent-tool" title={t}>
+                      {humanizeToolName(t)}
+                    </span>
                   ))}
                 </div>
               </div>
@@ -116,7 +124,9 @@ export default function Agents() {
                 <div className="agent-tools-head">Sandbox capabilities</div>
                 <div className="agent-tools-list">
                   {current.sandbox.capabilities.map((c) => (
-                    <span key={c} className="agent-tool agent-tool--cap">{c}</span>
+                    <span key={c} className="agent-tool agent-tool--cap">
+                      {humanizeToolName(c)}
+                    </span>
                   ))}
                 </div>
               </div>
@@ -126,7 +136,7 @@ export default function Agents() {
               <textarea
                 value={task}
                 onChange={(e) => setTask(e.target.value)}
-                placeholder={`Tell ${current.name} what to do…`}
+                placeholder={`Tell ${humanizeAgentName(current.name)} what to do…`}
                 rows={3}
                 disabled={submitting}
               />
@@ -148,4 +158,8 @@ export default function Agents() {
       </div>
     </div>
   );
+}
+
+function capitalize(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }

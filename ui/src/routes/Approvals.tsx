@@ -12,6 +12,11 @@ import {
   type TrustRule,
   type TrustScope,
 } from "../state/api";
+import {
+  humanizeAgentName,
+  humanizeRiskClass,
+  humanizeToolName,
+} from "../lib/humanize";
 
 type TtlOption = { label: string; seconds: number };
 const TTL_OPTIONS: TtlOption[] = [
@@ -179,12 +184,19 @@ function PendingCard({
   return (
     <div className="appr-card">
       <div className="appr-card-head">
-        <span className="appr-card-tool">{approval.tool_name}</span>
-        <span className={`appr-risk appr-risk--${approval.risk_class}`}>
-          {approval.risk_class}
+        <span className="appr-card-tool" title={approval.tool_name}>
+          {humanizeToolName(approval.tool_name)}
+        </span>
+        <span
+          className={`appr-risk appr-risk--${approval.risk_class}`}
+          title={approval.risk_class}
+        >
+          {humanizeRiskClass(approval.risk_class)}
         </span>
         {approval.agent_name && (
-          <span className="appr-card-agent">{approval.agent_name}</span>
+          <span className="appr-card-agent" title={approval.agent_name}>
+            {humanizeAgentName(approval.agent_name)}
+          </span>
         )}
       </div>
       <div className="appr-card-reason">{approval.reason}</div>
@@ -269,11 +281,11 @@ function TrustList({
       <tbody>
         {rules.map((r) => (
           <tr key={r.id}>
-            <td className="cost-table-plan">{r.tool_name}</td>
-            <td>{r.agent_name ?? "—"}</td>
+            <td title={r.tool_name}>{humanizeToolName(r.tool_name)}</td>
+            <td>{r.agent_name ? humanizeAgentName(r.agent_name) : "—"}</td>
             <td className="cost-table-plan">
               {Object.keys(r.args_matcher).length === 0
-                ? "any args"
+                ? "Any arguments"
                 : JSON.stringify(r.args_matcher)}
             </td>
             <td>{r.uses}</td>
@@ -310,18 +322,21 @@ function RecentList({ rows }: { rows: ApprovalHistoryRow[] }) {
       <tbody>
         {visible.map((r) => (
           <tr key={r.id}>
-            <td className="cost-table-plan">{r.tool}</td>
+            <td title={r.tool}>{humanizeToolName(r.tool)}</td>
             <td>
-              <span className={`appr-risk appr-risk--${r.risk_class}`}>
-                {r.risk_class}
+              <span
+                className={`appr-risk appr-risk--${r.risk_class}`}
+                title={r.risk_class}
+              >
+                {humanizeRiskClass(r.risk_class)}
               </span>
             </td>
             <td>
               <span className={`tasks-row-status tasks-row-status--${r.status}`}>
-                {r.status}
+                {capitalize(r.status)}
               </span>
             </td>
-            <td>{r.agent_name ?? "—"}</td>
+            <td>{r.agent_name ? humanizeAgentName(r.agent_name) : "—"}</td>
             <td>{r.decided_at ? new Date(r.decided_at).toLocaleString() : "—"}</td>
           </tr>
         ))}
@@ -335,4 +350,8 @@ function formatTtl(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
+function capitalize(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }

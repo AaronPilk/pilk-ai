@@ -100,17 +100,24 @@ export default function Chat() {
       <div className="chat-thread">
         {messages.length === 0 && (
           <div className="chat-empty">
-            I'm PILK — your COO. Tell me what you want done and I'll execute,
-            or ask me to build a specialist agent and I will.
-            <br />
-            <br />
-            Try: <em>"Build me a file_cleanup_agent that organizes files in
-            its sandbox, proposes a structure before moving anything, and
-            never deletes files."</em>
-            <br />
-            <br />
-            Tap the orb below to talk, or type and press ⌘/Ctrl+Enter. Network,
-            financial, and system changes pause for your approval inline.
+            <div className="chat-empty-line">
+              Tell me what you want done — I'll execute.
+            </div>
+            <div className="chat-empty-line chat-empty-line--soft">
+              Say "Hey PILK" when ambient listening is on, tap the orb, or type
+              below. Anything risky pauses for your approval inline.
+            </div>
+            <div className="chat-empty-suggest">
+              <span className="chat-empty-suggest-pill">
+                "Open a browser and visit example.com"
+              </span>
+              <span className="chat-empty-suggest-pill">
+                "Build me a sales outreach agent"
+              </span>
+              <span className="chat-empty-suggest-pill">
+                "Summarize my downloads folder"
+              </span>
+            </div>
           </div>
         )}
         {messages.map((m, i) => {
@@ -128,20 +135,29 @@ export default function Chat() {
               return (
                 <div
                   key={`appr-${m.approval_id}`}
-                  className={`msg msg--system appr-inline-closed appr-inline-closed--${resolved.decision}`}
+                  className={`msg msg--closed msg--closed-${resolved.decision}`}
                 >
-                  <div className="msg-role">approval · {resolved.decision}</div>
-                  {resolved.reason && (
-                    <div className="msg-text">{resolved.reason}</div>
-                  )}
+                  <div className="msg-text">
+                    <strong>
+                      Approval {resolved.decision}
+                      {resolved.reason ? " · " : ""}
+                    </strong>
+                    {resolved.reason}
+                  </div>
                 </div>
               );
             }
             return null;
           }
+          if (m.kind === "system") {
+            return (
+              <div key={m.id ?? i} className="msg msg--system">
+                <div className="msg-text">{m.text}</div>
+              </div>
+            );
+          }
           return (
             <div key={m.id ?? i} className={`msg msg--${m.kind}`}>
-              <div className="msg-role">{m.kind}</div>
               <div className="msg-text">{m.text}</div>
             </div>
           );

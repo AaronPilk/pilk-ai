@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchPlan, fetchPlans, pilk, type PlanDetail, type PlanSummary } from "../state/api";
 import PlanCard from "../components/PlanCard";
+import { humanize } from "../lib/humanize";
 
 export default function Tasks() {
   const [plans, setPlans] = useState<PlanSummary[]>([]);
@@ -82,7 +83,7 @@ export default function Tasks() {
             <div className="tasks-row-goal">{p.goal}</div>
             <div className="tasks-row-meta">
               <span className={`tasks-row-status tasks-row-status--${p.status}`}>
-                {p.status}
+                {humanize(p.status)}
               </span>
               <span className="tasks-row-cost">${p.actual_usd.toFixed(4)}</span>
             </div>
@@ -95,7 +96,7 @@ export default function Tasks() {
             <div className="tasks-detail-head">
               <div className="tasks-detail-goal">{detail.goal}</div>
               <div className="tasks-detail-meta">
-                <span>{detail.status}</span>
+                <span>{humanize(detail.status)}</span>
                 <span>${detail.actual_usd.toFixed(4)}</span>
                 <span>{detail.steps.length} steps</span>
               </div>

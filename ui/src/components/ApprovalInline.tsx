@@ -5,6 +5,11 @@ import {
   type ApprovalRequest,
   type TrustScope,
 } from "../state/api";
+import {
+  humanizeAgentName,
+  humanizeRiskClass,
+  humanizeToolName,
+} from "../lib/humanize";
 
 export default function ApprovalInline({ approval }: { approval: ApprovalRequest }) {
   const [busy, setBusy] = useState(false);
@@ -45,12 +50,19 @@ export default function ApprovalInline({ approval }: { approval: ApprovalRequest
     <div className="appr-inline">
       <div className="appr-inline-head">
         <span className="appr-inline-label">Approval needed</span>
-        <span className={`appr-risk appr-risk--${approval.risk_class}`}>
-          {approval.risk_class}
+        <span
+          className={`appr-risk appr-risk--${approval.risk_class}`}
+          title={approval.risk_class}
+        >
+          {humanizeRiskClass(approval.risk_class)}
         </span>
-        <span className="appr-card-tool">{approval.tool_name}</span>
+        <span className="appr-card-tool" title={approval.tool_name}>
+          {humanizeToolName(approval.tool_name)}
+        </span>
         {approval.agent_name && (
-          <span className="appr-card-agent">{approval.agent_name}</span>
+          <span className="appr-card-agent" title={approval.agent_name}>
+            {humanizeAgentName(approval.agent_name)}
+          </span>
         )}
       </div>
       <div className="appr-inline-reason">{approval.reason}</div>

@@ -1,6 +1,7 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router-dom";
 import LeftNav from "./components/LeftNav";
 import TopBar from "./components/TopBar";
+import Home from "./routes/Home";
 import Chat from "./routes/Chat";
 import Tasks from "./routes/Tasks";
 import Agents from "./routes/Agents";
@@ -19,7 +20,7 @@ export default function App() {
         <TopBar />
         <div className="content">
           <Routes>
-            <Route path="/" element={<Navigate to="/chat" replace />} />
+            <Route path="/" element={<Home />} />
             <Route path="/chat" element={<Chat />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/agents" element={<Agents />} />

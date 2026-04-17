@@ -6,6 +6,12 @@ import {
   type BrowserSession,
   type SandboxRow,
 } from "../state/api";
+import {
+  humanize,
+  humanizeAgentName,
+  humanizeSandboxId,
+  shortenPath,
+} from "../lib/humanize";
 
 const STATE_COLOR: Record<string, string> = {
   ready: "#65d19b",
@@ -95,10 +101,10 @@ export default function Sandboxes() {
               {rows.map((s) => (
                 <tr key={s.id}>
                   <td className="cost-table-plan" title={s.id}>
-                    {shortenId(s.id)}
+                    {humanizeSandboxId(s.id)}
                   </td>
-                  <td>{capitalize(s.type)}</td>
-                  <td>{s.agent_name ? humanName(s.agent_name) : "—"}</td>
+                  <td>{humanize(s.type)}</td>
+                  <td>{s.agent_name ? humanizeAgentName(s.agent_name) : "—"}</td>
                   <td>
                     <span
                       className="dot"
@@ -107,7 +113,7 @@ export default function Sandboxes() {
                         marginRight: 6,
                       }}
                     />
-                    {capitalize(s.state)}
+                    {humanize(s.state)}
                   </td>
                   <td className="cost-table-plan" title={s.workspace ?? ""}>
                     {s.workspace ? shortenPath(s.workspace) : "—"}
@@ -137,7 +143,7 @@ function BrowserTile({ session }: { session: BrowserSession }) {
           {title}
         </div>
         <div className="browser-tile-agent">
-          {session.agent_name ? humanName(session.agent_name) : "PILK"}
+          {session.agent_name ? humanizeAgentName(session.agent_name) : "PILK"}
         </div>
       </div>
       {session.live_view_url ? (
@@ -157,42 +163,3 @@ function BrowserTile({ session }: { session: BrowserSession }) {
   );
 }
 
-// ── display helpers ────────────────────────────────────────────────────
-
-function humanName(id: string): string {
-  return id
-    .replace(/[_\-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function capitalize(s: string): string {
-  if (!s) return s;
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-function shortenId(id: string): string {
-  // sb_process_<agent>_<rest> → "Process · <Agent Name>"
-  const m = id.match(/^sb[_-]([a-z]+)[_-](.+)$/i);
-  if (m) {
-    const type = capitalize(m[1]);
-    const rest = m[2];
-    // Collapse duplicated agent-name suffixes.
-    const parts = rest.split(/[_\-]/);
-    const half = Math.floor(parts.length / 2);
-    const uniq =
-      parts.length > 2 &&
-      parts.slice(0, half).join("_") === parts.slice(half).join("_")
-        ? parts.slice(0, half).join("_")
-        : rest;
-    return `${type} · ${humanName(uniq)}`;
-  }
-  return id.length > 28 ? `${id.slice(0, 26)}…` : id;
-}
-
-function shortenPath(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  if (parts.length <= 2) return path;
-  return `…/${parts.slice(-2).join("/")}`;
-}
