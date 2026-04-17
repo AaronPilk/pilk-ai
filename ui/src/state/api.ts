@@ -261,6 +261,50 @@ export interface VoiceSpeakResult {
   usd: number;
 }
 
+// ── Governor ──────────────────────────────────────────────────────
+
+export type TierKey = "light" | "standard" | "premium";
+export type OverrideMode = "auto" | TierKey;
+export type PremiumGate = "ask" | "auto";
+
+export interface TierSpecPublic {
+  tier: TierKey;
+  label: string;
+  provider: string;
+  model: string;
+}
+
+export interface GovernorBudget {
+  spent_usd: number;
+  cap_usd: number;
+  warn_at_usd: number;
+  is_over: boolean;
+  is_warn: boolean;
+}
+
+export interface GovernorStatus {
+  enabled: boolean;
+  tiers?: { light: TierSpecPublic; standard: TierSpecPublic; premium: TierSpecPublic };
+  override?: OverrideMode;
+  premium_gate?: PremiumGate;
+  budget?: GovernorBudget;
+}
+
+export async function fetchGovernorStatus(): Promise<GovernorStatus> {
+  const r = await fetch(`${API_URL}/governor/status`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function setGovernorOverride(mode: OverrideMode): Promise<void> {
+  const r = await fetch(`${API_URL}/governor/override`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+}
+
 export async function voiceSpeak(text: string): Promise<VoiceSpeakResult> {
   const r = await fetch(`${API_URL}/voice/speak`, {
     method: "POST",

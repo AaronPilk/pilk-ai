@@ -117,6 +117,7 @@ class Orchestrator:
         max_turns: int,
         agents: AgentRegistry | None = None,
         sandboxes: SandboxManager | None = None,
+        governor: Any = None,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -128,6 +129,7 @@ class Orchestrator:
         self.max_turns = max_turns
         self.agents = agents
         self.sandboxes = sandboxes
+        self.governor = governor
         self._lock = asyncio.Lock()
         self._running_plan_id: str | None = None
 
@@ -196,6 +198,20 @@ class Orchestrator:
     async def _execute(self, rc: RunContext) -> None:
         if self._lock.locked():
             raise OrchestratorBusyError("a plan is already running")
+        # Governor daily-cap pre-check — fail fast before we spin a plan
+        # if today's spend has already reached the cap.
+        if self.governor is not None:
+            try:
+                await self.governor.check_budget()
+            except Exception as e:
+                # Produce a visible failed plan so the user sees the reason.
+                plan = await self.plans.create_plan(
+                    rc.goal,
+                    metadata={**rc.metadata, "agent_name": rc.agent_name},
+                )
+                await self.broadcast("plan.created", plan)
+                await self._fail(plan["id"], f"{type(e).__name__}: {e}")
+                return
         async with self._lock:
             plan = await self.plans.create_plan(
                 rc.goal, metadata={**rc.metadata, "agent_name": rc.agent_name}
@@ -225,6 +241,31 @@ class Orchestrator:
         messages: list[dict[str, Any]] = [{"role": "user", "content": rc.goal}]
         final_text: str = ""
 
+        # The Governor picks the tier for the whole plan based on the
+        # original goal. Batch C: decision is per-plan, not per-turn;
+        # that keeps caching effective and matches how a human operator
+        # would pick a tool up-front. Per-turn escalation lands later.
+        if self.governor is not None:
+            tier_choice = self.governor.pick(rc.goal)
+            planner_model = tier_choice.model
+            tier_meta: dict[str, Any] = tier_choice.to_public()
+            if tier_choice.provider != "anthropic":
+                log.warning(
+                    "governor_nonanthropic_fallback",
+                    plan_id=plan_id,
+                    requested=f"{tier_choice.provider}/{tier_choice.model}",
+                    detail="Batch C routes through the Anthropic client regardless",
+                )
+        else:
+            planner_model = self.planner_model
+            tier_meta = {
+                "tier": "legacy",
+                "provider": "anthropic",
+                "model": planner_model,
+                "reason": "no_governor",
+                "gated": False,
+            }
+
         for turn in range(self.max_turns):
             step = await self.plans.add_step(
                 plan_id=plan_id,
@@ -238,14 +279,14 @@ class Orchestrator:
             # for adaptive thinking returns a 400. Include the field only
             # when the configured planner supports it.
             req: dict[str, Any] = dict(
-                model=self.planner_model,
+                model=planner_model,
                 max_tokens=16000,
                 system=rc.system_prompt,
                 tools=tools,
                 messages=messages,
                 cache_control={"type": "ephemeral"},
             )
-            if self._supports_thinking(self.planner_model):
+            if self._supports_thinking(planner_model):
                 req["thinking"] = {"type": "adaptive"}
             response = await self.client.messages.create(**req)
 
@@ -254,7 +295,7 @@ class Orchestrator:
                 plan_id=plan_id,
                 step_id=step["id"],
                 agent_name=rc.agent_name,
-                model=self.planner_model,
+                model=planner_model,
                 usage=usage,
             )
             step = await self.plans.finish_step(
@@ -267,6 +308,7 @@ class Orchestrator:
                         "cache_creation_input_tokens": usage.cache_creation_input_tokens,
                         "cache_read_input_tokens": usage.cache_read_input_tokens,
                     },
+                    "tier": tier_meta,
                 },
             )
             await self.broadcast("plan.step_updated", step)

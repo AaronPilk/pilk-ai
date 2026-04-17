@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ambient,
   type AckKind,
@@ -6,6 +6,13 @@ import {
   type Patience,
   type WakePhrase,
 } from "../voice/ambient";
+import {
+  fetchGovernorStatus,
+  pilk,
+  setGovernorOverride,
+  type GovernorStatus,
+  type OverrideMode,
+} from "../state/api";
 
 const WAKE_LABELS: Record<WakePhrase, string> = {
   "hey pilk": "Hey PILK",
@@ -27,10 +34,19 @@ const PATIENCE_LABELS: Record<Patience, string> = {
   "very-patient": "Very patient",
 };
 
+const OVERRIDE_LABELS: Record<OverrideMode, string> = {
+  auto: "Auto",
+  light: "Force Fast",
+  standard: "Force Balanced",
+  premium: "Force Deep",
+};
+
 export default function Settings() {
   const [cfg, setCfg] = useState<AmbientConfig>(ambient.getConfig());
   const [supported] = useState<boolean>(ambient.supported);
   const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [gov, setGov] = useState<GovernorStatus | null>(null);
+  const [govBusy, setGovBusy] = useState(false);
 
   useEffect(() => ambient.subscribeConfig(setCfg), []);
   useEffect(() =>
@@ -40,6 +56,27 @@ export default function Settings() {
       }
     }),
   []);
+
+  const refreshGov = useCallback(() => {
+    fetchGovernorStatus().then(setGov).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    refreshGov();
+    return pilk.onMessage((m) => {
+      if (m.type === "cost.updated" || m.type === "plan.completed") refreshGov();
+    });
+  }, [refreshGov]);
+
+  const onOverride = async (mode: OverrideMode) => {
+    setGovBusy(true);
+    try {
+      await setGovernorOverride(mode);
+      refreshGov();
+    } finally {
+      setGovBusy(false);
+    }
+  };
 
   const requestMic = async () => {
     setPermissionError(null);
@@ -179,13 +216,136 @@ export default function Settings() {
         </div>
       </section>
 
-      <section className="settings-card settings-card--muted">
-        <div className="settings-card-title">Budgets, permissions, session vault</div>
+      <section className="settings-card">
+        <div className="settings-card-head">
+          <div className="settings-card-title">Reasoning &amp; budget</div>
+        </div>
         <p className="settings-card-body">
-          Daily spend ceilings, trust rules, and the key vault arrive in a
-          follow-up batch.
+          Which AI model PILK picks for each task, and how much it's allowed to
+          spend per day. Light chat runs on a cheap model automatically; only
+          complex reasoning escalates to the expensive one.
+        </p>
+
+        {gov?.enabled && gov.tiers ? (
+          <>
+            <div className="settings-row">
+              <div className="settings-row-label">Model tiers</div>
+            </div>
+            <div className="governor-tiers">
+              {(["light", "standard", "premium"] as const).map((k) => {
+                const t = gov.tiers![k];
+                return (
+                  <div key={k} className="governor-tier">
+                    <div className="governor-tier-label">{t.label}</div>
+                    <div className="governor-tier-model" title={t.model}>
+                      {t.model}
+                    </div>
+                    <div className="governor-tier-provider">{t.provider}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="settings-note">
+              Edit via <code>PILK_TIER_LIGHT_MODEL</code> /{" "}
+              <code>PILK_TIER_STANDARD_MODEL</code> /{" "}
+              <code>PILK_TIER_PREMIUM_MODEL</code> in <code>.env</code>. In-UI
+              editing arrives in a follow-up batch.
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">Session override</div>
+              <div className="settings-segmented settings-segmented--wrap">
+                {(Object.keys(OVERRIDE_LABELS) as OverrideMode[]).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`settings-seg${gov.override === m ? " settings-seg--on" : ""}`}
+                    onClick={() => onOverride(m)}
+                    disabled={govBusy}
+                  >
+                    {OVERRIDE_LABELS[m]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="settings-note">
+              <strong>Auto</strong> lets the router pick per request.
+              Forcing a tier applies to every plan until you change it back.
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">Daily budget</div>
+              <div className="governor-budget">
+                <div className="governor-budget-figures">
+                  <strong>${gov.budget?.spent_usd.toFixed(4)}</strong> of{" "}
+                  ${gov.budget?.cap_usd.toFixed(2)} today
+                </div>
+                <div className="governor-budget-bar">
+                  <div
+                    className={`governor-budget-fill${
+                      gov.budget?.is_over
+                        ? " governor-budget-fill--over"
+                        : gov.budget?.is_warn
+                          ? " governor-budget-fill--warn"
+                          : ""
+                    }`}
+                    style={{
+                      width: `${clamp01(
+                        (gov.budget?.spent_usd ?? 0) /
+                          Math.max(0.0001, gov.budget?.cap_usd ?? 0),
+                      ) * 100}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="settings-note">
+              Soft warning at 80 %, hard stop at 100 %. Override via{" "}
+              <code>PILK_DAILY_CAP_USD</code> in <code>.env</code>.
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">Premium gate</div>
+              <div className="governor-gate">
+                {gov.premium_gate === "ask" ? (
+                  <span className="governor-gate-pill governor-gate-pill--on">
+                    Ask before Deep Reasoning · ON
+                  </span>
+                ) : (
+                  <span className="governor-gate-pill">
+                    Ask before Deep Reasoning · OFF
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="settings-note">
+              When on, tasks the router classifies as premium are downgraded to
+              Balanced. Override via <code>PILK_PREMIUM_GATE=auto</code> in{" "}
+              <code>.env</code>. In-UI toggle + per-task approval UI arrive
+              next.
+            </div>
+          </>
+        ) : (
+          <div className="settings-note">
+            Governor isn't available — pilkd may be starting up. Refresh in a
+            moment.
+          </div>
+        )}
+      </section>
+
+      <section className="settings-card settings-card--muted">
+        <div className="settings-card-title">Permissions &amp; session vault</div>
+        <p className="settings-card-body">
+          Trust rules and the key vault arrive in a follow-up batch.
         </p>
       </section>
     </div>
   );
+}
+
+function clamp01(x: number): number {
+  if (!Number.isFinite(x)) return 0;
+  if (x < 0) return 0;
+  if (x > 1) return 1;
+  return x;
 }

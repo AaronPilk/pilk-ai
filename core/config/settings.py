@@ -73,6 +73,53 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Governor: tiered model routing + cost caps ────────────────
+    # Tier slot shape: (provider, model). Batch C executes only the
+    # Anthropic provider; a non-anthropic provider is architecturally
+    # accepted and logged as a fallback until the OpenAI execution path
+    # lands in Batch D. Defaults intentionally map every tier to a
+    # concrete Claude model so a fresh install routes sanely.
+    tier_light_provider: str = Field(
+        default="anthropic",
+        validation_alias=AliasChoices("PILK_TIER_LIGHT_PROVIDER", "TIER_LIGHT_PROVIDER"),
+    )
+    tier_light_model: str = Field(
+        default="claude-haiku-4-5",
+        validation_alias=AliasChoices("PILK_TIER_LIGHT_MODEL", "TIER_LIGHT_MODEL"),
+    )
+    tier_standard_provider: str = Field(
+        default="anthropic",
+        validation_alias=AliasChoices(
+            "PILK_TIER_STANDARD_PROVIDER", "TIER_STANDARD_PROVIDER"
+        ),
+    )
+    tier_standard_model: str = Field(
+        default="claude-sonnet-4-6",
+        validation_alias=AliasChoices(
+            "PILK_TIER_STANDARD_MODEL", "TIER_STANDARD_MODEL"
+        ),
+    )
+    tier_premium_provider: str = Field(
+        default="anthropic",
+        validation_alias=AliasChoices(
+            "PILK_TIER_PREMIUM_PROVIDER", "TIER_PREMIUM_PROVIDER"
+        ),
+    )
+    tier_premium_model: str = Field(
+        default="claude-opus-4-7",
+        validation_alias=AliasChoices(
+            "PILK_TIER_PREMIUM_MODEL", "TIER_PREMIUM_MODEL"
+        ),
+    )
+    daily_cap_usd: float = Field(
+        default=5.00,
+        validation_alias=AliasChoices("PILK_DAILY_CAP_USD", "DAILY_CAP_USD"),
+    )
+    premium_gate: str = Field(
+        default="ask",
+        validation_alias=AliasChoices("PILK_PREMIUM_GATE", "PREMIUM_GATE"),
+    )
+
     @property
     def db_path(self) -> Path:
         return self.home / "pilk.db"

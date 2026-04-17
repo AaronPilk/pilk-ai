@@ -25,6 +25,7 @@ from core.api.routes.agents import router as agents_router
 from core.api.routes.approvals import router as approvals_router
 from core.api.routes.browser import router as browser_router
 from core.api.routes.cost import router as cost_router
+from core.api.routes.governor import router as governor_router
 from core.api.routes.health import router as health_router
 from core.api.routes.plans import router as plans_router
 from core.api.routes.sandboxes import router as sandboxes_router
@@ -32,6 +33,7 @@ from core.api.routes.voice import router as voice_router
 from core.api.ws import router as ws_router
 from core.config import get_settings
 from core.db import ensure_schema
+from core.governor import DailyBudget, Governor, Tier, Tiers, TierSpec
 from core.ledger import Ledger
 from core.logging import configure_logging, get_logger
 from core.orchestrator import Orchestrator, PlanStore
@@ -82,6 +84,38 @@ async def lifespan(app: FastAPI):
     trust = TrustStore()
     approvals = ApprovalManager(
         db_path=settings.db_path, trust_store=trust, broadcast=broadcast
+    )
+
+    # Governor: tier config + daily budget + session override.
+    tiers = Tiers(
+        light=TierSpec(
+            tier=Tier.LIGHT,
+            provider=settings.tier_light_provider,
+            model=settings.tier_light_model,
+        ),
+        standard=TierSpec(
+            tier=Tier.STANDARD,
+            provider=settings.tier_standard_provider,
+            model=settings.tier_standard_model,
+        ),
+        premium=TierSpec(
+            tier=Tier.PREMIUM,
+            provider=settings.tier_premium_provider,
+            model=settings.tier_premium_model,
+        ),
+    )
+    governor = Governor(
+        tiers=tiers,
+        budget=DailyBudget(settings.db_path, cap_usd=settings.daily_cap_usd),
+        premium_gate="ask" if settings.premium_gate != "auto" else "auto",
+    )
+    log.info(
+        "governor_ready",
+        light=f"{tiers.light.provider}/{tiers.light.model}",
+        standard=f"{tiers.standard.provider}/{tiers.standard.model}",
+        premium=f"{tiers.premium.provider}/{tiers.premium.model}",
+        daily_cap_usd=settings.daily_cap_usd,
+        premium_gate=settings.premium_gate,
     )
 
     registry = ToolRegistry()
@@ -158,6 +192,7 @@ async def lifespan(app: FastAPI):
             max_turns=settings.plan_max_turns,
             agents=agents,
             sandboxes=sandboxes,
+            governor=governor,
         )
         log.info(
             "orchestrator_ready",
@@ -220,6 +255,7 @@ async def lifespan(app: FastAPI):
     app.state.voice_pipeline = voice_pipeline
     app.state.orchestrator_tasks = set()
     app.state.browser_sessions = browser_sessions
+    app.state.governor = governor
 
     log.info("pilkd_ready", home=str(home), host=settings.host, port=settings.port)
     try:
@@ -258,5 +294,6 @@ def create_app() -> FastAPI:
     app.include_router(approvals_router)
     app.include_router(voice_router)
     app.include_router(browser_router)
+    app.include_router(governor_router)
     app.include_router(ws_router)
     return app
