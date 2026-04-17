@@ -331,10 +331,14 @@ class AmbientController {
     const text = ACK_TEXT[kind];
     try {
       if (this.config.useElevenLabsAck) {
-        await this.playServerTTS(text, { suppressMs: 1200 });
+        const played = await this.playServerTTS(text, { suppressMs: 1200 });
+        if (!played) {
+          speakLocally(text);
+          this.suppressUntil = Date.now() + 900;
+        }
       } else {
         speakLocally(text);
-        this.suppressUntil = Date.now() + 900; // ignore our own voice briefly
+        this.suppressUntil = Date.now() + 900;
       }
     } catch {
       speakLocally(text);
@@ -386,8 +390,17 @@ class AmbientController {
   private async speakReply(text: string): Promise<void> {
     this.setState("speaking", text.slice(0, 160));
     try {
-      await this.playServerTTS(text, { suppressMs: 1500 });
-    } catch {
+      const played = await this.playServerTTS(text, { suppressMs: 1500 });
+      if (!played) {
+        // Server TTS came back but the browser refused to play it
+        // (autoplay policy, device issue). Fall back to the browser's
+        // built-in voice so the user still hears *something*.
+        console.warn("[ambient] server TTS couldn't play, falling back to local voice");
+        speakLocally(text);
+        await delay(estimateSpeechMs(text));
+      }
+    } catch (e) {
+      console.warn("[ambient] server TTS failed, falling back to local voice:", e);
       speakLocally(text);
       await delay(estimateSpeechMs(text));
     } finally {
@@ -419,7 +432,7 @@ class AmbientController {
   private async playServerTTS(
     text: string,
     opts: { suppressMs: number },
-  ): Promise<void> {
+  ): Promise<boolean> {
     const r = await voiceSpeak(text);
     const bin = atob(r.audio_b64);
     const bytes = new Uint8Array(bin.length);
@@ -427,20 +440,38 @@ class AmbientController {
     const blob = new Blob([bytes], { type: r.audio_mime || "audio/mpeg" });
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
+    audio.preload = "auto";
+    audio.crossOrigin = "anonymous";
     this.audio = audio;
-    await new Promise<void>((resolve) => {
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          /* ignore */
+        }
         this.audio = null;
-        this.suppressUntil = Date.now() + opts.suppressMs;
-        resolve();
+        if (ok) this.suppressUntil = Date.now() + opts.suppressMs;
+        resolve(ok);
       };
+      audio.onended = () => finish(true);
       audio.onerror = () => {
-        URL.revokeObjectURL(url);
-        this.audio = null;
-        resolve();
+        console.warn("[ambient] audio element error", audio.error);
+        finish(false);
       };
-      audio.play().catch(() => resolve());
+      const p = audio.play();
+      if (p && typeof p.then === "function") {
+        p.then(() => {
+          /* playback started; wait for onended */
+        }).catch((err) => {
+          // NotAllowedError (autoplay), NotSupportedError, etc.
+          console.warn("[ambient] audio.play() rejected:", err?.name ?? err);
+          finish(false);
+        });
+      }
     });
   }
 }
