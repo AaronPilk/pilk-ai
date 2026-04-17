@@ -28,6 +28,8 @@ from core.api.routes.cost import router as cost_router
 from core.api.routes.governor import router as governor_router
 from core.api.routes.health import router as health_router
 from core.api.routes.integrations import router as integrations_router
+from core.api.routes.logs import router as logs_router
+from core.api.routes.memory import router as memory_router
 from core.api.routes.plans import router as plans_router
 from core.api.routes.sandboxes import router as sandboxes_router
 from core.api.routes.voice import router as voice_router
@@ -39,6 +41,7 @@ from core.governor.providers import build_providers
 from core.integrations.google import google_status, make_gmail_tools
 from core.ledger import Ledger
 from core.logging import configure_logging, get_logger
+from core.memory import MemoryStore
 from core.orchestrator import Orchestrator, PlanStore
 from core.policy import ApprovalManager, Gate, TrustStore
 from core.registry import AgentRegistry
@@ -80,6 +83,7 @@ async def lifespan(app: FastAPI):
     hub = Hub()
     ledger = Ledger(settings.db_path)
     plans = PlanStore(settings.db_path)
+    memory = MemoryStore(settings.db_path)
 
     async def broadcast(event_type: str, payload: dict) -> None:
         await hub.broadcast(event_type, payload)
@@ -284,6 +288,7 @@ async def lifespan(app: FastAPI):
     app.state.orchestrator_tasks = set()
     app.state.browser_sessions = browser_sessions
     app.state.governor = governor
+    app.state.memory = memory
 
     log.info("pilkd_ready", home=str(home), host=settings.host, port=settings.port)
     try:
@@ -324,5 +329,7 @@ def create_app() -> FastAPI:
     app.include_router(browser_router)
     app.include_router(governor_router)
     app.include_router(integrations_router)
+    app.include_router(memory_router)
+    app.include_router(logs_router)
     app.include_router(ws_router)
     return app

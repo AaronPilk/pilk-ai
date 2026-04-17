@@ -133,3 +133,18 @@ CREATE TABLE IF NOT EXISTS governor_prefs (
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- Structured memory — what PILK is currently retaining. User-curated
+-- in this phase; auto-extraction and vector recall are deferred.
+CREATE TABLE IF NOT EXISTS memory_entries (
+    id          TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,              -- preference|standing_instruction|fact|pattern
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL DEFAULT '',
+    source      TEXT NOT NULL DEFAULT 'user',
+    plan_id     TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memory_kind ON memory_entries(kind);
+CREATE INDEX IF NOT EXISTS idx_memory_created ON memory_entries(created_at);

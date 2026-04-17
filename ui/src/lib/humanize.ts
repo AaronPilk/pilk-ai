@@ -184,6 +184,56 @@ export function prettySenderName(raw: string | null | undefined): string {
   return trimmed;
 }
 
+/** Memory kind → the display label used on sections and chips. */
+const MEMORY_KIND_LABELS: Record<string, string> = {
+  preference: "Preference",
+  standing_instruction: "Standing instruction",
+  fact: "Remembered fact",
+  pattern: "Pattern",
+};
+
+export function humanizeMemoryKind(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return MEMORY_KIND_LABELS[raw] ?? humanize(raw);
+}
+
+/** Section name (plural, title-case) for the four memory sections. */
+const MEMORY_SECTION_LABELS: Record<string, string> = {
+  preference: "Preferences",
+  standing_instruction: "Standing instructions",
+  fact: "Remembered facts",
+  pattern: "Patterns",
+};
+
+export function memorySectionLabel(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return MEMORY_SECTION_LABELS[raw] ?? humanize(raw);
+}
+
+/** "12:34 PM" — short clock for a log row. */
+export function shortClock(
+  input: string | number | null | undefined,
+  now: Date = new Date(),
+): string {
+  if (input === null || input === undefined || input === "") return "";
+  const then = typeof input === "number" ? new Date(input) : new Date(input);
+  if (Number.isNaN(then.getTime())) return "";
+  const sameDay =
+    then.getFullYear() === now.getFullYear() &&
+    then.getMonth() === now.getMonth() &&
+    then.getDate() === now.getDate();
+  const time = then.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  if (sameDay) return time;
+  const date = then.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  return `${date} · ${time}`;
+}
+
 /** RFC-2822 / ISO date → "2h ago", "Yesterday", "Apr 14". */
 export function relativeTime(
   input: string | number | null | undefined,

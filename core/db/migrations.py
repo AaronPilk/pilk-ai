@@ -12,7 +12,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-CURRENT_VERSION = 3
+CURRENT_VERSION = 4
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
 
@@ -50,6 +50,24 @@ MIGRATIONS: dict[int, list[str]] = {
             approval_id   TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_trust_audit_created ON trust_audit(created_at)",
+    ],
+    # v4: structured memory. What PILK is currently retaining — explicit
+    # preferences, standing instructions, remembered facts, observed
+    # patterns. Entries are user-curated in this phase; auto-extraction
+    # and vector recall are deferred.
+    4: [
+        """CREATE TABLE IF NOT EXISTS memory_entries (
+            id          TEXT PRIMARY KEY,
+            kind        TEXT NOT NULL,
+            title       TEXT NOT NULL,
+            body        TEXT NOT NULL DEFAULT '',
+            source      TEXT NOT NULL DEFAULT 'user',
+            plan_id     TEXT,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_memory_kind ON memory_entries(kind)",
+        "CREATE INDEX IF NOT EXISTS idx_memory_created ON memory_entries(created_at)",
     ],
 }
 

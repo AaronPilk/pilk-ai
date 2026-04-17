@@ -369,6 +369,114 @@ export async function voiceSpeak(text: string): Promise<VoiceSpeakResult> {
   return r.json();
 }
 
+// ── Memory ─────────────────────────────────────────────────────
+
+export type MemoryKind =
+  | "preference"
+  | "standing_instruction"
+  | "fact"
+  | "pattern";
+
+export interface MemoryEntry {
+  id: string;
+  kind: MemoryKind;
+  title: string;
+  body: string;
+  source: string;
+  plan_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchMemory(kind?: MemoryKind): Promise<{
+  entries: MemoryEntry[];
+  kinds: MemoryKind[];
+}> {
+  const q = kind ? `?kind=${encodeURIComponent(kind)}` : "";
+  const r = await fetch(`${API_URL}/memory${q}`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function addMemory(body: {
+  kind: MemoryKind;
+  title: string;
+  body: string;
+}): Promise<MemoryEntry> {
+  const r = await fetch(`${API_URL}/memory`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function deleteMemory(id: string): Promise<void> {
+  const r = await fetch(`${API_URL}/memory/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!r.ok) throw new Error(await detail(r));
+}
+
+export async function clearMemory(kind?: MemoryKind): Promise<{ cleared: number }> {
+  const q = kind ? `?kind=${encodeURIComponent(kind)}` : "";
+  const r = await fetch(`${API_URL}/memory${q}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+// ── Logs ───────────────────────────────────────────────────────
+
+export type LogKind = "plan" | "approval" | "trust";
+
+export interface LogEntryBase {
+  kind: LogKind;
+  id: string;
+  at: string;
+  title: string;
+}
+
+export interface PlanLogEntry extends LogEntryBase {
+  kind: "plan";
+  status: string;
+  cost_usd: number;
+  plan_id: string;
+}
+
+export interface ApprovalLogEntry extends LogEntryBase {
+  kind: "approval";
+  status: "pending" | "approved" | "rejected" | "expired";
+  risk_class: string;
+  reason: string;
+  plan_id: string | null;
+}
+
+export interface TrustLogEntry extends LogEntryBase {
+  kind: "trust";
+  agent_name: string | null;
+  ttl_seconds: number;
+  expires_at: string;
+  reason: string;
+}
+
+export type LogEntry = PlanLogEntry | ApprovalLogEntry | TrustLogEntry;
+
+export async function fetchLogs(opts?: {
+  kind?: LogKind;
+  limit?: number;
+  before?: string;
+}): Promise<{ entries: LogEntry[]; next_before: string | null }> {
+  const params = new URLSearchParams();
+  if (opts?.kind) params.set("kind", opts.kind);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.before) params.set("before", opts.before);
+  const qs = params.toString();
+  const r = await fetch(`${API_URL}/logs${qs ? `?${qs}` : ""}`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 async function detail(r: Response): Promise<string> {
   try {
     const body = await r.json();
