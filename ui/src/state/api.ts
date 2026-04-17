@@ -305,6 +305,20 @@ export async function setGovernorOverride(mode: OverrideMode): Promise<void> {
   if (!r.ok) throw new Error(await detail(r));
 }
 
+export async function setGovernorConfig(body: {
+  daily_cap_usd?: number;
+  premium_gate?: PremiumGate;
+}): Promise<GovernorStatus> {
+  const r = await fetch(`${API_URL}/governor/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  const s = await r.json();
+  return { enabled: true, ...s };
+}
+
 export async function voiceSpeak(text: string): Promise<VoiceSpeakResult> {
   const r = await fetch(`${API_URL}/voice/speak`, {
     method: "POST",

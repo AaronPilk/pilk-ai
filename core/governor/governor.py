@@ -11,12 +11,11 @@ Single entry point the orchestrator uses per turn:
 2. The rule-based classifier (router.classify_tier).
 3. The premium gate: when enabled and the classifier chose PREMIUM,
    downgrade to STANDARD and mark `gated=True` so the UI can surface
-   an approval prompt (wired in Batch D).
+   an approval prompt (flow ships in Batch E).
 
-Batch C executes only the Anthropic provider. If a tier's provider is
-non-anthropic the orchestrator logs a fallback and uses the Anthropic
-slot's model name as-is — we don't silently swap tiers. Real OpenAI
-execution lands in Batch D.
+The provider slot on each tier (anthropic / openai / ...) is dispatched
+to by the orchestrator's provider registry; if the chosen provider is
+not configured the orchestrator falls back to Anthropic and logs it.
 """
 
 from __future__ import annotations
@@ -81,6 +80,25 @@ class Governor:
         self._override = mode
         log.info("governor_override_set", mode=mode)
 
+    def set_daily_cap(self, usd: float) -> None:
+        if usd < 0:
+            raise ValueError("daily cap must be >= 0")
+        # Rewire the DailyBudget's cap in-place by rebuilding it — simpler
+        # than exposing a setter on the budget class.
+        from core.governor.budget import DailyBudget
+
+        self._budget = DailyBudget(
+            db_path=self._budget._db_path,
+            cap_usd=float(usd),
+        )
+        log.info("governor_daily_cap_set", usd=usd)
+
+    def set_premium_gate(self, mode: PremiumGate) -> None:
+        if mode not in ("ask", "auto"):
+            raise ValueError(f"invalid premium_gate: {mode}")
+        self._premium_gate = mode
+        log.info("governor_premium_gate_set", mode=mode)
+
     @property
     def override(self) -> OverrideMode:
         return self._override
@@ -114,15 +132,6 @@ class Governor:
         self, tier: Tier, *, reason: str, gated: bool = False
     ) -> TierChoice:
         spec = self._tiers.get(tier)
-        provider = spec.provider
-        if provider != "anthropic":
-            log.warning(
-                "governor_provider_fallback",
-                tier=tier.value,
-                requested_provider=provider,
-                effective_provider="anthropic",
-                detail=f"Batch C executes Anthropic only; provider={provider} will route here until Batch D",
-            )
         return TierChoice(
             tier=tier,
             provider=spec.provider,

@@ -9,6 +9,7 @@ import {
 import {
   fetchGovernorStatus,
   pilk,
+  setGovernorConfig,
   setGovernorOverride,
   type GovernorStatus,
   type OverrideMode,
@@ -40,6 +41,23 @@ const OVERRIDE_LABELS: Record<OverrideMode, string> = {
   standard: "Force Balanced",
   premium: "Force Deep",
 };
+
+const VOICE_RATES: Array<{ value: number; label: string }> = [
+  { value: 1.0, label: "Normal" },
+  { value: 1.15, label: "Brisk" },
+  { value: 1.25, label: "Fast" },
+  { value: 1.5, label: "Rushed" },
+];
+
+const CAP_OPTIONS: Array<{ value: number; label: string }> = [
+  { value: 1, label: "$1" },
+  { value: 5, label: "$5" },
+  { value: 10, label: "$10" },
+  { value: 25, label: "$25" },
+  { value: 50, label: "$50" },
+  { value: 100, label: "$100" },
+  { value: 0, label: "Unlimited" },
+];
 
 export default function Settings() {
   const [cfg, setCfg] = useState<AmbientConfig>(ambient.getConfig());
@@ -214,6 +232,26 @@ export default function Settings() {
           through ElevenLabs like the main replies (slightly slower, better
           sounding).
         </div>
+
+        <div className="settings-row">
+          <div className="settings-row-label">Voice speed</div>
+          <div className="settings-segmented settings-segmented--wrap">
+            {VOICE_RATES.map((r) => (
+              <button
+                key={r.value}
+                type="button"
+                className={`settings-seg${Math.abs(cfg.voiceRate - r.value) < 0.01 ? " settings-seg--on" : ""}`}
+                onClick={() => ambient.setConfig({ voiceRate: r.value })}
+              >
+                {r.label}{" "}
+                <span style={{ opacity: 0.6 }}>{r.value.toFixed(2)}&times;</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="settings-note">
+          Applies to both the acknowledgement and PILK's reply.
+        </div>
       </section>
 
       <section className="settings-card">
@@ -278,7 +316,10 @@ export default function Settings() {
               <div className="governor-budget">
                 <div className="governor-budget-figures">
                   <strong>${gov.budget?.spent_usd.toFixed(4)}</strong> of{" "}
-                  ${gov.budget?.cap_usd.toFixed(2)} today
+                  {gov.budget && gov.budget.cap_usd > 0
+                    ? `$${gov.budget.cap_usd.toFixed(2)}`
+                    : "unlimited"}{" "}
+                  today
                 </div>
                 <div className="governor-budget-bar">
                   <div
@@ -299,30 +340,67 @@ export default function Settings() {
                 </div>
               </div>
             </div>
-            <div className="settings-note">
-              Soft warning at 80 %, hard stop at 100 %. Override via{" "}
-              <code>PILK_DAILY_CAP_USD</code> in <code>.env</code>.
-            </div>
-
             <div className="settings-row">
-              <div className="settings-row-label">Premium gate</div>
-              <div className="governor-gate">
-                {gov.premium_gate === "ask" ? (
-                  <span className="governor-gate-pill governor-gate-pill--on">
-                    Ask before Deep Reasoning · ON
-                  </span>
-                ) : (
-                  <span className="governor-gate-pill">
-                    Ask before Deep Reasoning · OFF
-                  </span>
-                )}
+              <div className="settings-row-label">Daily cap</div>
+              <div className="settings-segmented settings-segmented--wrap">
+                {CAP_OPTIONS.map((c) => {
+                  const active =
+                    Math.abs((gov.budget?.cap_usd ?? -1) - c.value) < 0.01;
+                  return (
+                    <button
+                      key={c.value}
+                      type="button"
+                      className={`settings-seg${active ? " settings-seg--on" : ""}`}
+                      onClick={async () => {
+                        setGovBusy(true);
+                        try {
+                          const s = await setGovernorConfig({
+                            daily_cap_usd: c.value,
+                          });
+                          setGov(s);
+                        } finally {
+                          setGovBusy(false);
+                        }
+                      }}
+                      disabled={govBusy}
+                    >
+                      {c.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
             <div className="settings-note">
+              Soft warning at 80 %, hard stop at 100 %. "Unlimited" turns the
+              cap off.
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">Ask before Deep Reasoning</div>
+              <label className="settings-switch">
+                <input
+                  type="checkbox"
+                  checked={gov.premium_gate === "ask"}
+                  disabled={govBusy}
+                  onChange={async (e) => {
+                    setGovBusy(true);
+                    try {
+                      const s = await setGovernorConfig({
+                        premium_gate: e.target.checked ? "ask" : "auto",
+                      });
+                      setGov(s);
+                    } finally {
+                      setGovBusy(false);
+                    }
+                  }}
+                />
+                <span className="settings-switch-track" />
+              </label>
+            </div>
+            <div className="settings-note">
               When on, tasks the router classifies as premium are downgraded to
-              Balanced. Override via <code>PILK_PREMIUM_GATE=auto</code> in{" "}
-              <code>.env</code>. In-UI toggle + per-task approval UI arrive
-              next.
+              Balanced instead of running on Deep Reasoning. Per-task "run this
+              one on Deep anyway" approval prompt arrives in the next batch.
             </div>
           </>
         ) : (

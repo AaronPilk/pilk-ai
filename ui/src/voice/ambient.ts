@@ -28,6 +28,7 @@ export interface AmbientConfig {
   ack: AckKind;
   useElevenLabsAck: boolean;
   patience: Patience;
+  voiceRate: number; // playback rate multiplier: 1.0, 1.15, 1.25, 1.5
 }
 
 export type WakePhrase = "hey pilk" | "pilk";
@@ -42,6 +43,7 @@ const DEFAULT_CONFIG: AmbientConfig = {
   ack: "yes",
   useElevenLabsAck: false,
   patience: "patient",
+  voiceRate: 1.25,
 };
 
 // How long to wait before auto-finalizing the utterance.
@@ -362,11 +364,11 @@ class AmbientController {
           this.suppressUntil = Date.now() + 900;
         }
       } else {
-        speakLocally(text);
+        speakLocally(text, this.config.voiceRate);
         this.suppressUntil = Date.now() + 900;
       }
     } catch {
-      speakLocally(text);
+      speakLocally(text, this.config.voiceRate);
       this.suppressUntil = Date.now() + 900;
     }
   }
@@ -426,8 +428,8 @@ class AmbientController {
       }
     } catch (e) {
       console.warn("[ambient] server TTS failed, falling back to local voice:", e);
-      speakLocally(text);
-      await delay(estimateSpeechMs(text));
+      speakLocally(text, this.config.voiceRate);
+      await delay(estimateSpeechMs(text, this.config.voiceRate));
     } finally {
       this.resumePassiveSoon();
     }
@@ -490,6 +492,7 @@ class AmbientController {
     const audio = new Audio(url);
     audio.preload = "auto";
     audio.crossOrigin = "anonymous";
+    audio.playbackRate = clampRate(this.config.voiceRate);
     this.audio = audio;
     return new Promise<boolean>((resolve) => {
       let settled = false;
@@ -555,19 +558,26 @@ function wakeRegex(wake: WakePhrase): RegExp {
   return new RegExp(`^(?:${alts})[,.!?\\s]*`, "i");
 }
 
-function speakLocally(text: string): void {
+function speakLocally(text: string, rate: number = 1.25): void {
   try {
     if (typeof window === "undefined") return;
     const synth = window.speechSynthesis;
     if (!synth) return;
     const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1.05;
+    u.rate = clampRate(rate);
     u.pitch = 1;
     u.volume = 0.9;
     synth.speak(u);
   } catch {
     /* best-effort */
   }
+}
+
+function clampRate(r: number): number {
+  if (!Number.isFinite(r)) return 1;
+  if (r < 0.5) return 0.5;
+  if (r > 2) return 2;
+  return r;
 }
 
 function playTone(): void {
@@ -589,10 +599,11 @@ function playTone(): void {
   }
 }
 
-function estimateSpeechMs(text: string): number {
-  // 150 wpm ≈ 400ms/word.
+function estimateSpeechMs(text: string, rate: number = 1): number {
+  // 150 wpm ≈ 400ms/word; faster playback means less wall-clock time.
   const words = text.split(/\s+/).filter(Boolean).length;
-  return Math.min(30_000, Math.max(1200, words * 380));
+  const base = Math.max(1200, words * 380);
+  return Math.min(30_000, Math.round(base / clampRate(rate)));
 }
 
 function delay(ms: number): Promise<void> {
