@@ -1,5 +1,6 @@
 from core.tools.builtin.agent_meta import make_agent_create_tool
 from core.tools.builtin.browser import BrowserSessionManager, make_browser_tools
+from core.tools.builtin.code_task import make_code_task_tool
 from core.tools.builtin.finance import (
     finance_deposit_tool,
     finance_transfer_tool,
@@ -20,6 +21,7 @@ __all__ = [
     "fs_write_tool",
     "make_agent_create_tool",
     "make_browser_tools",
+    "make_code_task_tool",
     "make_llm_ask_tool",
     "net_fetch_tool",
     "shell_exec_tool",

@@ -24,6 +24,7 @@ from core.api.hub import Hub
 from core.api.routes.agents import router as agents_router
 from core.api.routes.approvals import router as approvals_router
 from core.api.routes.browser import router as browser_router
+from core.api.routes.coding import router as coding_http_router
 from core.api.routes.cost import router as cost_router
 from core.api.routes.governor import router as governor_router
 from core.api.routes.health import router as health_router
@@ -34,6 +35,12 @@ from core.api.routes.plans import router as plans_router
 from core.api.routes.sandboxes import router as sandboxes_router
 from core.api.routes.voice import router as voice_router
 from core.api.ws import router as ws_router
+from core.coding import (
+    AgentSDKEngine,
+    APIEngine,
+    ClaudeCodeBridge,
+    CodingRouter,
+)
 from core.config import get_settings
 from core.db import ensure_schema
 from core.governor import DailyBudget, Governor, Tier, Tiers, TierSpec
@@ -61,6 +68,7 @@ from core.tools.builtin import (
     fs_write_tool,
     make_agent_create_tool,
     make_browser_tools,
+    make_code_task_tool,
     make_llm_ask_tool,
     net_fetch_tool,
     shell_exec_tool,
@@ -253,6 +261,23 @@ async def lifespan(app: FastAPI):
             detail="pilkd is up but chat will reject until ANTHROPIC_API_KEY is set",
         )
 
+    # Coding engines: PILK orchestrates; engines are pluggable backends
+    # for repo-scope vs snippet-scope code work. Claude Code + Agent SDK
+    # are scaffolded and report unavailable until wired in follow-up
+    # batches; the API engine is the only one that actually runs today.
+    coding_engines: dict = {
+        "claude-code": ClaudeCodeBridge(settings.claude_code_bridge_url),
+        "agent-sdk": AgentSDKEngine(),
+        "api": APIEngine(client=client, model=settings.coding_api_model),
+    }
+    coding_router = CodingRouter(engines=coding_engines, governor=governor)
+    registry.register(make_code_task_tool(coding_router))
+    log.info(
+        "coding_engines_ready",
+        engines=list(coding_engines.keys()),
+        api_available=client is not None,
+    )
+
     voice_state = VoiceStateMachine(broadcast=broadcast)
     stt: STTDriver = (
         OpenAISTT(settings.openai_api_key) if settings.openai_api_key else StubSTT()
@@ -304,6 +329,7 @@ async def lifespan(app: FastAPI):
     app.state.browser_sessions = browser_sessions
     app.state.governor = governor
     app.state.memory = memory
+    app.state.coding_router = coding_router
 
     log.info("pilkd_ready", home=str(home), host=settings.host, port=settings.port)
     try:
@@ -346,5 +372,6 @@ def create_app() -> FastAPI:
     app.include_router(integrations_router)
     app.include_router(memory_router)
     app.include_router(logs_router)
+    app.include_router(coding_http_router)
     app.include_router(ws_router)
     return app

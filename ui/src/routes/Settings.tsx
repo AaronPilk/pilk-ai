@@ -7,11 +7,13 @@ import {
   type WakePhrase,
 } from "../voice/ambient";
 import {
+  fetchCodingEngines,
   fetchGovernorStatus,
   fetchIntegrationsStatus,
   pilk,
   setGovernorConfig,
   setGovernorOverride,
+  type CodingEngineHealth,
   type GoogleIntegrationStatus,
   type GoogleRole,
   type GovernorStatus,
@@ -70,6 +72,9 @@ export default function Settings() {
   const [gov, setGov] = useState<GovernorStatus | null>(null);
   const [govBusy, setGovBusy] = useState(false);
   const [integrations, setIntegrations] = useState<IntegrationsStatus | null>(null);
+  const [codingEngines, setCodingEngines] = useState<CodingEngineHealth[] | null>(
+    null,
+  );
 
   useEffect(() => ambient.subscribeConfig(setCfg), []);
   useEffect(() =>
@@ -88,13 +93,20 @@ export default function Settings() {
     fetchIntegrationsStatus().then(setIntegrations).catch(() => {});
   }, []);
 
+  const refreshCodingEngines = useCallback(() => {
+    fetchCodingEngines()
+      .then((r) => setCodingEngines(r.engines))
+      .catch(() => setCodingEngines([]));
+  }, []);
+
   useEffect(() => {
     refreshGov();
     refreshIntegrations();
+    refreshCodingEngines();
     return pilk.onMessage((m) => {
       if (m.type === "cost.updated" || m.type === "plan.completed") refreshGov();
     });
-  }, [refreshGov, refreshIntegrations]);
+  }, [refreshGov, refreshIntegrations, refreshCodingEngines]);
 
   const onOverride = async (mode: OverrideMode) => {
     setGovBusy(true);
@@ -453,6 +465,52 @@ export default function Settings() {
           description="Your real inbox. Outgoing from this identity always requires your approval."
           status={integrations?.google?.user}
         />
+      </section>
+
+      <section className="settings-card">
+        <div className="settings-card-head">
+          <div className="settings-card-title">Coding engines</div>
+          <button
+            type="button"
+            className="btn"
+            onClick={refreshCodingEngines}
+            title="Refresh engine health"
+          >
+            Refresh
+          </button>
+        </div>
+        <p className="settings-card-body">
+          PILK picks the best backend for a coding task: a local Claude Code
+          bridge for repo work, the Anthropic Agent SDK as an intermediate
+          fallback, or a bare Anthropic API call for quick snippets. File
+          edits always route through the approval queue separately.
+        </p>
+
+        {codingEngines === null ? (
+          <div className="settings-note">Reading engine health…</div>
+        ) : codingEngines.length === 0 ? (
+          <div className="settings-note">No coding engines configured.</div>
+        ) : (
+          <div className="coding-engines">
+            {codingEngines.map((e) => (
+              <div key={e.name} className="coding-engine">
+                <div className="coding-engine-head">
+                  <div className="coding-engine-label">{e.label}</div>
+                  <span
+                    className={`connected-account-pill${
+                      e.available ? " connected-account-pill--ok" : ""
+                    }`}
+                  >
+                    {e.available ? "Available" : "Unavailable"}
+                  </span>
+                </div>
+                {e.detail && (
+                  <div className="coding-engine-detail">{e.detail}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="settings-card settings-card--muted">

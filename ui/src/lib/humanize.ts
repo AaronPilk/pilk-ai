@@ -82,6 +82,7 @@ const TOOL_LABELS: Record<string, string> = {
   finance_transfer: "Transfer funds",
   trade_execute: "Execute a trade",
   __premium_escalation: "Use Deep Reasoning for this task?",
+  code_task: "Run a coding task",
   gmail_send_as_pilk: "Send an email from PILK",
   gmail_search_pilk_inbox: "Search PILK's inbox",
   gmail_read_pilk: "Read an email in PILK's inbox",

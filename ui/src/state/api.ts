@@ -486,6 +486,23 @@ export async function fetchLogs(opts?: {
   return r.json();
 }
 
+// ── Coding engines ───────────────────────────────────────────────
+
+export interface CodingEngineHealth {
+  name: string;
+  label: string;
+  available: boolean;
+  detail: string;
+}
+
+export async function fetchCodingEngines(): Promise<{
+  engines: CodingEngineHealth[];
+}> {
+  const r = await fetch(`${API_URL}/coding/engines`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 async function detail(r: Response): Promise<string> {
   try {
     const body = await r.json();

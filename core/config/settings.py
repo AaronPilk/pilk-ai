@@ -73,6 +73,25 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Coding engines ────────────────────────────────────────────
+    # Claude Code runs locally via a bridge when the user has one set
+    # up; unset = not available, PILK falls back to the API engine.
+    claude_code_bridge_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PILK_CLAUDE_CODE_BRIDGE_URL", "CLAUDE_CODE_BRIDGE_URL"
+        ),
+    )
+    # Dedicated model for the draft-only APIEngine. Defaults to the
+    # standard tier so the governor can re-route via its normal rules
+    # later without a settings change.
+    coding_api_model: str = Field(
+        default="claude-haiku-4-5",
+        validation_alias=AliasChoices(
+            "PILK_CODING_API_MODEL", "CODING_API_MODEL"
+        ),
+    )
+
     # ── Governor: tiered model routing + cost caps ────────────────
     # Tier slot shape: (provider, model). Batch C executes only the
     # Anthropic provider; a non-anthropic provider is architecturally
