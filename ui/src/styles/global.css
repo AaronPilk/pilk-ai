@@ -625,6 +625,47 @@ body {
   font-style: italic;
   padding: 10px 0;
 }
+.step-desc--human {
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+}
+.step-body {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.step-body--quote {
+  padding: 10px 14px;
+  border-left: 2px solid var(--border-strong);
+  background: var(--surface-hover);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  max-height: 220px;
+  overflow: auto;
+}
+.step-raw-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: color 160ms ease, background 160ms ease;
+}
+.step-raw-toggle:hover {
+  color: var(--text-dim);
+  background: var(--surface-hover);
+}
 
 /* Tasks tab */
 .tasks {

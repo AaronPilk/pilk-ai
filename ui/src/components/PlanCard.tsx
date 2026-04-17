@@ -54,8 +54,11 @@ export default function PlanCard({ plan }: { plan: PlanDetail }) {
 
 function StepRow({ step }: { step: Step }) {
   const [expanded, setExpanded] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
   const statusDot = STATUS_COLOR[step.status] ?? "#6b7183";
   const icon = step.kind === "tool" ? "⚙" : step.kind === "llm" ? "✎" : "·";
+  const { title, summary } = humanizeStep(step);
+  const outputText = extractOutputText(step);
   return (
     <li className={`step step--${step.status}`}>
       <button
@@ -68,7 +71,7 @@ function StepRow({ step }: { step: Step }) {
           className="step-dot"
           style={{ background: statusDot, color: statusDot }}
         />
-        <span className="step-desc">{step.description}</span>
+        <span className="step-desc step-desc--human">{title}</span>
         {step.cost_usd > 0 && (
           <span className="step-cost">${step.cost_usd.toFixed(4)}</span>
         )}
@@ -76,21 +79,165 @@ function StepRow({ step }: { step: Step }) {
       {expanded && (
         <div className="step-detail">
           {step.risk_class && (
-            <div className="step-meta">Risk · {step.risk_class}</div>
+            <div className="step-meta">Risk · {step.risk_class.replace(/_/g, " ")}</div>
           )}
-          {step.input !== undefined && step.input !== null && (
-            <pre className="step-io">
-              {JSON.stringify(step.input, null, 2)}
-            </pre>
-          )}
-          {step.output !== undefined && step.output !== null && (
-            <pre className="step-io">
-              {JSON.stringify(step.output, null, 2)}
-            </pre>
-          )}
+          {summary && <div className="step-body">{summary}</div>}
+          {outputText && <div className="step-body step-body--quote">{outputText}</div>}
           {step.error && <div className="step-error">{step.error}</div>}
+          <button
+            type="button"
+            className="step-raw-toggle"
+            onClick={() => setShowRaw((r) => !r)}
+          >
+            {showRaw ? "Hide raw data" : "Show raw data"}
+          </button>
+          {showRaw && (
+            <>
+              {step.input !== undefined && step.input !== null && (
+                <pre className="step-io">
+                  {JSON.stringify(step.input, null, 2)}
+                </pre>
+              )}
+              {step.output !== undefined && step.output !== null && (
+                <pre className="step-io">
+                  {JSON.stringify(step.output, null, 2)}
+                </pre>
+              )}
+            </>
+          )}
         </div>
       )}
     </li>
   );
+}
+
+// ── humanizer ────────────────────────────────────────────────────────
+
+function humanizeStep(step: Step): { title: string; summary?: string } {
+  const desc = (step.description ?? "").trim();
+
+  if (desc.startsWith("browser_session_open")) {
+    return {
+      title: "Opened a browser",
+      summary: "PILK started a remote Chrome session. You can watch it on the Sandboxes tab.",
+    };
+  }
+  if (desc.startsWith("browser_navigate")) {
+    const url = typeof step.input?.url === "string" ? step.input.url : null;
+    return {
+      title: url ? `Visited ${shortHost(url)}` : "Navigated in the browser",
+      summary: url ? `Loaded ${url} and read the page.` : undefined,
+    };
+  }
+  if (desc.startsWith("browser_session_close")) {
+    return { title: "Closed the browser" };
+  }
+  if (desc.startsWith("fs_read")) {
+    const path = typeof step.input?.path === "string" ? step.input.path : null;
+    return {
+      title: path ? `Read ${shortPath(path)}` : "Read a file",
+      summary: path ? `Opened ${path}.` : undefined,
+    };
+  }
+  if (desc.startsWith("fs_write")) {
+    const path = typeof step.input?.path === "string" ? step.input.path : null;
+    return {
+      title: path ? `Wrote ${shortPath(path)}` : "Wrote a file",
+      summary: path ? `Saved content to ${path}.` : undefined,
+    };
+  }
+  if (desc.startsWith("shell_exec")) {
+    const cmd = typeof step.input?.command === "string" ? step.input.command : null;
+    return {
+      title: cmd ? `Ran shell: ${truncate(cmd.split(/\n/)[0], 70)}` : "Ran a shell command",
+    };
+  }
+  if (desc.startsWith("net_fetch")) {
+    const url = typeof step.input?.url === "string" ? step.input.url : null;
+    return {
+      title: url ? `Fetched ${shortHost(url)}` : "Fetched a URL",
+      summary: url ? `GET ${url}` : undefined,
+    };
+  }
+  if (desc.startsWith("llm_ask")) {
+    return {
+      title: "Asked a helper model",
+      summary: "PILK consulted a smaller model for a quick answer.",
+    };
+  }
+  if (desc.startsWith("agent_create")) {
+    const name = typeof step.input?.name === "string" ? step.input.name : null;
+    return {
+      title: name ? `Created agent: ${humanName(name)}` : "Created a specialist agent",
+    };
+  }
+  if (desc.startsWith("finance_")) {
+    const amt = step.input?.amount;
+    return {
+      title: amt != null ? `Financial step ($${amt})` : "Financial step",
+    };
+  }
+  if (desc.startsWith("trade_execute")) {
+    return { title: "Executed a trade" };
+  }
+  if (/^plan turn \d+/i.test(desc) || step.kind === "llm") {
+    const reason =
+      typeof step.output === "object" && step.output && "stop_reason" in step.output
+        ? String((step.output as any).stop_reason)
+        : null;
+    if (reason === "tool_use") {
+      return { title: "Thinking", summary: "PILK chose the next tool to use." };
+    }
+    if (reason === "end_turn") {
+      return { title: "Finished thinking", summary: "PILK wrapped up this turn." };
+    }
+    return { title: "Thinking" };
+  }
+  // Fallback — clean up common dev-y shapes.
+  return { title: cleanDevDesc(desc) };
+}
+
+function extractOutputText(step: Step): string | null {
+  const o = step.output;
+  if (o == null) return null;
+  if (typeof o === "string") return o.trim() || null;
+  if (typeof o === "object") {
+    const content = (o as any).content;
+    if (typeof content === "string" && content.trim()) return content.trim();
+  }
+  return null;
+}
+
+function shortHost(url: string): string {
+  try {
+    const u = new URL(url);
+    const path = u.pathname !== "/" ? u.pathname : "";
+    return `${u.host}${truncate(path, 40)}`;
+  } catch {
+    return truncate(url, 60);
+  }
+}
+
+function shortPath(path: string): string {
+  const parts = path.split("/");
+  if (parts.length <= 3) return path;
+  return `…/${parts.slice(-2).join("/")}`;
+}
+
+function humanName(id: string): string {
+  return id
+    .replace(/_/g, " ")
+    .replace(/\bagent\b$/i, "Agent")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+function cleanDevDesc(s: string): string {
+  // Strip `tool_name(args_blob)` → "Tool Name"
+  const m = s.match(/^([a-z0-9_]+)\s*\(/i);
+  if (m) return humanName(m[1]);
+  return s;
 }
