@@ -34,6 +34,7 @@ from core.api.ws import router as ws_router
 from core.config import get_settings
 from core.db import ensure_schema
 from core.governor import DailyBudget, Governor, Tier, Tiers, TierSpec
+from core.governor.providers import build_providers
 from core.ledger import Ledger
 from core.logging import configure_logging, get_logger
 from core.orchestrator import Orchestrator, PlanStore
@@ -181,6 +182,10 @@ async def lifespan(app: FastAPI):
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         registry.register(make_llm_ask_tool(client, ledger, settings.llm_ask_model))
 
+        providers = build_providers(
+            anthropic_client=client,
+            openai_api_key=settings.openai_api_key,
+        )
         orchestrator = Orchestrator(
             client=client,
             registry=registry,
@@ -193,11 +198,13 @@ async def lifespan(app: FastAPI):
             agents=agents,
             sandboxes=sandboxes,
             governor=governor,
+            providers=providers,
         )
         log.info(
             "orchestrator_ready",
             planner_model=settings.planner_model,
             llm_ask_model=settings.llm_ask_model,
+            providers=sorted(providers.keys()),
             tools=[t.name for t in registry.all()],
         )
     else:

@@ -29,6 +29,7 @@ from typing import Any
 
 import anthropic
 
+from core.governor.providers import PlannerProvider, PlannerResponse
 from core.ledger import Ledger, UsageSnapshot
 from core.logging import get_logger
 from core.orchestrator.plans import PlanStore
@@ -118,6 +119,7 @@ class Orchestrator:
         agents: AgentRegistry | None = None,
         sandboxes: SandboxManager | None = None,
         governor: Any = None,
+        providers: dict[str, PlannerProvider] | None = None,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -130,6 +132,7 @@ class Orchestrator:
         self.agents = agents
         self.sandboxes = sandboxes
         self.governor = governor
+        self.providers = providers or {}
         self._lock = asyncio.Lock()
         self._running_plan_id: str | None = None
 
@@ -242,22 +245,15 @@ class Orchestrator:
         final_text: str = ""
 
         # The Governor picks the tier for the whole plan based on the
-        # original goal. Batch C: decision is per-plan, not per-turn;
-        # that keeps caching effective and matches how a human operator
-        # would pick a tool up-front. Per-turn escalation lands later.
+        # original goal. Per-turn escalation lands in Batch E.
         if self.governor is not None:
             tier_choice = self.governor.pick(rc.goal)
             planner_model = tier_choice.model
+            requested_provider = tier_choice.provider
             tier_meta: dict[str, Any] = tier_choice.to_public()
-            if tier_choice.provider != "anthropic":
-                log.warning(
-                    "governor_nonanthropic_fallback",
-                    plan_id=plan_id,
-                    requested=f"{tier_choice.provider}/{tier_choice.model}",
-                    detail="Batch C routes through the Anthropic client regardless",
-                )
         else:
             planner_model = self.planner_model
+            requested_provider = "anthropic"
             tier_meta = {
                 "tier": "legacy",
                 "provider": "anthropic",
@@ -265,6 +261,28 @@ class Orchestrator:
                 "reason": "no_governor",
                 "gated": False,
             }
+
+        # Resolve to an actual PlannerProvider; fall back to Anthropic if
+        # the requested provider isn't configured.
+        provider = self.providers.get(requested_provider)
+        effective_provider = requested_provider
+        if provider is None:
+            provider = self.providers.get("anthropic")
+            effective_provider = "anthropic"
+            if requested_provider != "anthropic":
+                log.warning(
+                    "provider_fallback",
+                    plan_id=plan_id,
+                    requested=requested_provider,
+                    effective="anthropic",
+                    detail="credentials for requested provider not configured",
+                )
+        if provider is None:
+            # No provider at all — surface a clear failure.
+            raise RuntimeError(
+                "no planner provider configured (set ANTHROPIC_API_KEY)"
+            )
+        tier_meta["effective_provider"] = effective_provider
 
         for turn in range(self.max_turns):
             step = await self.plans.add_step(
@@ -275,20 +293,15 @@ class Orchestrator:
             )
             await self.broadcast("plan.step_added", step)
 
-            # Extended thinking is Opus-only at the moment — asking Haiku
-            # for adaptive thinking returns a 400. Include the field only
-            # when the configured planner supports it.
-            req: dict[str, Any] = dict(
+            response: PlannerResponse = await provider.plan_turn(
+                system=rc.system_prompt,
+                messages=messages,
+                tools=tools,
                 model=planner_model,
                 max_tokens=16000,
-                system=rc.system_prompt,
-                tools=tools,
-                messages=messages,
-                cache_control={"type": "ephemeral"},
+                use_thinking=self._supports_thinking(planner_model),
+                cache_control=True,
             )
-            if self._supports_thinking(planner_model):
-                req["thinking"] = {"type": "adaptive"}
-            response = await self.client.messages.create(**req)
 
             usage = UsageSnapshot.from_anthropic(response.usage)
             usd = await self.ledger.record_llm(
@@ -318,7 +331,23 @@ class Orchestrator:
                 "plan_actual_usd": plan["actual_usd"],
             })
 
-            messages.append({"role": "assistant", "content": response.content})
+            # Serialise the normalized PlannerResponse blocks back into
+            # Anthropic-shaped content dicts so they're safe to send to
+            # any provider on the next turn.
+            assistant_blocks: list[dict[str, Any]] = []
+            for b in response.content:
+                if getattr(b, "type", None) == "text":
+                    assistant_blocks.append({"type": "text", "text": b.text})
+                elif getattr(b, "type", None) == "tool_use":
+                    assistant_blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": b.id,
+                            "name": b.name,
+                            "input": b.input,
+                        }
+                    )
+            messages.append({"role": "assistant", "content": assistant_blocks})
 
             text_blocks = [
                 b.text for b in response.content if getattr(b, "type", None) == "text"
