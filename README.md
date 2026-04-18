@@ -60,6 +60,8 @@ Open http://127.0.0.1:1420, go to Chat, type a message — the daemon echoes it 
 
 Copy `.env.example` to `.env` and adjust. `~/PILK/config/` holds per-user overrides (created by the bootstrap script).
 
+Supabase foundation (optional, not yet required to run PILK): see [`docs/supabase.md`](docs/supabase.md).
+
 ## What's next
 
 Batch 1 wires the orchestrator, planner, executor, cost ledger, and built-in filesystem/shell/LLM tools into the chat pane so typed prompts actually perform work. See `docs/ARCHITECTURE.md` for the phased build plan.

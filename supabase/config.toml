@@ -1,0 +1,31 @@
+# Supabase CLI config for the PILK project.
+#
+# Minimal on purpose: this batch only ships migrations for a single
+# `owners` table. Edge functions, storage buckets, and custom auth
+# templates land in later batches.
+#
+# Apply from the repo root with:
+#
+#     supabase link --project-ref <your-ref>
+#     supabase db push
+#
+# (The link step is one-time per clone. `db push` diffs local
+# migrations against the linked project and applies what's missing.)
+
+project_id = "pilk"
+
+[db]
+# Keep the default major; we aren't relying on anything Postgres-17-
+# specific. If the linked project runs a different major, the CLI
+# warns rather than fails.
+major_version = 15
+
+[db.migrations]
+# Where the CLI looks for migration files, relative to this toml.
+schema_paths = ["./migrations"]
+
+[api]
+# Expose the public schema to PostgREST. Later batches will add
+# schemas like `pilk_private` for server-only tables.
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]

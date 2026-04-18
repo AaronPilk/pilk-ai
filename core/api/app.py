@@ -35,6 +35,7 @@ from core.api.routes.logs import router as logs_router
 from core.api.routes.memory import router as memory_router
 from core.api.routes.plans import router as plans_router
 from core.api.routes.sandboxes import router as sandboxes_router
+from core.api.routes.supabase import router as supabase_router
 from core.api.routes.voice import router as voice_router
 from core.api.ws import router as ws_router
 from core.coding import (
@@ -76,6 +77,7 @@ from core.orchestrator import Orchestrator, PlanStore
 from core.policy import AgentPolicyStore, ApprovalManager, Gate, TrustStore
 from core.registry import AgentRegistry
 from core.sandbox import SandboxManager
+from core.supabase import SupabaseClient
 from core.tools import Gateway, ToolRegistry
 from core.tools.builtin import (
     BrowserSessionManager,
@@ -421,6 +423,17 @@ async def lifespan(app: FastAPI):
     app.state.oauth_providers = oauth_providers
     app.state.oauth_flow = oauth_flow
 
+    # Supabase foundation — stays None-like when unconfigured. Nothing
+    # in the runtime path depends on it yet; only GET /supabase/health
+    # reads it.
+    supabase = SupabaseClient.from_settings(settings)
+    app.state.supabase = supabase
+    log.info(
+        "supabase_foundation",
+        configured=supabase.is_configured,
+        has_service_role=bool(supabase.service_role_key),
+    )
+
     log.info("pilkd_ready", home=str(home), host=settings.host, port=settings.port)
     try:
         yield
@@ -465,5 +478,6 @@ def create_app() -> FastAPI:
     app.include_router(memory_router)
     app.include_router(logs_router)
     app.include_router(coding_http_router)
+    app.include_router(supabase_router)
     app.include_router(ws_router)
     return app
