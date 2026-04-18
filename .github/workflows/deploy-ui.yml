@@ -1,0 +1,39 @@
+name: deploy-ui
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ui/**"
+      - ".github/workflows/deploy-ui.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci || npm install
+      - run: npm run build
+        env:
+          # Supabase client creds — same project as the portal. Both
+          # are browser-public (RLS on the backend enforces per-user).
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # Hosted pilkd on Railway. Baked into the bundle at build
+          # time so the deployed dashboard talks to the cloud API, not
+          # whoever's laptop happens to be running pilkd.
+          VITE_PILK_API: ${{ secrets.VITE_PILK_API }}
+          VITE_PILK_WS: ${{ secrets.VITE_PILK_WS }}
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy ui/dist --project-name=pilkai-app --branch=main
+          workingDirectory: .

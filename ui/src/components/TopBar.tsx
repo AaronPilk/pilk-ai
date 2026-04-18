@@ -7,6 +7,8 @@ import {
   useConnection,
   type CostSummary,
 } from "../state/api";
+import { isCloudMode } from "../lib/supabase";
+import { signOutAndReturnToPortal } from "../lib/AuthGate";
 import VoiceOrb from "./VoiceOrb";
 
 export default function TopBar() {
@@ -84,6 +86,15 @@ export default function TopBar() {
         </div>
         {!hasLargeOrb && (
           <VoiceOrb size="small" showLabel={false} showCaption={false} />
+        )}
+        {isCloudMode && (
+          <button
+            className="topbar-signout"
+            onClick={() => void signOutAndReturnToPortal()}
+            title="Sign out and return to pilk.ai"
+          >
+            Sign out
+          </button>
         )}
       </div>
     </header>
