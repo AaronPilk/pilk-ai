@@ -23,7 +23,13 @@ class Settings(BaseSettings):
 
     home: Path = Field(default=Path.home() / "PILK")
     host: str = "127.0.0.1"
-    port: int = 7424
+    # Accept Railway's `PORT` (dynamic per deploy) and our own `PILK_PORT`.
+    # AliasChoices resolves in order: Railway's value wins when set, else
+    # the Dockerfile default (8080), else local default (7424).
+    port: int = Field(
+        default=7424,
+        validation_alias=AliasChoices("PORT", "PILK_PORT"),
+    )
     log_level: str = "INFO"
 
     plan_max_turns: int = 12
@@ -182,6 +188,45 @@ class Settings(BaseSettings):
             "SUPABASE_MASTER_ADMIN_EMAIL", "PILK_SUPABASE_MASTER_ADMIN_EMAIL"
         ),
     )
+    # Supabase JWT secret — used server-side to verify Bearer tokens from
+    # the portal. Required when PILK_CLOUD=1. Never expose to the browser.
+    # Found in Supabase dashboard → Project Settings → API → JWT Secret.
+    supabase_jwt_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SUPABASE_JWT_SECRET", "PILK_SUPABASE_JWT_SECRET"
+        ),
+    )
+
+    # ── Cloud mode ────────────────────────────────────────────────
+    # When 1 (the Fly.io deploy sets this), pilkd runs as a public API:
+    # Bearer-token auth on every request, CORS locked to cloud_origins,
+    # and local-only integrations (Apple Messages, local sandboxes) are
+    # skipped at startup. Defaults to 0 so `pilkd` still runs identically
+    # on a laptop for development.
+    cloud: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("PILK_CLOUD", "CLOUD"),
+    )
+    # Comma-separated origins allowed to hit the API in cloud mode. The
+    # pilk.ai portal is the default; add app.pilk.ai (or wherever the UI
+    # ends up) before Phase 1b ships. Local-mode CORS is a fixed list of
+    # 127.0.0.1 ports and ignores this.
+    cloud_origins: str = Field(
+        default="https://pilk.ai",
+        validation_alias=AliasChoices("PILK_CLOUD_ORIGINS", "CLOUD_ORIGINS"),
+    )
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        if self.cloud:
+            return [o.strip() for o in self.cloud_origins.split(",") if o.strip()]
+        return [
+            "http://127.0.0.1:1420",
+            "http://localhost:1420",
+            "http://127.0.0.1:1421",
+            "http://localhost:1421",
+        ]
 
     @property
     def db_path(self) -> Path:
