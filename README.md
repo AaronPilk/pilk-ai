@@ -62,6 +62,8 @@ Copy `.env.example` to `.env` and adjust. `~/PILK/config/` holds per-user overri
 
 Supabase foundation (optional, not yet required to run PILK): see [`docs/supabase.md`](docs/supabase.md).
 
+Portal / sign-in at pilk.ai: see [`docs/portal.md`](docs/portal.md).
+
 ## What's next
 
 Batch 1 wires the orchestrator, planner, executor, cost ledger, and built-in filesystem/shell/LLM tools into the chat pane so typed prompts actually perform work. See `docs/ARCHITECTURE.md` for the phased build plan.
