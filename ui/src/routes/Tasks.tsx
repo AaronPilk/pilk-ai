@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { fetchPlan, fetchPlans, pilk, type PlanDetail, type PlanSummary } from "../state/api";
+import {
+  cancelPlan,
+  fetchPlan,
+  fetchPlans,
+  pilk,
+  type PlanDetail,
+  type PlanSummary,
+} from "../state/api";
 import PlanCard from "../components/PlanCard";
 import { humanize } from "../lib/humanize";
 
@@ -7,11 +14,14 @@ export default function Tasks() {
   const [plans, setPlans] = useState<PlanSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<PlanDetail | null>(null);
+  const [runningPlanId, setRunningPlanId] = useState<string | null>(null);
+  const [stopping, setStopping] = useState<string | null>(null);
 
   useEffect(() => {
     fetchPlans()
       .then((r) => {
         setPlans(r.plans);
+        setRunningPlanId(r.running_plan_id);
         if (r.plans.length > 0) setSelectedId(r.plans[0].id);
       })
       .catch(() => {});
@@ -33,6 +43,7 @@ export default function Tasks() {
           ...prev,
         ]);
         setSelectedId(m.id);
+        setRunningPlanId(m.id);
       } else if (m.type === "plan.completed") {
         setPlans((prev) =>
           prev.map((p) =>
@@ -41,9 +52,22 @@ export default function Tasks() {
               : p
           )
         );
+        setRunningPlanId((cur) => (cur === m.id ? null : cur));
+        setStopping((cur) => (cur === m.id ? null : cur));
+      } else if (m.type === "plan.cancelling") {
+        setStopping(m.plan_id);
       }
     });
   }, []);
+
+  const handleStop = async (planId: string) => {
+    setStopping(planId);
+    try {
+      await cancelPlan(planId);
+    } catch {
+      setStopping((cur) => (cur === planId ? null : cur));
+    }
+  };
 
   useEffect(() => {
     if (!selectedId) return;
@@ -74,21 +98,43 @@ export default function Tasks() {
       <div className="tasks-list">
         <div className="tasks-list-head">Recent plans</div>
         {plans.length === 0 && <div className="tasks-empty">No plans yet.</div>}
-        {plans.map((p) => (
-          <button
-            key={p.id}
-            className={`tasks-row ${selectedId === p.id ? "tasks-row--active" : ""}`}
-            onClick={() => setSelectedId(p.id)}
-          >
-            <div className="tasks-row-goal">{p.goal}</div>
-            <div className="tasks-row-meta">
-              <span className={`tasks-row-status tasks-row-status--${p.status}`}>
-                {humanize(p.status)}
-              </span>
-              <span className="tasks-row-cost">${p.actual_usd.toFixed(4)}</span>
+        {plans.map((p) => {
+          const isLive = p.id === runningPlanId && p.status === "running";
+          return (
+            <div
+              key={p.id}
+              className={`tasks-row-wrap ${
+                selectedId === p.id ? "tasks-row-wrap--active" : ""
+              }`}
+            >
+              <button
+                className={`tasks-row ${selectedId === p.id ? "tasks-row--active" : ""}`}
+                onClick={() => setSelectedId(p.id)}
+              >
+                <div className="tasks-row-goal">{p.goal}</div>
+                <div className="tasks-row-meta">
+                  <span className={`tasks-row-status tasks-row-status--${p.status}`}>
+                    {humanize(p.status)}
+                  </span>
+                  <span className="tasks-row-cost">${p.actual_usd.toFixed(4)}</span>
+                </div>
+              </button>
+              {isLive && (
+                <button
+                  className="tasks-row-stop"
+                  title="Stop this plan"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleStop(p.id);
+                  }}
+                  disabled={stopping === p.id}
+                >
+                  {stopping === p.id ? "Stopping…" : "Stop"}
+                </button>
+              )}
             </div>
-          </button>
-        ))}
+          );
+        })}
       </div>
       <div className="tasks-detail">
         {detail ? (
@@ -99,6 +145,16 @@ export default function Tasks() {
                 <span>{humanize(detail.status)}</span>
                 <span>${detail.actual_usd.toFixed(4)}</span>
                 <span>{detail.steps.length} steps</span>
+                {detail.id === runningPlanId && detail.status === "running" && (
+                  <button
+                    className="tasks-detail-stop"
+                    onClick={() => void handleStop(detail.id)}
+                    disabled={stopping === detail.id}
+                    title="Stop this plan — closes any active browser sessions."
+                  >
+                    {stopping === detail.id ? "Stopping…" : "Stop"}
+                  </button>
+                )}
               </div>
             </div>
             <PlanCard plan={detail} />

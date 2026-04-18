@@ -16,6 +16,12 @@ class RiskClass(StrEnum):
     WRITE_LOCAL = "WRITE_LOCAL"
     EXEC_LOCAL = "EXEC_LOCAL"
     NET_READ = "NET_READ"
+    # Browsing inside an isolated sandbox — navigation, typing into search
+    # boxes and forms, scraping. Classified separately from NET_WRITE so
+    # the gate can auto-allow it once the user has authorized a task.
+    # Real outbound writes (email, posts, payments) stay on NET_WRITE /
+    # COMMS / FINANCIAL.
+    BROWSE = "BROWSE"
     NET_WRITE = "NET_WRITE"
     COMMS = "COMMS"
     FINANCIAL = "FINANCIAL"

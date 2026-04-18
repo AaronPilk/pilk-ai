@@ -8,8 +8,12 @@ doing. Three tools are exposed to agents:
 - browser_navigate:     point the current session at a URL and return text
 - browser_session_close: tear the session down
 
-Everything is tagged NET_WRITE so calls flow through the approval queue
-unless a trust rule has been added.
+Browser tools are tagged BROWSE — navigation/typing/scraping inside an
+isolated Browserbase session. The gate auto-allows BROWSE so once the
+user has authorized a task, PILK may freely drive the browser without
+prompting per step. Actions that leave the sandbox (email, posts,
+money) keep their original NET_WRITE / COMMS / FINANCIAL tags and still
+hit the approval queue.
 """
 
 from __future__ import annotations
@@ -32,10 +36,13 @@ class BrowserSession:
     connect_url: str
     agent_name: str | None = None
     sandbox_id: str | None = None
+    plan_id: str | None = None
     status: str = "open"  # open | closed | errored
     current_url: str | None = None
     page_title: str | None = None
     created_at: float = 0.0
+    last_action: str | None = None
+    last_action_at: float = 0.0
     meta: dict[str, Any] = field(default_factory=dict)
 
     def to_public(self) -> dict[str, Any]:
@@ -44,10 +51,13 @@ class BrowserSession:
             "live_view_url": self.live_view_url,
             "agent_name": self.agent_name,
             "sandbox_id": self.sandbox_id,
+            "plan_id": self.plan_id,
             "status": self.status,
             "current_url": self.current_url,
             "page_title": self.page_title,
             "created_at": self.created_at,
+            "last_action": self.last_action,
+            "last_action_at": self.last_action_at,
         }
 
 
@@ -81,7 +91,10 @@ class BrowserSessionManager:
         return list(self._sessions.values())
 
     async def open(
-        self, agent_name: str | None, sandbox_id: str | None
+        self,
+        agent_name: str | None,
+        sandbox_id: str | None,
+        plan_id: str | None = None,
     ) -> BrowserSession:
         # Imported lazily so pilkd still boots without the deps installed.
         import time
@@ -117,6 +130,7 @@ class BrowserSessionManager:
             connect_url=connect_url,
             agent_name=agent_name,
             sandbox_id=sandbox_id,
+            plan_id=plan_id,
             created_at=time.time(),
         )
         async with self._lock:
@@ -139,6 +153,7 @@ class BrowserSessionManager:
         page = self._pages.get(session_id)
         if page is None:
             raise KeyError(f"no active browser session: {session_id}")
+        await self._note_action(session_id, "navigating", {"url": url})
         await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
         title = await page.title()
         body_text = await page.inner_text("body")
@@ -146,8 +161,36 @@ class BrowserSessionManager:
         sess = self._sessions[session_id]
         sess.current_url = url
         sess.page_title = title
+        await self._note_action(session_id, "reading", {"url": url, "title": title})
         await self._emit("browser.session_updated", sess.to_public())
         return {"url": url, "title": title, "text": body_text}
+
+    async def _note_action(
+        self, session_id: str, action: str, detail: dict[str, Any]
+    ) -> None:
+        """Record and broadcast a short human-readable action label.
+
+        Feeds the Live browser strip in the dashboard so the user sees
+        'navigating → example.com', 'reading', 'typing …' as they happen.
+        """
+        import time
+
+        sess = self._sessions.get(session_id)
+        if sess is None:
+            return
+        sess.last_action = action
+        sess.last_action_at = time.time()
+        await self._emit(
+            "browser.action",
+            {
+                "session_id": session_id,
+                "plan_id": sess.plan_id,
+                "agent_name": sess.agent_name,
+                "action": action,
+                "detail": detail,
+                "at": sess.last_action_at,
+            },
+        )
 
     async def close(self, session_id: str) -> None:
         page = self._pages.pop(session_id, None)
@@ -178,6 +221,22 @@ class BrowserSessionManager:
         for sid in list(self._sessions.keys()):
             await self.close(sid)
 
+    async def close_for_plan(self, plan_id: str) -> list[str]:
+        """Close every open session tied to `plan_id`. Returns closed ids.
+
+        Called when the user cancels a plan — any browser sessions that
+        plan owns go with it, so the sandbox doesn't keep running after
+        the operator has hit stop.
+        """
+        ids = [
+            sid
+            for sid, s in self._sessions.items()
+            if s.plan_id == plan_id and s.status == "open"
+        ]
+        for sid in ids:
+            await self.close(sid)
+        return ids
+
     async def _emit(self, event: str, payload: dict) -> None:
         if self._broadcast is None:
             return
@@ -193,7 +252,9 @@ def make_browser_tools(
     async def _open(args: dict, ctx: ToolContext) -> ToolOutcome:
         try:
             sess = await manager.open(
-                agent_name=ctx.agent_name, sandbox_id=ctx.sandbox_id
+                agent_name=ctx.agent_name,
+                sandbox_id=ctx.sandbox_id,
+                plan_id=ctx.plan_id,
             )
         except ImportError as e:
             return ToolOutcome(
@@ -270,7 +331,7 @@ def make_browser_tools(
             "browser_session_close when done."
         ),
         input_schema={"type": "object", "properties": {}},
-        risk=RiskClass.NET_WRITE,
+        risk=RiskClass.BROWSE,
         handler=_open,
     )
     navigate_tool = Tool(
@@ -288,7 +349,7 @@ def make_browser_tools(
             },
             "required": ["session_id", "url"],
         },
-        risk=RiskClass.NET_WRITE,
+        risk=RiskClass.BROWSE,
         handler=_navigate,
     )
     close_tool = Tool(
@@ -299,7 +360,7 @@ def make_browser_tools(
             "properties": {"session_id": {"type": "string"}},
             "required": ["session_id"],
         },
-        risk=RiskClass.NET_WRITE,
+        risk=RiskClass.BROWSE,
         handler=_close,
     )
     return [open_tool, navigate_tool, close_tool]

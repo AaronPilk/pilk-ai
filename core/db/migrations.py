@@ -12,7 +12,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-CURRENT_VERSION = 4
+CURRENT_VERSION = 5
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
 
@@ -68,6 +68,15 @@ MIGRATIONS: dict[int, list[str]] = {
         )""",
         "CREATE INDEX IF NOT EXISTS idx_memory_kind ON memory_entries(kind)",
         "CREATE INDEX IF NOT EXISTS idx_memory_created ON memory_entries(created_at)",
+    ],
+    # v5: per-agent autonomy profile. Persisted so the gate can widen
+    # the auto-allow set for trusted agents across restarts.
+    5: [
+        """CREATE TABLE IF NOT EXISTS agent_policies (
+            agent_name TEXT PRIMARY KEY,
+            profile    TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""",
     ],
 }
 

@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.orchestrator.orchestrator import OrchestratorBusyError
+from core.policy import VALID_PROFILES
 from core.registry.registry import AgentNotFoundError
 
 router = APIRouter(prefix="/agents")
@@ -13,12 +14,41 @@ class RunBody(BaseModel):
     task: str
 
 
+class PolicyBody(BaseModel):
+    profile: str
+
+
 @router.get("")
 async def list_agents(request: Request) -> dict:
     registry = request.app.state.agents
+    store = getattr(request.app.state, "agent_policies", None)
+    policies = store.all() if store is not None else {}
     if registry is None:
-        return {"agents": []}
-    return {"agents": await registry.list_rows()}
+        return {"agents": [], "profiles": sorted(VALID_PROFILES)}
+    rows = await registry.list_rows()
+    for row in rows:
+        row["autonomy_profile"] = policies.get(row["name"], "assistant")
+    return {"agents": rows, "profiles": sorted(VALID_PROFILES)}
+
+
+@router.post("/{name}/policy")
+async def set_agent_policy(
+    name: str, body: PolicyBody, request: Request
+) -> dict:
+    registry = request.app.state.agents
+    store = getattr(request.app.state, "agent_policies", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="policy store offline")
+    if registry is not None:
+        try:
+            registry.get(name)
+        except AgentNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+    try:
+        profile = await store.set(name, body.profile.strip())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"agent": name, "profile": profile}
 
 
 @router.post("/{name}/run")

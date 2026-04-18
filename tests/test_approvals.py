@@ -33,7 +33,10 @@ FAKE_NET_FETCH = Tool(
     name="net_fetch",
     description=net_fetch_tool.description,
     input_schema=net_fetch_tool.input_schema,
-    risk=RiskClass.NET_READ,
+    # NET_READ is auto-allowed under the retuned approval philosophy;
+    # the approval pause/resume tests still need a tool that actually
+    # queues, so we tag this fake as NET_WRITE.
+    risk=RiskClass.NET_WRITE,
     handler=_fake_fetch,
 )
 

@@ -102,6 +102,30 @@ export async function fetchPlan(id: string): Promise<PlanDetail> {
   return r.json();
 }
 
+export async function cancelPlan(id: string, reason?: string): Promise<{
+  cancelled: boolean;
+  plan_id: string;
+  reason: string;
+  closed_browser_sessions: string[];
+}> {
+  const r = await fetch(`${API_URL}/plans/${encodeURIComponent(id)}/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason: reason ?? null }),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function cancelAllRunning(): Promise<{
+  cancelled_plan_id: string | null;
+  closed_browser_sessions: string[];
+}> {
+  const r = await fetch(`${API_URL}/plans/cancel-all`, { method: "POST" });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 export async function fetchCostSummary(): Promise<CostSummary> {
   const r = await fetch(`${API_URL}/cost/summary`);
   if (!r.ok) throw new Error(`GET /cost/summary failed: ${r.status}`);
@@ -114,9 +138,41 @@ export async function fetchCostEntries(limit = 50): Promise<{ entries: CostEntry
   return r.json();
 }
 
-export async function fetchAgents(): Promise<{ agents: AgentRow[] }> {
+export type AutonomyProfile =
+  | "observer"
+  | "assistant"
+  | "operator"
+  | "autonomous";
+
+export const AUTONOMY_PROFILES: AutonomyProfile[] = [
+  "observer",
+  "assistant",
+  "operator",
+  "autonomous",
+];
+
+export async function fetchAgents(): Promise<{
+  agents: AgentRow[];
+  profiles?: AutonomyProfile[];
+}> {
   const r = await fetch(`${API_URL}/agents`);
   if (!r.ok) throw new Error(`GET /agents failed: ${r.status}`);
+  return r.json();
+}
+
+export async function setAgentPolicy(
+  name: string,
+  profile: AutonomyProfile,
+): Promise<{ agent: string; profile: AutonomyProfile }> {
+  const r = await fetch(
+    `${API_URL}/agents/${encodeURIComponent(name)}/policy`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile }),
+    },
+  );
+  if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
 
@@ -147,10 +203,22 @@ export interface BrowserSession {
   live_view_url: string;
   agent_name: string | null;
   sandbox_id: string | null;
+  plan_id: string | null;
   status: "open" | "closed" | "errored";
   current_url: string | null;
   page_title: string | null;
   created_at: number;
+  last_action: string | null;
+  last_action_at: number;
+}
+
+export interface BrowserAction {
+  session_id: string;
+  plan_id: string | null;
+  agent_name: string | null;
+  action: string;
+  detail: Record<string, unknown>;
+  at: number;
 }
 
 export async function fetchBrowserSessions(): Promise<{
@@ -770,6 +838,7 @@ export interface AgentRow {
   tools?: string[];
   sandbox?: { type: string; profile: string; capabilities?: string[] };
   budget?: { per_run_usd: number; daily_usd: number };
+  autonomy_profile?: AutonomyProfile;
 }
 
 export interface SandboxRow {
