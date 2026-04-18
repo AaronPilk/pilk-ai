@@ -208,12 +208,12 @@ class Settings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("PILK_CLOUD", "CLOUD"),
     )
-    # Comma-separated origins allowed to hit the API in cloud mode. The
-    # pilk.ai portal is the default; add app.pilk.ai (or wherever the UI
-    # ends up) before Phase 1b ships. Local-mode CORS is a fixed list of
-    # 127.0.0.1 ports and ignores this.
+    # Comma-separated origins allowed to hit the API in cloud mode.
+    # `pilk.ai` is the marketing + auth portal; `app.pilk.ai` is where the
+    # dashboard (`ui/`) lives after Phase 1b. Local-mode CORS ignores this
+    # and uses a fixed list of 127.0.0.1 ports instead.
     cloud_origins: str = Field(
-        default="https://pilk.ai",
+        default="https://pilk.ai,https://app.pilk.ai",
         validation_alias=AliasChoices("PILK_CLOUD_ORIGINS", "CLOUD_ORIGINS"),
     )
 

@@ -3781,3 +3781,44 @@ body {
   border-radius: var(--radius);
 }
 
+
+/* ── Auth gate (cloud-mode loading + redirect state) ───────────── */
+.auth-gate-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg);
+  background-image: var(--bg-wash);
+}
+
+.auth-gate-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: auth-gate-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes auth-gate-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.4); }
+}
+
+.topbar-signout {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.topbar-signout:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}

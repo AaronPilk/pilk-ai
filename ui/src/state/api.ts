@@ -1,9 +1,5 @@
 import { useEffect, useState } from "react";
-
-const API_URL =
-  (import.meta.env.VITE_PILK_API as string | undefined) ?? "http://127.0.0.1:7424";
-const WS_URL =
-  (import.meta.env.VITE_PILK_WS as string | undefined) ?? "ws://127.0.0.1:7424/ws";
+import { apiFetch, wsUrlWithAuth } from "../lib/api";
 
 export type WsStatus = "connecting" | "open" | "closed";
 
@@ -16,10 +12,13 @@ class PilkSocket {
   private status: WsStatus = "closed";
   private reconnectTimer: number | null = null;
 
-  connect() {
+  async connect() {
     if (this.ws) return;
     this.setStatus("connecting");
-    const ws = new WebSocket(WS_URL);
+    const url = await wsUrlWithAuth();
+    // Another connect() may have raced in during the await — bail if so.
+    if (this.ws) return;
+    const ws = new WebSocket(url);
     this.ws = ws;
 
     ws.onopen = () => this.setStatus("open");
@@ -45,7 +44,7 @@ class PilkSocket {
     if (this.reconnectTimer) return;
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
-      this.connect();
+      void this.connect();
     }, 1500);
   }
 
@@ -77,7 +76,7 @@ class PilkSocket {
 }
 
 export const pilk = new PilkSocket();
-pilk.connect();
+void pilk.connect();
 
 export function useConnection() {
   const [status, setStatus] = useState<WsStatus>("closed");
@@ -91,13 +90,13 @@ export async function fetchPlans(): Promise<{
   plans: PlanSummary[];
   running_plan_id: string | null;
 }> {
-  const r = await fetch(`${API_URL}/plans`);
+  const r = await apiFetch(`/plans`);
   if (!r.ok) throw new Error(`GET /plans failed: ${r.status}`);
   return r.json();
 }
 
 export async function fetchPlan(id: string): Promise<PlanDetail> {
-  const r = await fetch(`${API_URL}/plans/${id}`);
+  const r = await apiFetch(`/plans/${id}`);
   if (!r.ok) throw new Error(`GET /plans/${id} failed: ${r.status}`);
   return r.json();
 }
@@ -108,7 +107,7 @@ export async function cancelPlan(id: string, reason?: string): Promise<{
   reason: string;
   closed_browser_sessions: string[];
 }> {
-  const r = await fetch(`${API_URL}/plans/${encodeURIComponent(id)}/cancel`, {
+  const r = await apiFetch(`/plans/${encodeURIComponent(id)}/cancel`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ reason: reason ?? null }),
@@ -121,19 +120,19 @@ export async function cancelAllRunning(): Promise<{
   cancelled_plan_id: string | null;
   closed_browser_sessions: string[];
 }> {
-  const r = await fetch(`${API_URL}/plans/cancel-all`, { method: "POST" });
+  const r = await apiFetch(`/plans/cancel-all`, { method: "POST" });
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
 
 export async function fetchCostSummary(): Promise<CostSummary> {
-  const r = await fetch(`${API_URL}/cost/summary`);
+  const r = await apiFetch(`/cost/summary`);
   if (!r.ok) throw new Error(`GET /cost/summary failed: ${r.status}`);
   return r.json();
 }
 
 export async function fetchCostEntries(limit = 50): Promise<{ entries: CostEntry[] }> {
-  const r = await fetch(`${API_URL}/cost/entries?limit=${limit}`);
+  const r = await apiFetch(`/cost/entries?limit=${limit}`);
   if (!r.ok) throw new Error(`GET /cost/entries failed: ${r.status}`);
   return r.json();
 }
@@ -155,7 +154,7 @@ export async function fetchAgents(): Promise<{
   agents: AgentRow[];
   profiles?: AutonomyProfile[];
 }> {
-  const r = await fetch(`${API_URL}/agents`);
+  const r = await apiFetch(`/agents`);
   if (!r.ok) throw new Error(`GET /agents failed: ${r.status}`);
   return r.json();
 }
@@ -164,8 +163,8 @@ export async function setAgentPolicy(
   name: string,
   profile: AutonomyProfile,
 ): Promise<{ agent: string; profile: AutonomyProfile }> {
-  const r = await fetch(
-    `${API_URL}/agents/${encodeURIComponent(name)}/policy`,
+  const r = await apiFetch(
+    `/agents/${encodeURIComponent(name)}/policy`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -177,7 +176,7 @@ export async function setAgentPolicy(
 }
 
 export async function runAgent(name: string, task: string): Promise<void> {
-  const r = await fetch(`${API_URL}/agents/${name}/run`, {
+  const r = await apiFetch(`/agents/${name}/run`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ task }),
@@ -193,7 +192,7 @@ export async function runAgent(name: string, task: string): Promise<void> {
 }
 
 export async function fetchSandboxes(): Promise<{ sandboxes: SandboxRow[] }> {
-  const r = await fetch(`${API_URL}/sandboxes`);
+  const r = await apiFetch(`/sandboxes`);
   if (!r.ok) throw new Error(`GET /sandboxes failed: ${r.status}`);
   return r.json();
 }
@@ -226,7 +225,7 @@ export async function fetchBrowserSessions(): Promise<{
   sessions: BrowserSession[];
   active: BrowserSession[];
 }> {
-  const r = await fetch(`${API_URL}/browser/sessions`);
+  const r = await apiFetch(`/browser/sessions`);
   if (!r.ok) throw new Error(`GET /browser/sessions failed: ${r.status}`);
   return r.json();
 }
@@ -235,7 +234,7 @@ export async function fetchApprovals(): Promise<{
   pending: ApprovalRequest[];
   recent: ApprovalHistoryRow[];
 }> {
-  const r = await fetch(`${API_URL}/approvals`);
+  const r = await apiFetch(`/approvals`);
   if (!r.ok) throw new Error(`GET /approvals failed: ${r.status}`);
   return r.json();
 }
@@ -244,7 +243,7 @@ export async function approveApproval(
   id: string,
   body: { reason?: string; trust?: { scope: TrustScope; ttl_seconds: number } },
 ): Promise<void> {
-  const r = await fetch(`${API_URL}/approvals/${id}/approve`, {
+  const r = await apiFetch(`/approvals/${id}/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -256,7 +255,7 @@ export async function rejectApproval(
   id: string,
   body: { reason?: string },
 ): Promise<void> {
-  const r = await fetch(`${API_URL}/approvals/${id}/reject`, {
+  const r = await apiFetch(`/approvals/${id}/reject`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -268,7 +267,7 @@ export async function approveAllPending(reason?: string): Promise<{
   approved: string[];
   count: number;
 }> {
-  const r = await fetch(`${API_URL}/approvals/batch/approve`, {
+  const r = await apiFetch(`/approvals/batch/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ reason: reason ?? null }),
@@ -278,34 +277,34 @@ export async function approveAllPending(reason?: string): Promise<{
 }
 
 export async function fetchTrust(): Promise<{ rules: TrustRule[] }> {
-  const r = await fetch(`${API_URL}/trust`);
+  const r = await apiFetch(`/trust`);
   if (!r.ok) throw new Error(`GET /trust failed: ${r.status}`);
   return r.json();
 }
 
 export async function revokeTrust(id: string): Promise<void> {
-  const r = await fetch(`${API_URL}/trust/${id}`, { method: "DELETE" });
+  const r = await apiFetch(`/trust/${id}`, { method: "DELETE" });
   if (!r.ok) throw new Error(await detail(r));
 }
 
 export async function fetchVoiceStatus(): Promise<VoiceStatus> {
-  const r = await fetch(`${API_URL}/voice/status`);
+  const r = await apiFetch(`/voice/status`);
   if (!r.ok) throw new Error(`GET /voice/status failed: ${r.status}`);
   return r.json();
 }
 
 export async function voiceListen(): Promise<void> {
-  const r = await fetch(`${API_URL}/voice/listen`, { method: "POST" });
+  const r = await apiFetch(`/voice/listen`, { method: "POST" });
   if (!r.ok) throw new Error(await detail(r));
 }
 
 export async function voiceCancel(): Promise<void> {
-  const r = await fetch(`${API_URL}/voice/cancel`, { method: "POST" });
+  const r = await apiFetch(`/voice/cancel`, { method: "POST" });
   if (!r.ok) throw new Error(await detail(r));
 }
 
 export async function voiceDone(): Promise<void> {
-  const r = await fetch(`${API_URL}/voice/done`, { method: "POST" });
+  const r = await apiFetch(`/voice/done`, { method: "POST" });
   if (!r.ok) throw new Error(await detail(r));
 }
 
@@ -314,7 +313,7 @@ export async function voiceUtterance(
 ): Promise<VoiceUtteranceResult> {
   const form = new FormData();
   form.append("audio", blob, "utterance.webm");
-  const r = await fetch(`${API_URL}/voice/utterance`, {
+  const r = await apiFetch(`/voice/utterance`, {
     method: "POST",
     body: form,
   });
@@ -359,13 +358,13 @@ export interface GovernorStatus {
 }
 
 export async function fetchGovernorStatus(): Promise<GovernorStatus> {
-  const r = await fetch(`${API_URL}/governor/status`);
+  const r = await apiFetch(`/governor/status`);
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
 
 export async function setGovernorOverride(mode: OverrideMode): Promise<void> {
-  const r = await fetch(`${API_URL}/governor/override`, {
+  const r = await apiFetch(`/governor/override`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mode }),
@@ -377,7 +376,7 @@ export async function setGovernorConfig(body: {
   daily_cap_usd?: number;
   premium_gate?: PremiumGate;
 }): Promise<GovernorStatus> {
-  const r = await fetch(`${API_URL}/governor/config`, {
+  const r = await apiFetch(`/governor/config`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -423,7 +422,7 @@ export interface ConnectedAccount {
 }
 
 export async function fetchProviders(): Promise<{ providers: ProviderInfo[] }> {
-  const r = await fetch(`${API_URL}/integrations/providers`);
+  const r = await apiFetch(`/integrations/providers`);
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
@@ -432,7 +431,7 @@ export async function fetchConnectedAccounts(): Promise<{
   accounts: ConnectedAccount[];
   defaults: Record<string, string>;
 }> {
-  const r = await fetch(`${API_URL}/integrations/accounts`);
+  const r = await apiFetch(`/integrations/accounts`);
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
@@ -448,7 +447,7 @@ export async function startOAuthConnection(body: {
   redirect_uri: string;
   scope_groups?: string[];
 }> {
-  const r = await fetch(`${API_URL}/integrations/accounts/oauth/start`, {
+  const r = await apiFetch(`/integrations/accounts/oauth/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -458,8 +457,8 @@ export async function startOAuthConnection(body: {
 }
 
 export async function deleteConnectedAccount(accountId: string): Promise<void> {
-  const r = await fetch(
-    `${API_URL}/integrations/accounts/${encodeURIComponent(accountId)}`,
+  const r = await apiFetch(
+    `/integrations/accounts/${encodeURIComponent(accountId)}`,
     { method: "DELETE" },
   );
   if (!r.ok) throw new Error(await detail(r));
@@ -468,8 +467,8 @@ export async function deleteConnectedAccount(accountId: string): Promise<void> {
 export async function setDefaultConnectedAccount(
   accountId: string,
 ): Promise<void> {
-  const r = await fetch(
-    `${API_URL}/integrations/accounts/${encodeURIComponent(accountId)}/default`,
+  const r = await apiFetch(
+    `/integrations/accounts/${encodeURIComponent(accountId)}/default`,
     { method: "POST" },
   );
   if (!r.ok) throw new Error(await detail(r));
@@ -485,7 +484,7 @@ export interface AgentGrant {
 export async function fetchGrants(): Promise<{
   grants: Record<string, AgentGrant>;
 }> {
-  const r = await fetch(`${API_URL}/integrations/grants`);
+  const r = await apiFetch(`/integrations/grants`);
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
@@ -494,8 +493,8 @@ export async function grantAgentAccess(
   accountId: string,
   agentName: string,
 ): Promise<void> {
-  const r = await fetch(
-    `${API_URL}/integrations/accounts/${encodeURIComponent(
+  const r = await apiFetch(
+    `/integrations/accounts/${encodeURIComponent(
       accountId,
     )}/agents/${encodeURIComponent(agentName)}`,
     { method: "POST" },
@@ -507,8 +506,8 @@ export async function revokeAgentAccess(
   accountId: string,
   agentName: string,
 ): Promise<void> {
-  const r = await fetch(
-    `${API_URL}/integrations/accounts/${encodeURIComponent(
+  const r = await apiFetch(
+    `/integrations/accounts/${encodeURIComponent(
       accountId,
     )}/agents/${encodeURIComponent(agentName)}`,
     { method: "DELETE" },
@@ -535,7 +534,7 @@ export interface IntegrationsStatus {
 }
 
 export async function fetchIntegrationsStatus(): Promise<IntegrationsStatus> {
-  const r = await fetch(`${API_URL}/integrations/status`);
+  const r = await apiFetch(`/integrations/status`);
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
@@ -558,8 +557,8 @@ export interface InboxGlance {
 export async function fetchInboxGlance(
   role: GoogleRole = "user",
 ): Promise<InboxGlance> {
-  const r = await fetch(
-    `${API_URL}/integrations/google/${encodeURIComponent(role)}/inbox/glance`,
+  const r = await apiFetch(
+    `/integrations/google/${encodeURIComponent(role)}/inbox/glance`,
   );
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
@@ -584,8 +583,8 @@ export interface CalendarGlance {
 export async function fetchCalendarGlance(
   role: GoogleRole = "user",
 ): Promise<CalendarGlance> {
-  const r = await fetch(
-    `${API_URL}/integrations/google/${encodeURIComponent(role)}/calendar/glance`,
+  const r = await apiFetch(
+    `/integrations/google/${encodeURIComponent(role)}/calendar/glance`,
   );
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
@@ -611,13 +610,13 @@ export interface MessagesGlance {
 }
 
 export async function fetchMessagesGlance(): Promise<MessagesGlance> {
-  const r = await fetch(`${API_URL}/integrations/apple/messages/glance`);
+  const r = await apiFetch(`/integrations/apple/messages/glance`);
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
 
 export async function voiceSpeak(text: string): Promise<VoiceSpeakResult> {
-  const r = await fetch(`${API_URL}/voice/speak`, {
+  const r = await apiFetch(`/voice/speak`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
@@ -650,7 +649,7 @@ export async function fetchMemory(kind?: MemoryKind): Promise<{
   kinds: MemoryKind[];
 }> {
   const q = kind ? `?kind=${encodeURIComponent(kind)}` : "";
-  const r = await fetch(`${API_URL}/memory${q}`);
+  const r = await apiFetch(`/memory${q}`);
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
@@ -660,7 +659,7 @@ export async function addMemory(body: {
   title: string;
   body: string;
 }): Promise<MemoryEntry> {
-  const r = await fetch(`${API_URL}/memory`, {
+  const r = await apiFetch(`/memory`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -670,7 +669,7 @@ export async function addMemory(body: {
 }
 
 export async function deleteMemory(id: string): Promise<void> {
-  const r = await fetch(`${API_URL}/memory/${encodeURIComponent(id)}`, {
+  const r = await apiFetch(`/memory/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
   if (!r.ok) throw new Error(await detail(r));
@@ -678,7 +677,7 @@ export async function deleteMemory(id: string): Promise<void> {
 
 export async function clearMemory(kind?: MemoryKind): Promise<{ cleared: number }> {
   const q = kind ? `?kind=${encodeURIComponent(kind)}` : "";
-  const r = await fetch(`${API_URL}/memory${q}`, { method: "DELETE" });
+  const r = await apiFetch(`/memory${q}`, { method: "DELETE" });
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
@@ -729,7 +728,7 @@ export async function fetchLogs(opts?: {
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.before) params.set("before", opts.before);
   const qs = params.toString();
-  const r = await fetch(`${API_URL}/logs${qs ? `?${qs}` : ""}`);
+  const r = await apiFetch(`/logs${qs ? `?${qs}` : ""}`);
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
@@ -746,7 +745,7 @@ export interface CodingEngineHealth {
 export async function fetchCodingEngines(): Promise<{
   engines: CodingEngineHealth[];
 }> {
-  const r = await fetch(`${API_URL}/coding/engines`);
+  const r = await apiFetch(`/coding/engines`);
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }

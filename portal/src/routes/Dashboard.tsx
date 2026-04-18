@@ -29,22 +29,31 @@ export default function Dashboard({ session }: { session: Session }) {
             </span>
           )}
           <p className="portal-body">
-            PILK runs locally. The daemon lives on your machine; your data
-            never leaves it. This portal is for sign-in and, eventually,
-            account + billing — the app itself stays local.
+            Your PILK account is ready. Open the dashboard to talk to
+            your agents, kick off tasks, and review what they've done —
+            from any browser, on any device.
           </p>
         </div>
         <div className="portal-block">
-          <div className="portal-section-head">Local dashboard</div>
-          <p className="portal-body">
-            If the daemon is running on this machine, the dashboard is at{" "}
+          <a className="portal-cta" href="https://app.pilk.ai">
+            Open dashboard →
+          </a>
+          <p className="portal-body portal-body--muted">
+            Hosted at{" "}
+            <a
+              className="portal-inline-link"
+              href="https://app.pilk.ai"
+            >
+              app.pilk.ai
+            </a>
+            . Running pilkd locally instead? The dev dashboard is still at{" "}
             <a
               className="portal-inline-link"
               href="http://127.0.0.1:1420"
               target="_blank"
               rel="noreferrer"
             >
-              http://127.0.0.1:1420
+              127.0.0.1:1420
             </a>
             .
           </p>

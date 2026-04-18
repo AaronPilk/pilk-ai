@@ -15,6 +15,10 @@ dist/
 dist-ssr/
 .vite/
 .turbo/
+# CI uses `npm ci || npm install` so committing lockfiles isn't required;
+# keep them out so local `npm install` during agent work doesn't dirty the
+# tree.
+package-lock.json
 
 # Tauri (when added)
 ui/src-tauri/target/
