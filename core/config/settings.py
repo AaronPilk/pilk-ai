@@ -149,6 +149,40 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Supabase (foundation — not used at runtime yet) ────────────
+    # All four fields are optional. When unset, PILK runs exactly as
+    # it does today (SQLite only, no remote auth). When set, later
+    # batches will use them for auth, workspace membership, and
+    # storage — without moving the local runtime off SQLite.
+    supabase_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SUPABASE_URL", "PILK_SUPABASE_URL"),
+    )
+    supabase_anon_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SUPABASE_ANON_KEY", "PILK_SUPABASE_ANON_KEY"
+        ),
+    )
+    # Server-only; never sent to the browser. Used for migrations and
+    # privileged backfills. Rotatable without touching the anon key.
+    supabase_service_role_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SUPABASE_SERVICE_ROLE_KEY", "PILK_SUPABASE_SERVICE_ROLE_KEY"
+        ),
+    )
+    # Master admin bootstrap: seed migration reads this to insert the
+    # owner row. No enforcement logic here — the seed only runs if
+    # the table is empty, so rotating the env var later doesn't clone
+    # ownership.
+    supabase_master_admin_email: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SUPABASE_MASTER_ADMIN_EMAIL", "PILK_SUPABASE_MASTER_ADMIN_EMAIL"
+        ),
+    )
+
     @property
     def db_path(self) -> Path:
         return self.home / "pilk.db"
