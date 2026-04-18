@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import CalendarCard from "../components/CalendarCard";
 import ConnectedServiceCard from "../components/ConnectedServiceCard";
 import InboxCard from "../components/InboxCard";
+import MessagesCard from "../components/MessagesCard";
 import VoiceOrb from "../components/VoiceOrb";
 import {
   fetchAgents,
@@ -266,6 +267,7 @@ export default function Home() {
           ctaLabel="Draft an Instagram post"
           manageHint="IG Business/Creator only. Requires a publicly-hosted image URL."
         />
+        <MessagesCard />
       </section>
 
       <section className="home-suggestions">

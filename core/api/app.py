@@ -23,6 +23,7 @@ from core import __version__
 from core.api.hub import Hub
 from core.api.routes.accounts import router as accounts_router
 from core.api.routes.agents import router as agents_router
+from core.api.routes.apple import router as apple_router
 from core.api.routes.approvals import router as approvals_router
 from core.api.routes.browser import router as browser_router
 from core.api.routes.coding import router as coding_http_router
@@ -47,6 +48,7 @@ from core.db import ensure_schema
 from core.governor import DailyBudget, Governor, Tier, Tiers, TierSpec
 from core.governor.providers import build_providers
 from core.identity import AccountsStore, GrantsStore
+from core.integrations.apple import check_messages_status, make_messages_tools
 from core.integrations.client_secrets import load_client
 from core.integrations.google import (
     ROLES,
@@ -241,6 +243,18 @@ async def lifespan(app: FastAPI):
     log.info(
         "meta_registered",
         linked=accounts.default("meta", "user") is not None,
+    )
+
+    # Apple Messages — local macOS integration (not OAuth). Tools
+    # always register; handlers surface a clean error when the chat.db
+    # isn't readable (Full Disk Access missing, non-macOS host, etc.).
+    for t in make_messages_tools():
+        registry.register(t)
+    apple_status = check_messages_status()
+    log.info(
+        "apple_messages_registered",
+        available=apple_status.available,
+        reason=apple_status.reason,
     )
 
     browser_sessions: BrowserSessionManager | None = None
@@ -444,6 +458,7 @@ def create_app() -> FastAPI:
     app.include_router(governor_router)
     app.include_router(integrations_router)
     app.include_router(accounts_router)
+    app.include_router(apple_router)
     app.include_router(memory_router)
     app.include_router(logs_router)
     app.include_router(coding_http_router)

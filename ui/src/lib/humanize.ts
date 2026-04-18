@@ -100,6 +100,8 @@ const TOOL_LABELS: Record<string, string> = {
   x_post_as_me: "Post on X as you",
   facebook_post_to_page: "Post on a Facebook Page",
   instagram_post_to_business: "Publish on Instagram Business",
+  messages_search_mine: "Search your iMessage history",
+  messages_read_thread: "Read an iMessage thread",
 };
 
 export function humanizeToolName(raw: string | null | undefined): string {

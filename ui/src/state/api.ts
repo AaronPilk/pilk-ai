@@ -523,6 +523,31 @@ export async function fetchCalendarGlance(
   return r.json();
 }
 
+// ── Apple Messages (local macOS reader) ─────────────────────────
+
+export interface MessagesThreadPreview {
+  chat_id: number;
+  title: string;
+  is_group: boolean;
+  last_at: string;
+  last_snippet: string;
+  last_from_me: boolean;
+}
+
+export interface MessagesGlance {
+  available: boolean;
+  threads: MessagesThreadPreview[];
+  reason?: string;
+  db_path?: string;
+  error?: string;
+}
+
+export async function fetchMessagesGlance(): Promise<MessagesGlance> {
+  const r = await fetch(`${API_URL}/integrations/apple/messages/glance`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 export async function voiceSpeak(text: string): Promise<VoiceSpeakResult> {
   const r = await fetch(`${API_URL}/voice/speak`, {
     method: "POST",
