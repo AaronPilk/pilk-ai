@@ -509,86 +509,114 @@ export default function Settings() {
           </button>
         </div>
         <p className="settings-card-body">
-          OAuth-connected services PILK can use. <strong>PILK</strong>{" "}
-          accounts are PILK acting as itself (signups, verifications,
-          reports). <strong>You</strong> accounts are PILK acting on your
-          behalf (triage, replies). Every outgoing message from a{" "}
-          <em>You</em> account requires fresh approval.
+          OAuth-connected services PILK can use. <strong>PILK identity</strong>{" "}
+          is PILK acting as itself (signups, verifications, reports).{" "}
+          <strong>Your identity</strong> is PILK acting on your behalf —
+          every outgoing message from one of your accounts requires fresh
+          approval.
         </p>
 
-        {accounts === null ? (
-          <div className="settings-note">Reading connected accounts…</div>
-        ) : accounts.length === 0 ? (
-          <div className="settings-note">
-            No accounts connected yet. Click Connect below to link a Gmail
-            account.
-          </div>
-        ) : (
-          <div className="accounts-list">
-            {accounts.map((a) => {
-              const isDefault =
-                accountDefaults[`${a.provider}:${a.role}`] === a.account_id;
-              const provider = providers.find((p) => p.name === a.provider);
-              return (
-                <AccountRow
-                  key={a.account_id}
-                  account={a}
-                  isDefault={isDefault}
-                  grantedAgents={grants[a.account_id] ?? []}
-                  canExpand={(provider?.scope_groups.length ?? 0) > 1}
-                  onRemove={async () => {
-                    await deleteConnectedAccount(a.account_id).catch(() => {});
-                    refreshAccounts();
-                  }}
-                  onSetDefault={async () => {
-                    await setDefaultConnectedAccount(a.account_id).catch(
-                      () => {},
-                    );
-                    refreshAccounts();
-                  }}
-                  onManageAccess={() => setManageAccessFor(a.account_id)}
-                  onExpand={() => {
-                    if (!provider) return;
-                    setConnectError(null);
-                    setConnectDialog({
-                      provider: a.provider,
-                      role: a.role,
-                      groups: [...provider.default_scope_groups],
-                      accountEmail: a.email ?? undefined,
-                      expandingAccountId: a.account_id,
-                    });
-                  }}
-                />
-              );
-            })}
-          </div>
-        )}
+        {(() => {
+          if (accounts === null) {
+            return (
+              <div className="settings-note">Reading connected accounts…</div>
+            );
+          }
+          const total = accounts.length;
+          const needsReauth = accounts.filter(
+            (a) => a.status !== "connected",
+          ).length;
+          const system = accounts.filter((a) => a.role === "system");
+          const user = accounts.filter((a) => a.role === "user");
+          return (
+            <>
+              <div className="accounts-summary">
+                <span className="accounts-summary-count">
+                  {total} connected
+                </span>
+                {needsReauth > 0 && (
+                  <span className="accounts-summary-warn">
+                    · {needsReauth} need re-auth
+                  </span>
+                )}
+              </div>
+              {total === 0 ? (
+                <div className="settings-note">
+                  No accounts connected yet. Pick a service below to
+                  start.
+                </div>
+              ) : (
+                <>
+                  <AccountsSection
+                    title="PILK identity"
+                    subtitle="Accounts PILK acts from as itself."
+                    emptyCopy={
+                      "No PILK-identity account linked yet. This is the " +
+                      "Gmail PILK uses to sign itself up for tools and send " +
+                      "you reports."
+                    }
+                    accounts={system}
+                    providers={providers}
+                    grants={grants}
+                    accountDefaults={accountDefaults}
+                    refresh={refreshAccounts}
+                    setConnectError={setConnectError}
+                    setConnectDialog={setConnectDialog}
+                    setManageAccessFor={setManageAccessFor}
+                  />
+                  <AccountsSection
+                    title="Your identity"
+                    subtitle="Accounts PILK acts from on your behalf."
+                    emptyCopy={
+                      "No working accounts linked yet. This is where " +
+                      "your real Gmail, Slack, LinkedIn, or X accounts " +
+                      "live."
+                    }
+                    accounts={user}
+                    providers={providers}
+                    grants={grants}
+                    accountDefaults={accountDefaults}
+                    refresh={refreshAccounts}
+                    setConnectError={setConnectError}
+                    setConnectDialog={setConnectDialog}
+                    setManageAccessFor={setManageAccessFor}
+                  />
+                </>
+              )}
+            </>
+          );
+        })()}
 
         <div className="accounts-connect">
           <div className="accounts-connect-label">Connect a new account</div>
           <div className="accounts-provider-grid">
-            {providers.flatMap((p) =>
-              p.supports_roles.map((r) => (
+            {providers.map((p) => {
+              // When a provider supports both roles, default to the most
+              // common user-facing role for that provider (user). The
+              // dialog exposes a toggle if both roles are supported.
+              const defaultRole: "system" | "user" = p.supports_roles.includes(
+                "user",
+              )
+                ? "user"
+                : "system";
+              return (
                 <button
-                  key={`${p.name}:${r}`}
+                  key={p.name}
                   type="button"
                   className="accounts-provider-chip"
                   onClick={() => {
                     setConnectError(null);
                     setConnectDialog({
                       provider: p.name,
-                      role: r,
+                      role: defaultRole,
                       groups: [...p.default_scope_groups],
                     });
                   }}
                 >
                   <span className="accounts-provider-chip-label">{p.label}</span>
-                  <span className="accounts-provider-chip-role">
-                    {r === "system" ? "PILK" : "You"}
-                  </span>
                 </button>
-              )),
-            )}
+              );
+            })}
           </div>
         </div>
 
@@ -604,19 +632,55 @@ export default function Settings() {
                 {expanding ? (
                   <>
                     Re-link <strong>{connectDialog.accountEmail}</strong> with
-                    wider scopes. Google remembers existing access, so you
-                    only approve the added scopes.
+                    wider scopes. {provider.label} remembers existing
+                    access, so you only approve the added scopes.
                   </>
                 ) : (
                   <>
-                    About to open {provider.label} sign-in for the{" "}
+                    About to open {provider.label} sign-in. This account
+                    will be used as{" "}
                     <strong>
-                      {connectDialog.role === "system" ? "PILK" : "You"}
-                    </strong>{" "}
-                    role.
+                      {connectDialog.role === "system" ? "PILK" : "you"}
+                    </strong>
+                    .
                   </>
                 )}
               </div>
+              {!expanding && provider.supports_roles.length > 1 && (
+                <div className="accounts-confirm-groups">
+                  <div className="accounts-confirm-groups-label">
+                    Who is this for
+                  </div>
+                  <div className="accounts-confirm-groups-list">
+                    {provider.supports_roles.map((r) => {
+                      const selected = connectDialog.role === r;
+                      return (
+                        <label
+                          key={r}
+                          className="accounts-confirm-group"
+                          title={
+                            r === "system"
+                              ? "PILK acting as itself (reports, signups)."
+                              : "PILK acting on your behalf."
+                          }
+                        >
+                          <input
+                            type="radio"
+                            name="connect-role"
+                            checked={selected}
+                            onChange={() =>
+                              setConnectDialog((prev) =>
+                                prev ? { ...prev, role: r } : prev,
+                              )
+                            }
+                          />
+                          <span>{r === "system" ? "PILK" : "You"}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {provider.scope_groups.length > 1 && (
                 <div className="accounts-confirm-groups">
                   <div className="accounts-confirm-groups-label">
@@ -771,6 +835,93 @@ function clamp01(x: number): number {
   if (x < 0) return 0;
   if (x > 1) return 1;
   return x;
+}
+
+function AccountsSection({
+  title,
+  subtitle,
+  emptyCopy,
+  accounts,
+  providers,
+  grants,
+  accountDefaults,
+  refresh,
+  setConnectError,
+  setConnectDialog,
+  setManageAccessFor,
+}: {
+  title: string;
+  subtitle: string;
+  emptyCopy: string;
+  accounts: ConnectedAccount[];
+  providers: ProviderInfo[];
+  grants: Record<string, string[]>;
+  accountDefaults: Record<string, string>;
+  refresh: () => void;
+  setConnectError: (v: string | null) => void;
+  setConnectDialog: (
+    v:
+      | null
+      | {
+          provider: string;
+          role: "system" | "user";
+          groups: string[];
+          accountEmail?: string;
+          expandingAccountId?: string;
+        },
+  ) => void;
+  setManageAccessFor: (v: string | null) => void;
+}) {
+  return (
+    <div className="accounts-section">
+      <div className="accounts-section-head">
+        <div className="accounts-section-title">{title}</div>
+        <div className="accounts-section-subtitle">{subtitle}</div>
+      </div>
+      {accounts.length === 0 ? (
+        <div className="accounts-section-empty">{emptyCopy}</div>
+      ) : (
+        <div className="accounts-list">
+          {accounts.map((a) => {
+            const isDefault =
+              accountDefaults[`${a.provider}:${a.role}`] === a.account_id;
+            const provider = providers.find((p) => p.name === a.provider);
+            return (
+              <AccountRow
+                key={a.account_id}
+                account={a}
+                isDefault={isDefault}
+                grantedAgents={grants[a.account_id] ?? []}
+                canExpand={(provider?.scope_groups.length ?? 0) > 1}
+                onRemove={async () => {
+                  await deleteConnectedAccount(a.account_id).catch(() => {});
+                  refresh();
+                }}
+                onSetDefault={async () => {
+                  await setDefaultConnectedAccount(a.account_id).catch(
+                    () => {},
+                  );
+                  refresh();
+                }}
+                onManageAccess={() => setManageAccessFor(a.account_id)}
+                onExpand={() => {
+                  if (!provider) return;
+                  setConnectError(null);
+                  setConnectDialog({
+                    provider: a.provider,
+                    role: a.role,
+                    groups: [...provider.default_scope_groups],
+                    accountEmail: a.email ?? undefined,
+                    expandingAccountId: a.account_id,
+                  });
+                }}
+              />
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function AccountRow({

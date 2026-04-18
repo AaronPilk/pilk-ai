@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import CalendarCard from "../components/CalendarCard";
+import ConnectedSummary from "../components/ConnectedSummary";
 import InboxCard from "../components/InboxCard";
 import VoiceOrb from "../components/VoiceOrb";
 import {
@@ -223,16 +225,8 @@ export default function Home() {
             cta="Connect your Gmail"
           />
         )}
-        <ConnectCard
-          title="Calendar"
-          body="Today's schedule, conflicts, and time you can give back will appear here once your calendar is connected."
-          cta="Connect calendar"
-        />
-        <ConnectCard
-          title="News & Intel"
-          body="News and signals filtered for what actually matters to your work will appear here once sources are connected."
-          cta="Connect sources"
-        />
+        <CalendarCard />
+        <ConnectedSummary />
       </section>
 
       <section className="home-suggestions">

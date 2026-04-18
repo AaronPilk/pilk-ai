@@ -105,6 +105,66 @@ export function humanizeToolName(raw: string | null | undefined): string {
   return TOOL_LABELS[raw] ?? humanize(raw);
 }
 
+/** Provider name → display label. */
+const PROVIDER_LABELS: Record<string, string> = {
+  google: "Google",
+  slack: "Slack",
+  linkedin: "LinkedIn",
+  x: "X",
+};
+
+export function humanizeProvider(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return PROVIDER_LABELS[raw] ?? humanize(raw);
+}
+
+/** Per-capability display name within a provider (shown on Home summary). */
+const CAPABILITY_LABELS: Record<string, string> = {
+  "google:mail": "Gmail",
+  "google:drive": "Drive",
+  "google:calendar": "Calendar",
+  "slack:messages": "Slack",
+  "linkedin:posts": "LinkedIn",
+  "x:posts": "X",
+};
+
+export function humanizeCapability(
+  provider: string,
+  group: string,
+): string {
+  return (
+    CAPABILITY_LABELS[`${provider}:${group}`] ??
+    `${humanizeProvider(provider)} · ${humanize(group)}`
+  );
+}
+
+/** Role → plain-English identity word used throughout the UI. */
+export function humanizeIdentity(
+  role: "system" | "user" | string | null | undefined,
+): string {
+  if (role === "system") return "PILK";
+  if (role === "user") return "You";
+  return "";
+}
+
+/**
+ * Tool name → the provider that backs it, if any. Used by the Agents
+ * detail pane to group a declared tool list by the accounts the agent
+ * needs access to.
+ */
+export function providerForTool(
+  name: string | null | undefined,
+): string | null {
+  if (!name) return null;
+  if (name.startsWith("gmail_") || name.startsWith("drive_") || name.startsWith("calendar_")) {
+    return "google";
+  }
+  if (name.startsWith("slack_")) return "slack";
+  if (name.startsWith("linkedin_")) return "linkedin";
+  if (name.startsWith("x_")) return "x";
+  return null;
+}
+
 /** Human phrases for agent lifecycle states — used on Home and in the Agents table. */
 const AGENT_STATE_LABELS: Record<string, string> = {
   registered: "Standing by",

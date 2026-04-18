@@ -497,6 +497,32 @@ export async function fetchInboxGlance(
   return r.json();
 }
 
+export interface CalendarGlancePreview {
+  summary: string;
+  start: string;
+  end: string;
+}
+
+export interface CalendarGlance {
+  linked: boolean;
+  email: string | null;
+  events_count: number;
+  preview: CalendarGlancePreview[];
+  role: GoogleRole;
+  scope_missing?: boolean;
+  error?: string;
+}
+
+export async function fetchCalendarGlance(
+  role: GoogleRole = "user",
+): Promise<CalendarGlance> {
+  const r = await fetch(
+    `${API_URL}/integrations/google/${encodeURIComponent(role)}/calendar/glance`,
+  );
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 export async function voiceSpeak(text: string): Promise<VoiceSpeakResult> {
   const r = await fetch(`${API_URL}/voice/speak`, {
     method: "POST",

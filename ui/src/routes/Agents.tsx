@@ -8,10 +8,13 @@ import {
   type AgentRow,
   type ConnectedAccount,
 } from "../state/api";
+import { Link } from "react-router-dom";
 import {
   humanizeAgentName,
   humanizeAgentState,
+  humanizeProvider,
   humanizeToolName,
+  providerForTool,
 } from "../lib/humanize";
 
 export default function Agents() {
@@ -175,31 +178,108 @@ export default function Agents() {
               </div>
             )}
             <div className="agent-tools">
-              <div className="agent-tools-head">Account access</div>
-              {grantsByAgent[current.name] === undefined ? (
-                <div className="agent-access-note">
-                  No explicit grants set. Inherited from before access control
-                  was introduced — manage grants in Settings → Connected
-                  accounts to lock this down.
-                </div>
-              ) : grantsByAgent[current.name].length === 0 ? (
-                <div className="agent-access-note">
-                  No accounts granted. This agent cannot use any connected
-                  account until you grant access in Settings → Connected
-                  accounts.
-                </div>
-              ) : (
-                <div className="agent-tools-list">
-                  {grantsByAgent[current.name].map((id) => {
-                    const a = accountsById[id];
-                    return (
-                      <span key={id} className="agent-tool agent-tool--account">
-                        {a?.email ?? a?.label ?? id}
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
+              <div className="agent-tools-head">What this agent can reach</div>
+              {(() => {
+                const toolsForProvider = new Map<string, string[]>();
+                for (const toolName of current.tools ?? []) {
+                  const p = providerForTool(toolName);
+                  if (!p) continue;
+                  const list = toolsForProvider.get(p) ?? [];
+                  list.push(toolName);
+                  toolsForProvider.set(p, list);
+                }
+                const grantedIds = new Set(
+                  grantsByAgent[current.name] ?? [],
+                );
+                const grantedProviders = new Set(
+                  [...grantedIds]
+                    .map((id) => accountsById[id]?.provider)
+                    .filter((p): p is string => Boolean(p)),
+                );
+                // If an agent has no provider-backed tools, fall back to
+                // a quiet empty line rather than an empty chip row.
+                if (toolsForProvider.size === 0) {
+                  return (
+                    <div className="agent-access-note">
+                      This agent doesn't use any connected-account tools.
+                      It only touches local workspace + model calls.
+                    </div>
+                  );
+                }
+                const permissive =
+                  grantsByAgent[current.name] === undefined;
+                return (
+                  <>
+                    {permissive && (
+                      <div className="agent-access-note">
+                        Permissive — this agent predates the account-grant
+                        layer. Adding any grant below will flip it to
+                        opt-in mode.
+                      </div>
+                    )}
+                    <div className="agent-reach-list">
+                      {Array.from(toolsForProvider.entries()).map(
+                        ([provider, toolNames]) => {
+                          const granted =
+                            permissive || grantedProviders.has(provider);
+                          const accountForProvider = Object.values(
+                            accountsById,
+                          ).find((a) => a.provider === provider);
+                          const accountLabel =
+                            accountForProvider?.email ??
+                            accountForProvider?.label ??
+                            null;
+                          return (
+                            <div
+                              key={provider}
+                              className={`agent-reach-row agent-reach-row--${
+                                granted ? "granted" : "blocked"
+                              }`}
+                            >
+                              <div className="agent-reach-head">
+                                <span className="agent-reach-provider">
+                                  {humanizeProvider(provider)}
+                                </span>
+                                <span
+                                  className={`agent-reach-status agent-reach-status--${
+                                    granted ? "granted" : "blocked"
+                                  }`}
+                                >
+                                  {granted ? "Granted" : "Needs access"}
+                                </span>
+                              </div>
+                              {accountLabel && granted && (
+                                <div className="agent-reach-account">
+                                  {accountLabel}
+                                </div>
+                              )}
+                              <div className="agent-reach-tools">
+                                {toolNames.map((t) => (
+                                  <span
+                                    key={t}
+                                    className="agent-reach-tool"
+                                    title={t}
+                                  >
+                                    {humanizeToolName(t)}
+                                  </span>
+                                ))}
+                              </div>
+                              {!granted && (
+                                <Link
+                                  to="/settings"
+                                  className="agent-reach-cta"
+                                >
+                                  Grant access in Settings →
+                                </Link>
+                              )}
+                            </div>
+                          );
+                        },
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
             <div className="agent-run">
               <div className="agent-tools-head">Assign a task</div>
