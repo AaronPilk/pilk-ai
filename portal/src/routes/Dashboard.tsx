@@ -2,6 +2,33 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import { usePortalUser } from "../lib/session";
 
+const APP_URL = "https://app.pilk.ai";
+
+/** Hand the current Supabase session to `app.pilk.ai`.
+ *
+ * Sessions live in localStorage, which is per-origin: a sign-in at
+ * pilk.ai isn't visible to app.pilk.ai. Without this handoff the
+ * AuthGate over there would see "no session", redirect back to
+ * pilk.ai/signin, get redirected here, and loop.
+ *
+ * The fix mirrors how Supabase's own OAuth callback works: stuff the
+ * tokens in the URL fragment. supabase-js was created with
+ * `detectSessionInUrl: true`, so when the dashboard boots it parses
+ * the hash, persists the session in its own localStorage, and clears
+ * the hash from history. Server logs never see the tokens — fragments
+ * stay client-side.
+ */
+function openDashboard(session: Session) {
+  const params = new URLSearchParams({
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+    token_type: "bearer",
+    type: "signin",
+    expires_in: String(session.expires_in ?? 3600),
+  });
+  window.location.assign(`${APP_URL}/#${params.toString()}`);
+}
+
 export default function Dashboard({ session }: { session: Session }) {
   const user = usePortalUser(session);
   const email = user?.email ?? session.user.email ?? "";
@@ -35,14 +62,21 @@ export default function Dashboard({ session }: { session: Session }) {
           </p>
         </div>
         <div className="portal-block">
-          <a className="portal-cta" href="https://app.pilk.ai">
+          <button
+            className="portal-cta"
+            onClick={() => openDashboard(session)}
+          >
             Open dashboard →
-          </a>
+          </button>
           <p className="portal-body portal-body--muted">
             Hosted at{" "}
             <a
               className="portal-inline-link"
-              href="https://app.pilk.ai"
+              href={APP_URL}
+              onClick={(e) => {
+                e.preventDefault();
+                openDashboard(session);
+              }}
             >
               app.pilk.ai
             </a>
