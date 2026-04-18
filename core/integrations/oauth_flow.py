@@ -17,6 +17,8 @@ clients (googleapiclient, slack_sdk, etc.).
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import secrets
 import time
@@ -47,6 +49,7 @@ class _PendingState:
     created_at: float
     make_default: bool
     scope_groups: list[str]
+    code_verifier: str | None = None
 
 
 class OAuthFlowManager:
@@ -91,6 +94,7 @@ class OAuthFlowManager:
         client_id, _client_secret = client
         groups = list(scope_groups) if scope_groups else list(provider.default_scope_groups)
         state = secrets.token_urlsafe(24)
+        code_verifier = _new_code_verifier() if provider.uses_pkce else None
         pending = _PendingState(
             state=state,
             provider=provider_name,
@@ -99,6 +103,7 @@ class OAuthFlowManager:
             created_at=time.time(),
             make_default=make_default,
             scope_groups=groups,
+            code_verifier=code_verifier,
         )
         with self._lock:
             self._purge_expired_locked()
@@ -114,6 +119,9 @@ class OAuthFlowManager:
             "state": state,
             **provider.extra_auth_params,
         }
+        if code_verifier is not None:
+            params["code_challenge"] = _s256_challenge(code_verifier)
+            params["code_challenge_method"] = "S256"
         auth_url = f"{provider.auth_url}?{urllib.parse.urlencode(params)}"
         log.info(
             "oauth_begin",
@@ -151,6 +159,8 @@ class OAuthFlowManager:
             client_id=client_id,
             client_secret=client_secret,
             redirect_uri=pending.redirect_uri,
+            code_verifier=pending.code_verifier,
+            mode=provider.token_exchange_mode,
         )
         # Some providers (Slack) nest user tokens under a subkey. The
         # extractor pulls out a normalized {access_token, refresh_token,
@@ -229,24 +239,34 @@ def _exchange_code(
     client_id: str,
     client_secret: str,
     redirect_uri: str,
+    code_verifier: str | None = None,
+    mode: str = "form",
 ) -> dict:
-    body = urllib.parse.urlencode(
-        {
-            "grant_type": "authorization_code",
-            "code": code,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uri": redirect_uri,
-        }
-    ).encode("utf-8")
+    form: dict[str, str] = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+    }
+    headers: dict[str, str] = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+    }
+    if mode == "basic":
+        # X / Twitter Confidential clients: creds live in the
+        # Authorization header, client_id stays in the body too.
+        raw = f"{client_id}:{client_secret}".encode()
+        headers["Authorization"] = "Basic " + base64.b64encode(raw).decode("ascii")
+    else:
+        form["client_secret"] = client_secret
+    if code_verifier is not None:
+        form["code_verifier"] = code_verifier
+    body = urllib.parse.urlencode(form).encode("utf-8")
     req = urllib.request.Request(
         token_url,
         data=body,
         method="POST",
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-        },
+        headers=headers,
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         raw = resp.read().decode("utf-8")
@@ -254,6 +274,16 @@ def _exchange_code(
         return json.loads(raw)
     except Exception as e:
         raise RuntimeError(f"token exchange returned non-JSON: {raw[:200]}") from e
+
+
+def _new_code_verifier() -> str:
+    # RFC 7636 recommends 43-128 chars from the url-safe alphabet.
+    return secrets.token_urlsafe(64)[:96]
+
+
+def _s256_challenge(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
 def _role_label(provider: OAuthProvider, role: Role, profile) -> str:

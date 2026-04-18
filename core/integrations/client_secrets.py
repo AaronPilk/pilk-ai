@@ -18,7 +18,12 @@ def load_client(provider: str, *, settings) -> tuple[str, str] | None:
         return _load_google_client(settings.google_client_secret_path)
     if provider == "slack":
         return _load_env_pair("PILK_SLACK_CLIENT_ID", "PILK_SLACK_CLIENT_SECRET")
-    # LinkedIn, X, etc. slot in here as they land.
+    if provider == "linkedin":
+        return _load_env_pair(
+            "PILK_LINKEDIN_CLIENT_ID", "PILK_LINKEDIN_CLIENT_SECRET"
+        )
+    if provider == "x":
+        return _load_env_pair("PILK_X_CLIENT_ID", "PILK_X_CLIENT_SECRET")
     return None
 
 

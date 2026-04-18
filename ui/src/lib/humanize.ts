@@ -96,6 +96,8 @@ const TOOL_LABELS: Record<string, string> = {
   calendar_read_my_today: "Read today's calendar",
   calendar_create_my_event: "Create a calendar event",
   slack_post_as_me: "Post to Slack as you",
+  linkedin_post_as_me: "Post on LinkedIn as you",
+  x_post_as_me: "Post on X as you",
 };
 
 export function humanizeToolName(raw: string | null | undefined): string {

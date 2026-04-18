@@ -78,6 +78,14 @@ class OAuthProvider:
     # expects. Slack nests user tokens under `authed_user`; Google
     # and most others just return them at the top level.
     token_extractor: Callable[[dict], dict] | None = None
+    # PKCE (RFC 7636). X / Twitter requires it; everyone else is fine
+    # without. When True the flow generates a code_verifier per auth
+    # attempt and sends a SHA-256 challenge on the auth URL.
+    uses_pkce: bool = False
+    # "form" sends client_id + client_secret in the token-exchange
+    # body (Google, Slack, LinkedIn). "basic" sends them in an HTTP
+    # Authorization: Basic header (X / Twitter Confidential clients).
+    token_exchange_mode: str = "form"
 
 
 class ProviderRegistry:

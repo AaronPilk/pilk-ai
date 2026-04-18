@@ -56,11 +56,15 @@ from core.integrations.google import (
     migrate_legacy_if_needed,
 )
 from core.integrations.legacy_migration import migrate_batch_k_google_files
+from core.integrations.linkedin import make_linkedin_tools
 from core.integrations.oauth_flow import OAuthFlowManager
 from core.integrations.provider import ProviderRegistry
 from core.integrations.providers.google import google_provider
+from core.integrations.providers.linkedin import linkedin_provider
 from core.integrations.providers.slack import slack_provider
+from core.integrations.providers.x import x_provider
 from core.integrations.slack import make_slack_tools
+from core.integrations.x import make_x_tools
 from core.ledger import Ledger
 from core.logging import configure_logging, get_logger
 from core.memory import MemoryStore
@@ -171,6 +175,8 @@ async def lifespan(app: FastAPI):
     oauth_providers = ProviderRegistry()
     oauth_providers.register(google_provider)
     oauth_providers.register(slack_provider)
+    oauth_providers.register(linkedin_provider)
+    oauth_providers.register(x_provider)
     migrated = migrate_batch_k_google_files(home, accounts)
     if migrated:
         log.info("accounts_legacy_imported", account_ids=migrated)
@@ -213,6 +219,20 @@ async def lifespan(app: FastAPI):
     for t in make_slack_tools(accounts):
         registry.register(t)
     log.info("slack_registered", linked=accounts.default("slack", "user") is not None)
+
+    # LinkedIn + X — one post tool each, user-role only. Same pattern:
+    # always register, tool handler surfaces "connect in Settings" if no
+    # account is linked. Adding a new social provider is one provider
+    # file + one tool file; the framework doesn't need to change.
+    for t in make_linkedin_tools(accounts):
+        registry.register(t)
+    log.info(
+        "linkedin_registered",
+        linked=accounts.default("linkedin", "user") is not None,
+    )
+    for t in make_x_tools(accounts):
+        registry.register(t)
+    log.info("x_registered", linked=accounts.default("x", "user") is not None)
 
     browser_sessions: BrowserSessionManager | None = None
     if settings.browserbase_api_key and settings.browserbase_project_id:

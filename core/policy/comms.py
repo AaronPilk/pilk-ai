@@ -28,6 +28,8 @@ NEVER_WHITELISTABLE: frozenset[str] = frozenset(
     {
         "gmail_send_as_me",
         "slack_post_as_me",
+        "linkedin_post_as_me",
+        "x_post_as_me",
     }
 )
 
