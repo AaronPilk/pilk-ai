@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core import __version__
+from core.api.auth import SupabaseJWTMiddleware
 from core.api.hub import Hub
 from core.api.routes.accounts import router as accounts_router
 from core.api.routes.agents import router as agents_router
@@ -446,18 +447,23 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    settings = get_settings()
     app = FastAPI(
         title="pilkd",
         version=__version__,
         lifespan=lifespan,
     )
 
+    # Middleware execution order is reverse of registration: auth must
+    # wrap *inside* CORS so preflight OPTIONS requests (which have no
+    # Authorization header) get answered by the CORS layer instead of
+    # being rejected as unauthenticated.
+    if settings.cloud:
+        app.add_middleware(SupabaseJWTMiddleware, settings=settings)
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://127.0.0.1:1420",
-            "http://localhost:1420",
-        ],
+        allow_origins=settings.allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
