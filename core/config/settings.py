@@ -23,7 +23,13 @@ class Settings(BaseSettings):
 
     home: Path = Field(default=Path.home() / "PILK")
     host: str = "127.0.0.1"
-    port: int = 7424
+    # Accept Railway's `PORT` (dynamic per deploy) and our own `PILK_PORT`.
+    # AliasChoices resolves in order: Railway's value wins when set, else
+    # the Dockerfile default (8080), else local default (7424).
+    port: int = Field(
+        default=7424,
+        validation_alias=AliasChoices("PORT", "PILK_PORT"),
+    )
     log_level: str = "INFO"
 
     plan_max_turns: int = 12

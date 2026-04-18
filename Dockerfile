@@ -37,7 +37,8 @@ ENV PILK_HOME=/data \
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8080/health || exit 1
-
-CMD ["python", "-m", "uvicorn", "core.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Railway injects $PORT at runtime (dynamic per deploy). Settings.port
+# treats $PORT as higher priority than $PILK_PORT, so `python -m
+# core.main` binds to whichever platform sets the env. Shell form is
+# required for the default-expansion syntax.
+CMD python -m core.main
