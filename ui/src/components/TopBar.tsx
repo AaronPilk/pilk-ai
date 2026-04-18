@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
+  cancelAllRunning,
   fetchCostSummary,
   pilk,
   useConnection,
@@ -13,19 +14,31 @@ export default function TopBar() {
   const { pathname } = useLocation();
   const [running, setRunning] = useState(0);
   const [summary, setSummary] = useState<CostSummary | null>(null);
+  const [stopping, setStopping] = useState(false);
 
   useEffect(() => {
     fetchCostSummary().then(setSummary).catch(() => {});
     return pilk.onMessage((m) => {
       if (m.type === "plan.created") setRunning((n) => n + 1);
-      else if (m.type === "plan.completed") setRunning((n) => Math.max(0, n - 1));
-      else if (m.type === "cost.updated") {
+      else if (m.type === "plan.completed") {
+        setRunning((n) => Math.max(0, n - 1));
+        setStopping(false);
+      } else if (m.type === "cost.updated") {
         fetchCostSummary().then(setSummary).catch(() => {});
       } else if (m.type === "system.hello" && m.running_plan_id) {
         setRunning(1);
       }
     });
   }, []);
+
+  const handleStopAll = async () => {
+    setStopping(true);
+    try {
+      await cancelAllRunning();
+    } catch {
+      setStopping(false);
+    }
+  };
 
   const connClass =
     status === "open"
@@ -47,6 +60,16 @@ export default function TopBar() {
         </span>
       </div>
       <div className="topbar-right">
+        {running > 0 && (
+          <button
+            className="topbar-stopall"
+            onClick={() => void handleStopAll()}
+            disabled={stopping}
+            title="Emergency stop — cancels the running plan and closes every live browser session."
+          >
+            {stopping ? "Stopping…" : "Stop all"}
+          </button>
+        )}
         <div className="topbar-stats">
           <div className="topbar-stat">
             <span className="topbar-stat-label">Running</span>

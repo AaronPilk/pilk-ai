@@ -73,7 +73,7 @@ from core.ledger import Ledger
 from core.logging import configure_logging, get_logger
 from core.memory import MemoryStore
 from core.orchestrator import Orchestrator, PlanStore
-from core.policy import ApprovalManager, Gate, TrustStore
+from core.policy import AgentPolicyStore, ApprovalManager, Gate, TrustStore
 from core.registry import AgentRegistry
 from core.sandbox import SandboxManager
 from core.tools import Gateway, ToolRegistry
@@ -120,6 +120,8 @@ async def lifespan(app: FastAPI):
         await hub.broadcast(event_type, payload)
 
     trust = TrustStore()
+    agent_policies = AgentPolicyStore(settings.db_path)
+    await agent_policies.hydrate()
     approvals = ApprovalManager(
         db_path=settings.db_path, trust_store=trust, broadcast=broadcast
     )
@@ -279,7 +281,7 @@ async def lifespan(app: FastAPI):
 
     gateway = Gateway(
         registry,
-        Gate(trust=trust),
+        Gate(trust=trust, agent_profile_lookup=agent_policies.get),
         approvals=approvals,
         on_step_status=on_step_status,
         accounts=accounts,
@@ -404,6 +406,7 @@ async def lifespan(app: FastAPI):
     app.state.sandboxes = sandboxes
     app.state.trust = trust
     app.state.approvals = approvals
+    app.state.agent_policies = agent_policies
     app.state.orchestrator = orchestrator
     app.state.anthropic = client
     app.state.voice_state = voice_state

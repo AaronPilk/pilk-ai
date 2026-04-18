@@ -94,6 +94,14 @@ class OrchestratorBusyError(RuntimeError):
     """Raised when a second plan is submitted while one is running."""
 
 
+class PlanCancelledError(RuntimeError):
+    """Raised inside the drive loop when the user has cancelled the plan."""
+
+    def __init__(self, reason: str = "cancelled by user") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 @dataclass
 class RunContext:
     goal: str
@@ -137,10 +145,40 @@ class Orchestrator:
         self.providers = providers or {}
         self._lock = asyncio.Lock()
         self._running_plan_id: str | None = None
+        self._cancel_event: asyncio.Event | None = None
+        self._cancel_reason: str = ""
 
     @property
     def running_plan_id(self) -> str | None:
         return self._running_plan_id
+
+    async def cancel_plan(self, plan_id: str, *, reason: str = "") -> bool:
+        """Request cancellation of `plan_id` if it is the running plan.
+
+        Returns True if a cancel was armed, False if the plan isn't
+        currently running. Cancellation is cooperative: the driver checks
+        the event between turns and any pending approval tied to the plan
+        is force-resolved so the gateway unblocks quickly.
+        """
+        if self._running_plan_id != plan_id or self._cancel_event is None:
+            return False
+        self._cancel_reason = reason or "cancelled by user"
+        self._cancel_event.set()
+        # Unblock any approval this plan is waiting on so the turn
+        # finishes quickly instead of sitting on a future that no one
+        # will resolve.
+        if self.gateway.approvals is not None:
+            try:
+                await self.gateway.approvals.cancel_plan(
+                    plan_id, reason=self._cancel_reason
+                )
+            except Exception:  # pragma: no cover — best-effort cleanup
+                log.warning("approval_cancel_failed", plan_id=plan_id)
+        await self.broadcast(
+            "plan.cancelling",
+            {"plan_id": plan_id, "reason": self._cancel_reason},
+        )
+        return True
 
     @staticmethod
     def _supports_thinking(model: str) -> bool:
@@ -268,9 +306,14 @@ class Orchestrator:
                 rc.goal, metadata={**rc.metadata, "agent_name": rc.agent_name}
             )
             self._running_plan_id = plan["id"]
+            self._cancel_event = asyncio.Event()
+            self._cancel_reason = ""
             await self.broadcast("plan.created", plan)
             try:
                 await self._drive(plan["id"], rc)
+            except PlanCancelledError as e:
+                log.info("plan_cancelled", plan_id=plan["id"], reason=e.reason)
+                await self._cancel(plan["id"], e.reason)
             except anthropic.APIStatusError as e:
                 log.exception("anthropic_error", plan_id=plan["id"])
                 await self._fail(plan["id"], f"Anthropic API error: {e.message}")
@@ -279,6 +322,8 @@ class Orchestrator:
                 await self._fail(plan["id"], f"{type(e).__name__}: {e}")
             finally:
                 self._running_plan_id = None
+                self._cancel_event = None
+                self._cancel_reason = ""
 
     async def _fail(self, plan_id: str, reason: str) -> None:
         final = await self.plans.finish_plan(plan_id, status="failed")
@@ -286,6 +331,14 @@ class Orchestrator:
             "chat.assistant", {"text": f"Task failed: {reason}", "plan_id": plan_id}
         )
         await self.broadcast("plan.completed", {**final, "error": reason})
+
+    async def _cancel(self, plan_id: str, reason: str) -> None:
+        final = await self.plans.finish_plan(plan_id, status="cancelled")
+        await self.broadcast(
+            "chat.assistant",
+            {"text": f"Task cancelled: {reason}", "plan_id": plan_id},
+        )
+        await self.broadcast("plan.completed", {**final, "cancelled_reason": reason})
 
     async def _drive(self, plan_id: str, rc: RunContext) -> None:
         tools = self.registry.anthropic_schemas(allow=rc.allowed_tools)
@@ -350,6 +403,8 @@ class Orchestrator:
         tier_meta["effective_provider"] = effective_provider
 
         for turn in range(self.max_turns):
+            if self._cancel_event is not None and self._cancel_event.is_set():
+                raise PlanCancelledError(self._cancel_reason or "cancelled by user")
             step = await self.plans.add_step(
                 plan_id=plan_id,
                 kind="llm",
@@ -436,6 +491,10 @@ class Orchestrator:
             ]
             tool_results_payload: list[dict] = []
             for tu in tool_uses:
+                if self._cancel_event is not None and self._cancel_event.is_set():
+                    raise PlanCancelledError(
+                        self._cancel_reason or "cancelled by user"
+                    )
                 tu_input = dict(tu.input) if tu.input else {}
                 step = await self.plans.add_step(
                     plan_id=plan_id,

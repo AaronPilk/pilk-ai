@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS approvals (
     risk_class      TEXT NOT NULL,
     tool            TEXT NOT NULL,
     args_json       TEXT,
-    status          TEXT NOT NULL,             -- pending|approved|rejected|expired
+    status          TEXT NOT NULL,             -- pending|approved|rejected|expired|cancelled
     created_at      TEXT NOT NULL,
     decided_at      TEXT,
     decision_reason TEXT
@@ -131,6 +131,16 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS governor_prefs (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- Agent autonomy profiles. Per-agent "trust level" that the policy
+-- gate reads at call-time to widen the auto-allow set. The valid
+-- profile strings are enforced by the gate (observer | assistant |
+-- operator | autonomous); unknown values fall back to assistant.
+CREATE TABLE IF NOT EXISTS agent_policies (
+    agent_name TEXT PRIMARY KEY,
+    profile    TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 

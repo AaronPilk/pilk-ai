@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  AUTONOMY_PROFILES,
   fetchAgents,
   fetchConnectedAccounts,
   fetchGrants,
   pilk,
   runAgent,
+  setAgentPolicy,
   type AgentRow,
+  type AutonomyProfile,
   type ConnectedAccount,
 } from "../state/api";
 import { Link } from "react-router-dom";
@@ -153,6 +156,18 @@ export default function Agents() {
             {current.description && (
               <div className="agent-desc">{current.description}</div>
             )}
+            <AutonomyControl
+              agent={current}
+              onChange={(profile) => {
+                setAgents((prev) =>
+                  prev.map((a) =>
+                    a.name === current.name
+                      ? { ...a, autonomy_profile: profile }
+                      : a,
+                  ),
+                );
+              }}
+            />
             {current.tools && current.tools.length > 0 && (
               <div className="agent-tools">
                 <div className="agent-tools-head">Tools</div>
@@ -312,4 +327,64 @@ export default function Agents() {
 
 function capitalize(s: string): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+const PROFILE_BLURB: Record<AutonomyProfile, string> = {
+  observer:
+    "Read-only. Every outbound or stateful action needs an approval.",
+  assistant:
+    "Default. Reads, local writes, shell, and browser are auto-allowed; outbound comms and posts still ask.",
+  operator:
+    "Trusted for outbound web actions (API writes) without prompting. Messaging and finance still approve.",
+  autonomous:
+    "Trusted for outbound comms too (email, posts). Finance and irreversible actions still approve every time.",
+};
+
+function AutonomyControl({
+  agent,
+  onChange,
+}: {
+  agent: AgentRow;
+  onChange: (profile: AutonomyProfile) => void;
+}) {
+  const current: AutonomyProfile = agent.autonomy_profile ?? "assistant";
+  const [saving, setSaving] = useState<AutonomyProfile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="agent-tools agent-autonomy">
+      <div className="agent-tools-head">Autonomy profile</div>
+      <div className="agent-autonomy-hint">
+        Approvals ask about outcomes, not every click. Raise the profile
+        to let this agent work with fewer interruptions.
+      </div>
+      <div className="agent-autonomy-row">
+        {AUTONOMY_PROFILES.map((p) => (
+          <button
+            key={p}
+            className={`agent-autonomy-chip ${
+              current === p ? "agent-autonomy-chip--active" : ""
+            }`}
+            disabled={saving !== null}
+            onClick={async () => {
+              if (current === p) return;
+              setSaving(p);
+              setError(null);
+              try {
+                await setAgentPolicy(agent.name, p);
+                onChange(p);
+              } catch (e: any) {
+                setError(e?.message ?? String(e));
+              } finally {
+                setSaving(null);
+              }
+            }}
+          >
+            {saving === p ? `${capitalize(p)}…` : capitalize(p)}
+          </button>
+        ))}
+      </div>
+      <div className="agent-autonomy-blurb">{PROFILE_BLURB[current]}</div>
+      {error && <div className="agent-flash">Error: {error}</div>}
+    </div>
+  );
 }

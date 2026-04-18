@@ -242,6 +242,33 @@ class ApprovalManager:
         log.info("approval_rejected", id=approval_id, tool=req.tool_name)
         return decision
 
+    async def cancel_plan(self, plan_id: str, *, reason: str = "") -> list[str]:
+        """Force-resolve every pending approval tied to `plan_id`.
+
+        Used when the user cancels a running plan; the orchestrator is
+        blocked on these futures and won't make progress otherwise. Each
+        pending request is resolved with decision='cancelled' so the
+        gateway treats it as a refusal and the plan unwinds.
+        """
+        async with self._lock:
+            ids = [
+                rid for rid, r in self._pending.items() if r.plan_id == plan_id
+            ]
+            reqs = [self._pending.pop(rid) for rid in ids]
+        cancelled: list[str] = []
+        for req in reqs:
+            await self._mark_resolved(req.id, "cancelled", reason)
+            decision = ApprovalDecision(decision="cancelled", reason=reason)
+            if not req.future.done():
+                req.future.set_result(decision)
+            await self.broadcast(
+                "approval.resolved",
+                {"id": req.id, "decision": "cancelled", "reason": reason},
+            )
+            log.info("approval_cancelled", id=req.id, tool=req.tool_name)
+            cancelled.append(req.id)
+        return cancelled
+
     async def approve_batch(self, *, reason: str = "") -> list[str]:
         """Approve every currently pending request whose tool is whitelistable.
 
