@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+.vite/
+.turbo/
+
+# Tauri (when added)
+ui/src-tauri/target/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Local runtime (should never be committed)
+/PILK/
+pilk.db
+pilk.db-*
+
+# Logs
+*.log
+logs/

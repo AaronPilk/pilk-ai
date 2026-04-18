@@ -1,0 +1,30 @@
+# Copy this folder to agents/{your_agent_name}/ and edit the fields below.
+# Folder name must match `name`. Agent names must match ^[a-z][a-z0-9_]{1,63}$.
+name: _template
+version: 0.1.0
+description: |
+  One-paragraph description. The orchestrator shows this in the Agents tab
+  and uses it when deciding whether to route a user request to this agent.
+
+# Frozen per-agent system prompt. Rendered verbatim — no interpolation.
+system_prompt: |
+  You are an agent. Replace this with the persona and rules for your agent.
+  Keep it short and specific. List the tools you will use and the shape of
+  your outputs so the planner stays focused.
+
+# Tools the agent is permitted to call. Names must match the tool registry.
+tools:
+  - fs_read
+  - fs_write
+  - shell_exec
+
+sandbox:
+  type: process                   # process | browser (browser lands later)
+  profile: _template              # stable id — persists the sandbox across runs
+
+policy:
+  budget:
+    per_run_usd: 1.00
+    daily_usd: 5.00
+
+memory_namespace: _template       # reserved for batch 6
