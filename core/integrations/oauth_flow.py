@@ -46,6 +46,7 @@ class _PendingState:
     redirect_uri: str
     created_at: float
     make_default: bool
+    scope_groups: list[str]
 
 
 class OAuthFlowManager:
@@ -73,6 +74,7 @@ class OAuthFlowManager:
         provider_name: str,
         role: Role,
         make_default: bool = False,
+        scope_groups: list[str] | None = None,
     ) -> dict:
         provider = self._providers.get(provider_name)
         if provider is None:
@@ -87,6 +89,7 @@ class OAuthFlowManager:
                 f"no OAuth client configured for provider {provider_name}"
             )
         client_id, _client_secret = client
+        groups = list(scope_groups) if scope_groups else list(provider.default_scope_groups)
         state = secrets.token_urlsafe(24)
         pending = _PendingState(
             state=state,
@@ -95,6 +98,7 @@ class OAuthFlowManager:
             redirect_uri=self._callback_url,
             created_at=time.time(),
             make_default=make_default,
+            scope_groups=groups,
         )
         with self._lock:
             self._purge_expired_locked()
@@ -104,7 +108,7 @@ class OAuthFlowManager:
             "client_id": client_id,
             "redirect_uri": self._callback_url,
             "response_type": "code",
-            "scope": " ".join(provider.scopes_for_role(role)),
+            "scope": " ".join(provider.scopes_for_role(role, groups)),
             "state": state,
             **provider.extra_auth_params,
         }
@@ -113,9 +117,15 @@ class OAuthFlowManager:
             "oauth_begin",
             provider=provider_name,
             role=role,
+            scope_groups=groups,
             state=state[:8] + "…",
         )
-        return {"auth_url": auth_url, "state": state, "redirect_uri": self._callback_url}
+        return {
+            "auth_url": auth_url,
+            "state": state,
+            "redirect_uri": self._callback_url,
+            "scope_groups": groups,
+        }
 
     # ── complete ──────────────────────────────────────────────────
 
@@ -154,7 +164,7 @@ class OAuthFlowManager:
             "refresh_token": refresh_token,
             "client_id": client_id,
             "client_secret": client_secret,
-            "scopes": granted_scopes or provider.scopes_for_role(pending.role),
+            "scopes": granted_scopes or provider.scopes_for_role(pending.role, pending.scope_groups),
             "token_uri": provider.token_url,
         }
         profile = provider.profile_fetcher(tokens_for_profile)
@@ -165,7 +175,7 @@ class OAuthFlowManager:
             refresh_token=refresh_token,
             client_id=client_id,
             client_secret=client_secret,
-            scopes=granted_scopes or provider.scopes_for_role(pending.role),
+            scopes=granted_scopes or provider.scopes_for_role(pending.role, pending.scope_groups),
             token_uri=provider.token_url,
         )
         account = self._accounts.upsert(

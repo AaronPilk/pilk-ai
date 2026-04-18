@@ -327,11 +327,18 @@ export interface ProviderScope {
   risk: string;
 }
 
+export interface ProviderScopeGroup {
+  name: string;
+  label: string;
+}
+
 export interface ProviderInfo {
   name: string;
   label: string;
   supports_roles: Array<"system" | "user">;
   scopes: ProviderScope[];
+  scope_groups: ProviderScopeGroup[];
+  default_scope_groups: string[];
 }
 
 export interface ConnectedAccount {
@@ -366,7 +373,13 @@ export async function startOAuthConnection(body: {
   provider: string;
   role: "system" | "user";
   make_default?: boolean;
-}): Promise<{ auth_url: string; state: string; redirect_uri: string }> {
+  scope_groups?: string[];
+}): Promise<{
+  auth_url: string;
+  state: string;
+  redirect_uri: string;
+  scope_groups?: string[];
+}> {
   const r = await fetch(`${API_URL}/integrations/accounts/oauth/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

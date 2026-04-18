@@ -32,7 +32,7 @@ def _fake_provider() -> OAuthProvider:
                 user_voice=True,
             ),
         },
-        scopes_for_role=lambda role: ["https://mail/send"],
+        scopes_for_role=lambda role, groups=None: ["https://mail/send"],
         profile_fetcher=lambda tokens: OAuthProfile(
             email="demo@example.com", username=None
         ),

@@ -38,6 +38,13 @@ class OAuthStartBody(BaseModel):
         default=False,
         description="If true, set this account as the default for (provider, role) on success.",
     )
+    scope_groups: list[str] | None = Field(
+        default=None,
+        description=(
+            "Which named scope groups to request (e.g. ['mail', 'drive']). "
+            "If omitted, the provider's default group set is used."
+        ),
+    )
 
 
 def _store(request: Request) -> AccountsStore:
@@ -95,6 +102,11 @@ async def list_providers(request: Request) -> dict:
                     }
                     for s in p.scope_catalog.values()
                 ],
+                "scope_groups": [
+                    {"name": name, "label": label}
+                    for name, label in p.scope_groups.items()
+                ],
+                "default_scope_groups": list(p.default_scope_groups),
             }
         )
     return {"providers": out}
@@ -229,6 +241,7 @@ async def oauth_start(body: OAuthStartBody, request: Request) -> dict:
             provider_name=body.provider,
             role=body.role,  # type: ignore[arg-type]
             make_default=body.make_default,
+            scope_groups=body.scope_groups,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

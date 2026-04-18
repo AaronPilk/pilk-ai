@@ -2606,6 +2606,40 @@ body {
   justify-content: flex-end;
   gap: 8px;
 }
+.accounts-confirm-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.accounts-confirm-groups-label {
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 700;
+}
+.accounts-confirm-groups-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.accounts-confirm-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.accounts-confirm-group:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--surface-active);
+  color: var(--accent-strong);
+}
 
 .connected-account-grants {
   display: flex;

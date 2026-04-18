@@ -50,6 +50,8 @@ from core.identity import AccountsStore, GrantsStore
 from core.integrations.client_secrets import load_client
 from core.integrations.google import (
     ROLES,
+    make_calendar_tools,
+    make_drive_tools,
     make_gmail_tools,
     migrate_legacy_if_needed,
 )
@@ -193,6 +195,14 @@ async def lifespan(app: FastAPI):
             role=role,
             linked_email=linked.email if linked else None,
         )
+    # Drive + Calendar are user-role only. Registered unconditionally so
+    # the tool list stays stable; each tool surfaces an "Expand access"
+    # hint if the matching scope group isn't enabled on the account.
+    for t in make_drive_tools(accounts):
+        registry.register(t)
+    for t in make_calendar_tools(accounts):
+        registry.register(t)
+    log.info("google_drive_calendar_registered")
 
     browser_sessions: BrowserSessionManager | None = None
     if settings.browserbase_api_key and settings.browserbase_project_id:

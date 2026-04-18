@@ -91,6 +91,10 @@ const TOOL_LABELS: Record<string, string> = {
   gmail_search_my_inbox: "Search your inbox",
   gmail_read_me: "Read an email in your inbox",
   gmail_thread_read_me: "Read a thread in your inbox",
+  drive_search_my_files: "Search your Drive",
+  drive_read_my_file: "Read a Drive file",
+  calendar_read_my_today: "Read today's calendar",
+  calendar_create_my_event: "Create a calendar event",
 };
 
 export function humanizeToolName(raw: string | null | undefined): string {

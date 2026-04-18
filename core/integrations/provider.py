@@ -54,8 +54,16 @@ class OAuthProvider:
     auth_url: str                        # "https://accounts.google.com/o/oauth2/v2/auth"
     token_url: str                       # "https://oauth2.googleapis.com/token"
     scope_catalog: dict[str, ScopeSpec]  # keyed by ScopeSpec.name
-    scopes_for_role: Callable[[Role], list[str]]  # returns scope URIs
+    # role + optional scope-group list → list of scope URIs. Groups
+    # let a user opt into wider access (e.g. "mail" + "drive") without
+    # forcing every account to request every scope.
+    scopes_for_role: Callable[[Role, list[str] | None], list[str]]
     profile_fetcher: Callable[[dict], OAuthProfile]  # tokens dict → profile
+    # Named bundles of scopes the UI exposes as toggleable checkboxes.
+    # Keys are group names; values are short human labels.
+    scope_groups: dict[str, str] = field(default_factory=dict)
+    # Groups requested when the UI doesn't pass any explicitly.
+    default_scope_groups: tuple[str, ...] = ("mail",)
     supports_roles: tuple[Role, ...] = ("system", "user")
     extra_auth_params: dict = field(default_factory=lambda: {"access_type": "offline", "prompt": "consent"})
 

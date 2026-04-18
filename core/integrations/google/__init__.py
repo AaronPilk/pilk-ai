@@ -10,6 +10,8 @@ from core.integrations.google.accounts import (
 from core.integrations.google.accounts import (
     legacy_path as google_legacy_path,
 )
+from core.integrations.google.calendar import make_calendar_tools
+from core.integrations.google.drive import make_drive_tools
 from core.integrations.google.gmail import make_gmail_tools
 from core.integrations.google.oauth import (
     GoogleCredentials,
@@ -30,6 +32,8 @@ __all__ = [
     "google_legacy_path",
     "google_status",
     "load_credentials",
+    "make_calendar_tools",
+    "make_drive_tools",
     "make_gmail_tools",
     "migrate_legacy_if_needed",
 ]

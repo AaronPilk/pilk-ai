@@ -85,9 +85,16 @@ export default function Settings() {
     {},
   );
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [connectOpen, setConnectOpen] = useState<
-    null | { provider: string; role: "system" | "user" }
-  >(null);
+  interface ConnectDialog {
+    provider: string;
+    role: "system" | "user";
+    groups: string[];
+    accountEmail?: string;
+    // When set, the user is *expanding* an existing account's scopes
+    // rather than linking a new one. Copy changes accordingly.
+    expandingAccountId?: string;
+  }
+  const [connectDialog, setConnectDialog] = useState<ConnectDialog | null>(null);
   const [connectBusy, setConnectBusy] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [grants, setGrants] = useState<Record<string, string[]>>({});
@@ -521,12 +528,14 @@ export default function Settings() {
             {accounts.map((a) => {
               const isDefault =
                 accountDefaults[`${a.provider}:${a.role}`] === a.account_id;
+              const provider = providers.find((p) => p.name === a.provider);
               return (
                 <AccountRow
                   key={a.account_id}
                   account={a}
                   isDefault={isDefault}
                   grantedAgents={grants[a.account_id] ?? []}
+                  canExpand={(provider?.scope_groups.length ?? 0) > 1}
                   onRemove={async () => {
                     await deleteConnectedAccount(a.account_id).catch(() => {});
                     refreshAccounts();
@@ -538,6 +547,17 @@ export default function Settings() {
                     refreshAccounts();
                   }}
                   onManageAccess={() => setManageAccessFor(a.account_id)}
+                  onExpand={() => {
+                    if (!provider) return;
+                    setConnectError(null);
+                    setConnectDialog({
+                      provider: a.provider,
+                      role: a.role,
+                      groups: [...provider.default_scope_groups],
+                      accountEmail: a.email ?? undefined,
+                      expandingAccountId: a.account_id,
+                    });
+                  }}
                 />
               );
             })}
@@ -555,7 +575,11 @@ export default function Settings() {
                   className="accounts-provider-chip"
                   onClick={() => {
                     setConnectError(null);
-                    setConnectOpen({ provider: p.name, role: r });
+                    setConnectDialog({
+                      provider: p.name,
+                      role: r,
+                      groups: [...p.default_scope_groups],
+                    });
                   }}
                 >
                   <span className="accounts-provider-chip-label">{p.label}</span>
@@ -568,51 +592,107 @@ export default function Settings() {
           </div>
         </div>
 
-        {connectOpen && (
-          <div className="accounts-confirm">
-            <div className="accounts-confirm-text">
-              About to open Google sign-in for the{" "}
-              <strong>{connectOpen.role === "system" ? "PILK" : "You"}</strong>{" "}
-              role.
+        {connectDialog && (() => {
+          const provider = providers.find(
+            (p) => p.name === connectDialog.provider,
+          );
+          if (!provider) return null;
+          const expanding = connectDialog.expandingAccountId != null;
+          return (
+            <div className="accounts-confirm">
+              <div className="accounts-confirm-text">
+                {expanding ? (
+                  <>
+                    Re-link <strong>{connectDialog.accountEmail}</strong> with
+                    wider scopes. Google remembers existing access, so you
+                    only approve the added scopes.
+                  </>
+                ) : (
+                  <>
+                    About to open {provider.label} sign-in for the{" "}
+                    <strong>
+                      {connectDialog.role === "system" ? "PILK" : "You"}
+                    </strong>{" "}
+                    role.
+                  </>
+                )}
+              </div>
+              {provider.scope_groups.length > 1 && (
+                <div className="accounts-confirm-groups">
+                  <div className="accounts-confirm-groups-label">
+                    Request access to
+                  </div>
+                  <div className="accounts-confirm-groups-list">
+                    {provider.scope_groups.map((g) => {
+                      const checked = connectDialog.groups.includes(g.name);
+                      return (
+                        <label key={g.name} className="accounts-confirm-group">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              setConnectDialog((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      groups: e.target.checked
+                                        ? Array.from(
+                                            new Set([...prev.groups, g.name]),
+                                          )
+                                        : prev.groups.filter(
+                                            (x) => x !== g.name,
+                                          ),
+                                    }
+                                  : prev,
+                              );
+                            }}
+                          />
+                          <span>{g.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              <div className="accounts-confirm-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setConnectDialog(null)}
+                  disabled={connectBusy}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  disabled={connectBusy || connectDialog.groups.length === 0}
+                  onClick={async () => {
+                    setConnectBusy(true);
+                    setConnectError(null);
+                    try {
+                      const r = await startOAuthConnection({
+                        provider: connectDialog.provider,
+                        role: connectDialog.role,
+                        scope_groups: connectDialog.groups,
+                      });
+                      window.open(r.auth_url, "_blank", "noopener,noreferrer");
+                      setConnectDialog(null);
+                    } catch (e) {
+                      setConnectError(
+                        e instanceof Error ? e.message : String(e),
+                      );
+                    } finally {
+                      setConnectBusy(false);
+                    }
+                  }}
+                >
+                  {connectBusy ? "Opening…" : "Open sign-in"}
+                </button>
+              </div>
             </div>
-            <div className="accounts-confirm-actions">
-              <button
-                type="button"
-                className="btn"
-                onClick={() => setConnectOpen(null)}
-                disabled={connectBusy}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn--primary"
-                disabled={connectBusy}
-                onClick={async () => {
-                  if (!connectOpen) return;
-                  setConnectBusy(true);
-                  setConnectError(null);
-                  try {
-                    const r = await startOAuthConnection({
-                      provider: connectOpen.provider,
-                      role: connectOpen.role,
-                    });
-                    window.open(r.auth_url, "_blank", "noopener,noreferrer");
-                    setConnectOpen(null);
-                  } catch (e) {
-                    setConnectError(
-                      e instanceof Error ? e.message : String(e),
-                    );
-                  } finally {
-                    setConnectBusy(false);
-                  }
-                }}
-              >
-                {connectBusy ? "Opening…" : "Open sign-in"}
-              </button>
-            </div>
-          </div>
-        )}
+          );
+        })()}
         {connectError && (
           <div className="settings-note settings-note--warn">{connectError}</div>
         )}
@@ -697,16 +777,20 @@ function AccountRow({
   account,
   isDefault,
   grantedAgents,
+  canExpand,
   onRemove,
   onSetDefault,
   onManageAccess,
+  onExpand,
 }: {
   account: ConnectedAccount;
   isDefault: boolean;
   grantedAgents: string[];
+  canExpand: boolean;
   onRemove: () => Promise<void> | void;
   onSetDefault: () => Promise<void> | void;
   onManageAccess: () => void;
+  onExpand: () => void;
 }) {
   const roleWord = account.role === "system" ? "PILK" : "You";
   const statusLabel =
@@ -778,6 +862,11 @@ function AccountRow({
         {!isDefault && (
           <button type="button" className="btn" onClick={() => onSetDefault()}>
             Set as default
+          </button>
+        )}
+        {canExpand && (
+          <button type="button" className="btn" onClick={onExpand}>
+            Expand access
           </button>
         )}
         <button
