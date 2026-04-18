@@ -24,6 +24,8 @@ def load_client(provider: str, *, settings) -> tuple[str, str] | None:
         )
     if provider == "x":
         return _load_env_pair("PILK_X_CLIENT_ID", "PILK_X_CLIENT_SECRET")
+    if provider == "meta":
+        return _load_env_pair("PILK_META_CLIENT_ID", "PILK_META_CLIENT_SECRET")
     return None
 
 

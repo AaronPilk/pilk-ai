@@ -98,6 +98,8 @@ const TOOL_LABELS: Record<string, string> = {
   slack_post_as_me: "Post to Slack as you",
   linkedin_post_as_me: "Post on LinkedIn as you",
   x_post_as_me: "Post on X as you",
+  facebook_post_to_page: "Post on a Facebook Page",
+  instagram_post_to_business: "Publish on Instagram Business",
 };
 
 export function humanizeToolName(raw: string | null | undefined): string {
@@ -111,6 +113,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   slack: "Slack",
   linkedin: "LinkedIn",
   x: "X",
+  meta: "Meta",
+  apple: "Apple Messages",
 };
 
 export function humanizeProvider(raw: string | null | undefined): string {
@@ -162,6 +166,10 @@ export function providerForTool(
   if (name.startsWith("slack_")) return "slack";
   if (name.startsWith("linkedin_")) return "linkedin";
   if (name.startsWith("x_")) return "x";
+  if (name.startsWith("facebook_") || name.startsWith("instagram_")) {
+    return "meta";
+  }
+  if (name.startsWith("messages_")) return "apple";
   return null;
 }
 

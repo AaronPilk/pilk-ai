@@ -57,10 +57,12 @@ from core.integrations.google import (
 )
 from core.integrations.legacy_migration import migrate_batch_k_google_files
 from core.integrations.linkedin import make_linkedin_tools
+from core.integrations.meta import make_meta_tools
 from core.integrations.oauth_flow import OAuthFlowManager
 from core.integrations.provider import ProviderRegistry
 from core.integrations.providers.google import google_provider
 from core.integrations.providers.linkedin import linkedin_provider
+from core.integrations.providers.meta import meta_provider
 from core.integrations.providers.slack import slack_provider
 from core.integrations.providers.x import x_provider
 from core.integrations.slack import make_slack_tools
@@ -177,6 +179,7 @@ async def lifespan(app: FastAPI):
     oauth_providers.register(slack_provider)
     oauth_providers.register(linkedin_provider)
     oauth_providers.register(x_provider)
+    oauth_providers.register(meta_provider)
     migrated = migrate_batch_k_google_files(home, accounts)
     if migrated:
         log.info("accounts_legacy_imported", account_ids=migrated)
@@ -233,6 +236,12 @@ async def lifespan(app: FastAPI):
     for t in make_x_tools(accounts):
         registry.register(t)
     log.info("x_registered", linked=accounts.default("x", "user") is not None)
+    for t in make_meta_tools(accounts):
+        registry.register(t)
+    log.info(
+        "meta_registered",
+        linked=accounts.default("meta", "user") is not None,
+    )
 
     browser_sessions: BrowserSessionManager | None = None
     if settings.browserbase_api_key and settings.browserbase_project_id:

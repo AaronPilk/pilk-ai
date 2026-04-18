@@ -250,6 +250,22 @@ export default function Home() {
           ctaLabel="Draft a tweet"
           manageHint="Posts always require approval."
         />
+        <ConnectedServiceCard
+          provider="meta"
+          title="Facebook Page"
+          notConnectedBody="Publish posts on a Facebook Page you manage. Personal-profile posting was removed by Meta in 2018, so this only works with Pages."
+          chatPrompt="Draft a Facebook Page post for me — propose the text, then ask me to approve before publishing."
+          ctaLabel="Draft a Page post"
+          manageHint="Pages only. Personal FB walls aren't supported by Meta's API."
+        />
+        <ConnectedServiceCard
+          provider="meta"
+          title="Instagram Business"
+          notConnectedBody="Publish on an Instagram Business or Creator account linked to a Facebook Page. Personal IG accounts aren't supported by Meta's API."
+          chatPrompt="Draft an Instagram Business post for me — propose the caption and ask for an image URL, then ask me to approve before publishing."
+          ctaLabel="Draft an Instagram post"
+          manageHint="IG Business/Creator only. Requires a publicly-hosted image URL."
+        />
       </section>
 
       <section className="home-suggestions">

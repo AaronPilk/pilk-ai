@@ -30,6 +30,8 @@ NEVER_WHITELISTABLE: frozenset[str] = frozenset(
         "slack_post_as_me",
         "linkedin_post_as_me",
         "x_post_as_me",
+        "facebook_post_to_page",
+        "instagram_post_to_business",
     }
 )
 

@@ -20,13 +20,23 @@ export default function ConnectedServiceCard({
   chatPrompt,
   ctaLabel,
   manageHint,
+  readyWhen,
+  notReadyBody,
 }: {
-  provider: "slack" | "linkedin" | "x";
+  provider: string;
   title: string;
   notConnectedBody: string;
   chatPrompt: string;
   ctaLabel: string;
   manageHint?: string;
+  /**
+   * Optional predicate for services where "connected" isn't enough
+   * (Meta, where the tile is "ready" only if the user manages a Page
+   * or has a linked IG Business account). When false, the tile shows
+   * `notReadyBody` alongside the identity line instead of the CTA.
+   */
+  readyWhen?: (account: ConnectedAccount) => boolean;
+  notReadyBody?: string;
 }) {
   const [account, setAccount] = useState<ConnectedAccount | null | undefined>(
     undefined,
@@ -80,15 +90,28 @@ export default function ConnectedServiceCard({
           <div className="home-service-identity">
             {account.email ?? account.username ?? account.label}
           </div>
-          {manageHint && (
-            <div className="home-service-hint">{manageHint}</div>
+          {readyWhen && !readyWhen(account) ? (
+            <>
+              <div className="home-connect-body">
+                {notReadyBody ?? "Additional setup is needed on the provider."}
+              </div>
+              <Link to="/settings" className="home-connect-cta-link">
+                Manage access in Settings →
+              </Link>
+            </>
+          ) : (
+            <>
+              {manageHint && (
+                <div className="home-service-hint">{manageHint}</div>
+              )}
+              <Link
+                to={`/chat?prompt=${encodeURIComponent(chatPrompt)}`}
+                className="home-inbox-cta"
+              >
+                {ctaLabel} →
+              </Link>
+            </>
           )}
-          <Link
-            to={`/chat?prompt=${encodeURIComponent(chatPrompt)}`}
-            className="home-inbox-cta"
-          >
-            {ctaLabel} →
-          </Link>
         </>
       )}
     </div>
