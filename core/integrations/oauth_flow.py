@@ -108,7 +108,9 @@ class OAuthFlowManager:
             "client_id": client_id,
             "redirect_uri": self._callback_url,
             "response_type": "code",
-            "scope": " ".join(provider.scopes_for_role(role, groups)),
+            provider.scope_param_name: " ".join(
+                provider.scopes_for_role(role, groups)
+            ),
             "state": state,
             **provider.extra_auth_params,
         }
@@ -143,22 +145,36 @@ class OAuthFlowManager:
             raise RuntimeError(f"no OAuth client for {pending.provider}")
         client_id, client_secret = client
 
-        token_response = _exchange_code(
+        raw_token_response = _exchange_code(
             token_url=provider.token_url,
             code=code,
             client_id=client_id,
             client_secret=client_secret,
             redirect_uri=pending.redirect_uri,
         )
-        refresh_token = token_response.get("refresh_token")
-        if not refresh_token:
+        # Some providers (Slack) nest user tokens under a subkey. The
+        # extractor pulls out a normalized {access_token, refresh_token,
+        # scope} shape; defaults pass the body through unchanged.
+        token_response = (
+            provider.token_extractor(raw_token_response)
+            if provider.token_extractor
+            else raw_token_response
+        )
+        refresh_token = token_response.get("refresh_token") or ""
+        if provider.requires_refresh_token and not refresh_token:
             raise RuntimeError(
                 "provider did not return a refresh_token — remove access at "
                 "the provider's permission settings and re-link so consent "
                 "is prompted again"
             )
         granted_scopes_raw = token_response.get("scope") or ""
-        granted_scopes = [s for s in granted_scopes_raw.split() if s]
+        if isinstance(granted_scopes_raw, list):
+            granted_scopes = [str(s) for s in granted_scopes_raw if s]
+        else:
+            # Google separates scopes with spaces, Slack with commas.
+            granted_scopes = [
+                s for s in granted_scopes_raw.replace(",", " ").split() if s
+            ]
         tokens_for_profile = {
             "access_token": token_response.get("access_token"),
             "refresh_token": refresh_token,

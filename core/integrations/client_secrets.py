@@ -16,8 +16,17 @@ def load_client(provider: str, *, settings) -> tuple[str, str] | None:
     """Return (client_id, client_secret) for `provider`, or None."""
     if provider == "google":
         return _load_google_client(settings.google_client_secret_path)
-    # Slack, LinkedIn, etc. slot in here as they land. Each reads its
-    # own env vars or config file and returns a pair.
+    if provider == "slack":
+        return _load_env_pair("PILK_SLACK_CLIENT_ID", "PILK_SLACK_CLIENT_SECRET")
+    # LinkedIn, X, etc. slot in here as they land.
+    return None
+
+
+def _load_env_pair(id_var: str, secret_var: str) -> tuple[str, str] | None:
+    cid = os.getenv(id_var)
+    csec = os.getenv(secret_var)
+    if cid and csec:
+        return (cid, csec)
     return None
 
 

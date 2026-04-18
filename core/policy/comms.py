@@ -23,8 +23,13 @@ from dataclasses import dataclass
 
 # Tools that always require fresh per-call approval and cannot be
 # covered by a trust rule. Adding new user-identity outbound tools
-# (Twitter, LinkedIn, SMS, etc.) belongs here.
-NEVER_WHITELISTABLE: frozenset[str] = frozenset({"gmail_send_as_me"})
+# (LinkedIn, X, SMS, etc.) belongs here.
+NEVER_WHITELISTABLE: frozenset[str] = frozenset(
+    {
+        "gmail_send_as_me",
+        "slack_post_as_me",
+    }
+)
 
 
 @dataclass(frozen=True)

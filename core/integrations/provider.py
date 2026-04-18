@@ -66,6 +66,18 @@ class OAuthProvider:
     default_scope_groups: tuple[str, ...] = ("mail",)
     supports_roles: tuple[Role, ...] = ("system", "user")
     extra_auth_params: dict = field(default_factory=lambda: {"access_type": "offline", "prompt": "consent"})
+    # Google and most providers require a refresh_token for long-lived
+    # background access. Slack doesn't — its access tokens are long-
+    # lived by default. Providers that don't need one set this False.
+    requires_refresh_token: bool = True
+    # Google uses `scope=`; Slack user-mode uses `user_scope=`. Most
+    # providers keep the default.
+    scope_param_name: str = "scope"
+    # Optional hook to normalize the raw token-exchange response into
+    # the {access_token, refresh_token, scope, ...} shape the flow
+    # expects. Slack nests user tokens under `authed_user`; Google
+    # and most others just return them at the top level.
+    token_extractor: Callable[[dict], dict] | None = None
 
 
 class ProviderRegistry:
