@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import CalendarCard from "../components/CalendarCard";
-import ConnectedSummary from "../components/ConnectedSummary";
+import ConnectedServiceCard from "../components/ConnectedServiceCard";
 import InboxCard from "../components/InboxCard";
 import VoiceOrb from "../components/VoiceOrb";
 import {
@@ -226,7 +226,30 @@ export default function Home() {
           />
         )}
         <CalendarCard />
-        <ConnectedSummary />
+        <ConnectedServiceCard
+          provider="slack"
+          title="Slack"
+          notConnectedBody="Send messages to channels and DMs as you. Every post still runs through your approval."
+          chatPrompt="Draft a Slack message for me — tell me first which channel to send it to and the text, then ask me to approve before posting."
+          ctaLabel="Draft a Slack message"
+          manageHint="Posts always require approval."
+        />
+        <ConnectedServiceCard
+          provider="linkedin"
+          title="LinkedIn"
+          notConnectedBody="Publish posts on your LinkedIn profile as you. Every post still runs through your approval."
+          chatPrompt="Draft a LinkedIn post for me — propose the text and visibility, then ask me to approve before publishing."
+          ctaLabel="Draft a LinkedIn post"
+          manageHint="Posts always require approval."
+        />
+        <ConnectedServiceCard
+          provider="x"
+          title="X"
+          notConnectedBody="Post tweets from your X account. 280 characters max; every post still runs through your approval."
+          chatPrompt="Draft a tweet for me — propose the text (280 chars max), then ask me to approve before posting."
+          ctaLabel="Draft a tweet"
+          manageHint="Posts always require approval."
+        />
       </section>
 
       <section className="home-suggestions">

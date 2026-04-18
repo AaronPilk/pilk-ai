@@ -2832,37 +2832,33 @@ body {
   color: var(--accent-strong);
 }
 
-/* Home — ConnectedSummary card chip groups. */
-.home-connected-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.home-connected-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.home-connected-group-label {
+/* Home — per-service connected tile (Slack / LinkedIn / X). */
+.home-service-status {
   font-size: 10.5px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--text-faint);
-  font-weight: 700;
-}
-.home-connected-chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.home-connected-chip {
-  font-size: 12px;
-  padding: 4px 10px;
+  padding: 3px 10px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--surface);
-  color: var(--text);
+  font-weight: 700;
+}
+.home-service-status--ok {
+  color: var(--ok);
+  border-color: rgba(101, 209, 155, 0.45);
+  background: rgba(101, 209, 155, 0.06);
+}
+.home-service-identity {
+  font-size: 15px;
   font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.005em;
+  word-break: break-all;
+}
+.home-service-hint {
+  font-size: 12px;
+  color: var(--text-faint);
 }
 
 /* Settings — connected accounts summary + sectioning. */
