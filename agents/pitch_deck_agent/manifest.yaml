@@ -84,3 +84,13 @@ policy:
     daily_usd: 5.00
 
 memory_namespace: pitch_deck_agent
+
+integrations:
+  - name: google
+    kind: oauth
+    role: system
+    label: Google (Slides creation, system-owned account)
+    scopes:
+      - https://www.googleapis.com/auth/presentations
+      - https://www.googleapis.com/auth/drive.file
+      - https://www.googleapis.com/auth/gmail.send
