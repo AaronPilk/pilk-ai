@@ -36,13 +36,27 @@ from core.trading.xauusd import (
     evaluate_setup,
     position_size_for_risk,
 )
+from core.trading.xauusd.broker import (
+    BrokerError,
+    HugoswayAdapter,
+    OrderRequest,
+    get_broker,
+    set_broker,
+)
 from core.trading.xauusd.feed import FeedError, TwelveDataFeed
 from core.trading.xauusd.journal import (
+    journal_broker_event,
     journal_order_attempt,
+    journal_position_event,
     journal_risk,
     journal_safety_interrupt,
     journal_state,
     journal_verdict,
+)
+from core.trading.xauusd.session import (
+    clear_attached_session,
+    get_attached_session,
+    set_attached_session,
 )
 from core.trading.xauusd.settings_store import (
     EXECUTION_MODES,
@@ -476,13 +490,183 @@ xauusd_get_candles_tool = Tool(
 )
 
 
+# ── Broker-bound tools (take_over, release, account_info, etc.) ──
+#
+# A single ``BrokerAdapter`` lives as a process-wide singleton, installed
+# by ``xauusd_take_over`` and cleared by ``xauusd_release``. Every tool
+# that hits the broker goes through ``get_broker()`` and refuses if
+# nothing's attached — the operator *must* explicitly hand a session to
+# the agent before any trading tool runs. That's the runtime permission
+# model.
+
+
+def _require_broker() -> tuple[Any, ToolOutcome | None]:
+    """Return ``(adapter, None)`` when an adapter is installed; or
+    ``(None, error_outcome)`` when one isn't.
+
+    Keeps the boilerplate out of every handler without raising, which
+    would bypass the ToolOutcome reporting path."""
+    adapter = get_broker()
+    if adapter is None:
+        return None, ToolOutcome(
+            content=(
+                "no attached broker session. Call xauusd_take_over on "
+                "a Browserbase session that's already logged into "
+                "Hugosway and viewing the XAUUSD chart."
+            ),
+            is_error=True,
+        )
+    return adapter, None
+
+
+async def _account_info(args: dict, ctx: ToolContext) -> ToolOutcome:
+    adapter, err = _require_broker()
+    if err is not None:
+        return err
+    try:
+        info = await adapter.get_account_info()
+    except BrokerError as e:
+        journal_safety_interrupt(
+            reason=f"account_info failed: {e}",
+            payload={"kind": e.kind},
+            plan_id=ctx.plan_id,
+        )
+        return ToolOutcome(content=f"broker error: {e}", is_error=True)
+    return ToolOutcome(
+        content=(
+            f"balance=${info.balance_usd:.2f} equity=${info.equity_usd:.2f} "
+            f"pnl=${info.pnl_usd:.2f} free=${info.free_margin_usd:.2f} "
+            f"leverage=1:{info.leverage}"
+        ),
+        data={
+            "balance_usd": info.balance_usd,
+            "equity_usd": info.equity_usd,
+            "pnl_usd": info.pnl_usd,
+            "margin_usd": info.margin_usd,
+            "free_margin_usd": info.free_margin_usd,
+            "margin_level": info.margin_level,
+            "leverage": info.leverage,
+            "connected": info.connected,
+            "account_id": info.account_id,
+        },
+    )
+
+
+xauusd_account_info_tool = Tool(
+    name="xauusd_account_info",
+    description=(
+        "Read account balance / equity / P&L / margin / leverage from "
+        "the attached Hugosway session. Refuses if no session is "
+        "attached — call xauusd_take_over first."
+    ),
+    input_schema={"type": "object", "properties": {}},
+    risk=RiskClass.READ,
+    handler=_account_info,
+)
+
+
+async def _open_positions(args: dict, ctx: ToolContext) -> ToolOutcome:
+    adapter, err = _require_broker()
+    if err is not None:
+        return err
+    try:
+        positions = await adapter.get_open_positions()
+    except BrokerError as e:
+        return ToolOutcome(content=f"broker error: {e}", is_error=True)
+    return ToolOutcome(
+        content=f"{len(positions)} open position(s)",
+        data={
+            "count": len(positions),
+            "positions": [
+                {
+                    "position_id": p.position_id,
+                    "side": p.side,
+                    "lots": p.lots,
+                    "entry_price": p.entry_price,
+                    "stop_price": p.stop_price,
+                    "take_profit_price": p.take_profit_price,
+                    "current_pnl_usd": p.current_pnl_usd,
+                }
+                for p in positions
+            ],
+        },
+    )
+
+
+xauusd_open_positions_tool = Tool(
+    name="xauusd_open_positions",
+    description=(
+        "List every open XAU/USD position on the attached Hugosway "
+        "session. Read-only. Returns empty list when nothing's open."
+    ),
+    input_schema={"type": "object", "properties": {}},
+    risk=RiskClass.READ,
+    handler=_open_positions,
+)
+
+
+# ── xauusd_release ───────────────────────────────────────────────
+
+
+async def _release(args: dict, ctx: ToolContext) -> ToolOutcome:
+    prev = clear_attached_session()
+    set_broker(None)
+    reason = str(args.get("reason") or "").strip() or "operator released"
+    journal_broker_event(
+        action="release",
+        session_id=prev.session_id if prev else None,
+        account_type=prev.account_type if prev else None,
+        details={"reason": reason},
+        plan_id=ctx.plan_id,
+    )
+    # Releasing always flips the state machine back to OFF (unless it's
+    # already DISABLED, which is sticky). That's the safe default: next
+    # take-over starts a fresh session clock.
+    if _STATE.current is not AgentState.DISABLED:
+        t = _STATE.force_disable(f"release: {reason}")
+        journal_state(t, plan_id=ctx.plan_id)
+    return ToolOutcome(
+        content=(
+            f"released session {prev.session_id if prev else 'none'}. "
+            "State machine forced to DISABLED."
+        ),
+        data={
+            "released_session": prev.session_id if prev else None,
+            "state": _STATE.current.value,
+        },
+    )
+
+
+xauusd_release_tool = Tool(
+    name="xauusd_release",
+    description=(
+        "Detach the agent from the current Hugosway session. Forces "
+        "the state machine to DISABLED. Always allowed. Run this at "
+        "end-of-day or before closing the Browserbase window."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "reason": {"type": "string"},
+        },
+    },
+    risk=RiskClass.FINANCIAL,
+    handler=_release,
+)
+
+
+# ── xauusd_place_order ───────────────────────────────────────────
+
+
 async def _place_order(args: dict, ctx: ToolContext) -> ToolOutcome:
+    # Layer 1 — hard-coded Python constant.
     if not LIVE_TRADING_ENABLED:
         msg = (
             "xauusd_place_order refused: LIVE_TRADING_ENABLED is False. "
-            "Flipping to live requires a code-level change in "
-            "core/trading/xauusd/config.py AND a Hugosway Browserbase "
-            "adapter (PR C). No runtime toggle."
+            "Flipping to live requires a reviewed code edit in "
+            "core/trading/xauusd/config.py after the Hugosway adapter "
+            "has been smoke-tested against a demo account. No runtime "
+            "toggle overrides this."
         )
         journal_safety_interrupt(reason=msg, plan_id=ctx.plan_id)
         journal_order_attempt(
@@ -497,21 +681,125 @@ async def _place_order(args: dict, ctx: ToolContext) -> ToolOutcome:
             plan_id=ctx.plan_id,
         )
         return ToolOutcome(content=msg, is_error=True)
-    # Unreachable in this PR. Exists so the shape is obvious to the
-    # follow-up broker adapter author.
+
+    # Layer 2 — an adapter must be installed (take_over was called).
+    adapter, err = _require_broker()
+    if err is not None:
+        journal_order_attempt(
+            side=str(args.get("side", "?")),
+            lots=float(args.get("lots") or 0.0),
+            entry=float(args.get("entry_price") or 0.0),
+            stop=float(args.get("stop_price") or 0.0),
+            take_profit=args.get("take_profit_price"),
+            mode="LIVE",
+            placed=False,
+            broker_message="no broker attached",
+            plan_id=ctx.plan_id,
+        )
+        return err
+
+    # Layer 3 — required args; state check would be next but is the
+    # agent's responsibility (the tool can't know what structure say).
+    try:
+        side = str(args["side"]).upper()
+        if side not in {"LONG", "SHORT"}:
+            return ToolOutcome(
+                content=f"invalid side '{side}'", is_error=True
+            )
+        lots = float(args["lots"])
+        stop_price = float(args["stop_price"])
+        entry_price = float(args.get("entry_price") or 0.0)
+        order_type = str(args.get("order_type") or "MARKET").upper()
+        take_profit = args.get("take_profit_price")
+    except (KeyError, ValueError) as e:
+        return ToolOutcome(
+            content=f"xauusd_place_order missing/invalid args: {e}",
+            is_error=True,
+        )
+
+    request = OrderRequest(
+        side=side,
+        lots=lots,
+        order_type=order_type,
+        limit_price=entry_price if order_type == "LIMIT" else None,
+        stop_price=entry_price if order_type == "STOP" else None,
+        stop_loss_price=stop_price,
+        take_profit_price=float(take_profit) if take_profit else None,
+    )
+
+    # Layer 4 — execution_mode gate. In ``approve`` mode the tool layer
+    # itself doesn't queue an approval — the outer Gateway does that via
+    # RiskClass.FINANCIAL. In ``autonomous`` mode we still log the
+    # decision but let the broker call proceed. Either way the risk
+    # engine's caps apply (checked before this tool is called).
+    mode = get_execution_mode()
+    attached = get_attached_session()
+    journal_broker_event(
+        action="place_order_attempt",
+        session_id=attached.session_id if attached else None,
+        account_type=attached.account_type if attached else None,
+        details={"execution_mode": mode, "side": side, "lots": lots},
+        plan_id=ctx.plan_id,
+    )
+
+    try:
+        result = await adapter.place_order(request)
+    except BrokerError as e:
+        journal_order_attempt(
+            side=side,
+            lots=lots,
+            entry=entry_price,
+            stop=stop_price,
+            take_profit=take_profit,
+            mode="LIVE",
+            placed=False,
+            broker_message=f"{e.kind}: {e}",
+            plan_id=ctx.plan_id,
+        )
+        return ToolOutcome(content=f"broker refused: {e}", is_error=True)
+
+    journal_order_attempt(
+        side=side,
+        lots=lots,
+        entry=entry_price,
+        stop=stop_price,
+        take_profit=take_profit,
+        mode="LIVE",
+        placed=result.placed,
+        broker_message=result.message,
+        plan_id=ctx.plan_id,
+    )
+    if result.placed and result.order_id:
+        journal_position_event(
+            action="opened",
+            position_id=result.order_id,
+            side=side,
+            lots=lots,
+            entry=entry_price,
+            plan_id=ctx.plan_id,
+        )
     return ToolOutcome(
-        content="xauusd_place_order: broker adapter missing (PR C)",
-        is_error=True,
+        content=(
+            f"{'placed' if result.placed else 'NOT placed'}: "
+            f"{side} {lots} lots — {result.message}"
+        ),
+        data={
+            "placed": result.placed,
+            "order_id": result.order_id,
+            "message": result.message,
+            "execution_mode": mode,
+        },
     )
 
 
 xauusd_place_order_tool = Tool(
     name="xauusd_place_order",
     description=(
-        "Place an XAU/USD order on the sandboxed Hugosway session. "
-        "DISABLED in this PR — returns a refusal until the Hugosway "
-        "Browserbase adapter lands in PR C. Risk-class FINANCIAL so the "
-        "approval gate pauses every call even after the adapter ships."
+        "Place an XAU/USD order on the attached Hugosway session. "
+        "Four-layer gate: LIVE_TRADING_ENABLED constant, attached "
+        "broker adapter, arg validation, execution_mode. Risk-class "
+        "FINANCIAL — the Gateway queues for operator approval when "
+        "execution_mode is 'approve'."
     ),
     input_schema={
         "type": "object",
@@ -519,53 +807,81 @@ xauusd_place_order_tool = Tool(
             "symbol": {"type": "string"},
             "side": {"type": "string", "enum": ["LONG", "SHORT"]},
             "lots": {"type": "number", "exclusiveMinimum": 0},
+            "order_type": {
+                "type": "string",
+                "enum": ["MARKET", "LIMIT", "STOP"],
+            },
             "entry_price": {"type": "number", "exclusiveMinimum": 0},
             "stop_price": {"type": "number", "exclusiveMinimum": 0},
-            "take_profit_price": {"type": "number", "exclusiveMinimum": 0},
+            "take_profit_price": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+            },
         },
-        "required": ["side", "lots", "entry_price", "stop_price"],
+        "required": ["side", "lots", "stop_price"],
     },
     risk=RiskClass.FINANCIAL,
     handler=_place_order,
 )
 
 
+# ── xauusd_flatten_all ───────────────────────────────────────────
+
+
 async def _flatten_all(args: dict, ctx: ToolContext) -> ToolOutcome:
-    journal_safety_interrupt(
-        reason=str(args.get("reason") or "manual flatten"),
-        plan_id=ctx.plan_id,
-    )
+    reason = str(args.get("reason") or "manual flatten")
+    journal_safety_interrupt(reason=reason, plan_id=ctx.plan_id)
+
     # Always force-disable the state machine on a flatten call — even
-    # if LIVE_TRADING_ENABLED is False, a flatten request means "stop
-    # now." Better to over-apply this than under-apply.
-    t = _STATE.force_disable(
-        f"flatten_all: {args.get('reason') or 'manual'}"
-    )
+    # if LIVE_TRADING_ENABLED is False or no adapter is installed. Over-
+    # applying DISABLED is always safer than under-applying.
+    t = _STATE.force_disable(f"flatten_all: {reason}")
     journal_state(t, plan_id=ctx.plan_id)
-    if not LIVE_TRADING_ENABLED:
-        return ToolOutcome(
-            content=(
-                "xauusd_flatten_all: paper-mode — no live positions to close. "
-                "State machine forced to DISABLED."
-            ),
-            data={"state": _STATE.current.value},
-        )
+
+    adapter = get_broker()
+    results: list[dict[str, Any]] = []
+    if adapter is not None and LIVE_TRADING_ENABLED:
+        try:
+            raw = await adapter.close_all_positions()
+            for r in raw:
+                results.append(
+                    {
+                        "order_id": r.order_id,
+                        "placed": r.placed,
+                        "message": r.message,
+                    }
+                )
+                journal_position_event(
+                    action="closed",
+                    position_id=r.order_id,
+                    plan_id=ctx.plan_id,
+                )
+        except BrokerError as e:
+            return ToolOutcome(
+                content=(
+                    f"flatten_all: state DISABLED but broker "
+                    f"close_all raised {e.kind}: {e}"
+                ),
+                is_error=True,
+                data={"state": _STATE.current.value, "results": results},
+            )
+
     return ToolOutcome(
         content=(
-            "xauusd_flatten_all: broker adapter missing (PR C). "
-            "State machine forced to DISABLED."
+            f"flatten_all ok — {len(results)} position(s) closed, "
+            "state machine DISABLED."
         ),
-        is_error=True,
-        data={"state": _STATE.current.value},
+        data={"state": _STATE.current.value, "results": results},
     )
 
 
 xauusd_flatten_all_tool = Tool(
     name="xauusd_flatten_all",
     description=(
-        "Emergency stop: close every open XAU/USD position and force "
-        "the agent to DISABLED. Safe to call in paper mode (no-op on "
-        "broker; still disables). Always allowed regardless of state."
+        "Emergency stop: close every open XAU/USD position on the "
+        "attached session and force the agent to DISABLED. Always "
+        "allowed; no-op on broker if no adapter is attached. Safe to "
+        "call from any state."
     ),
     input_schema={
         "type": "object",
@@ -581,29 +897,184 @@ xauusd_flatten_all_tool = Tool(
 )
 
 
+# ── xauusd_take_over (factory — needs BrowserSessionManager) ─────
+
+
+def make_xauusd_take_over_tool(browser_sessions: Any) -> Tool:
+    """Factory that binds the take-over tool to the live
+    ``BrowserSessionManager``.
+
+    The resulting tool expects a Browserbase session id the operator has
+    already driven into a logged-in Hugosway trading page. The tool:
+
+        1. Pulls the Playwright ``Page`` off the session manager.
+        2. Instantiates a ``HugoswayAdapter`` around it.
+        3. Calls ``verify_session`` to prove the page is on Hugosway,
+           XAUUSD is selected, and account info is scrape-able.
+        4. Installs the adapter as the process-wide broker and records
+           the attached session.
+
+    Risk-class FINANCIAL so the Gateway always queues an operator
+    approval — the human is explicitly handing keys to the agent here
+    regardless of execution_mode.
+    """
+
+    async def _take_over(args: dict, ctx: ToolContext) -> ToolOutcome:
+        session_id = str(args.get("browser_session_id") or "").strip()
+        if not session_id:
+            return ToolOutcome(
+                content="xauusd_take_over requires 'browser_session_id'.",
+                is_error=True,
+            )
+        confirm = str(args.get("confirm") or "").strip().upper()
+        if confirm != "TAKEOVER":
+            return ToolOutcome(
+                content=(
+                    "xauusd_take_over requires confirm='TAKEOVER' "
+                    "(verbatim). Refusing."
+                ),
+                is_error=True,
+            )
+        account_type = str(args.get("account_type") or "demo").lower()
+        if account_type not in {"demo", "live"}:
+            return ToolOutcome(
+                content=(
+                    f"account_type must be 'demo' or 'live', got '{account_type}'."
+                ),
+                is_error=True,
+            )
+
+        # Pull the Page the operator already drove into Hugosway.
+        pages = getattr(browser_sessions, "_pages", {})
+        page = pages.get(session_id)
+        if page is None:
+            return ToolOutcome(
+                content=(
+                    f"no Browserbase page for session '{session_id}'. "
+                    "Open one and navigate to Hugosway first."
+                ),
+                is_error=True,
+            )
+
+        adapter = HugoswayAdapter(
+            page=page,
+            session_id=session_id,
+            account_type=account_type,
+        )
+        try:
+            info = await adapter.verify_session()
+        except BrokerError as e:
+            journal_safety_interrupt(
+                reason=f"take_over verify failed: {e}",
+                payload={"kind": e.kind, "session_id": session_id},
+                plan_id=ctx.plan_id,
+            )
+            return ToolOutcome(
+                content=f"verify failed: {e}", is_error=True
+            )
+
+        set_broker(adapter)
+        attached = set_attached_session(
+            session_id=session_id,
+            account_type=account_type,
+            account_id=info.account_id,
+            note=str(args.get("note") or "").strip() or None,
+        )
+        journal_broker_event(
+            action="take_over",
+            session_id=session_id,
+            account_type=account_type,
+            details={
+                "balance_usd": info.balance_usd,
+                "leverage": info.leverage,
+                "connected": info.connected,
+            },
+            plan_id=ctx.plan_id,
+        )
+        return ToolOutcome(
+            content=(
+                f"attached to {account_type} account "
+                f"(balance=${info.balance_usd:.2f}, "
+                f"leverage=1:{info.leverage})"
+            ),
+            data={
+                "session_id": attached.session_id,
+                "account_type": attached.account_type,
+                "attached_at": attached.attached_at,
+                "balance_usd": info.balance_usd,
+                "leverage": info.leverage,
+            },
+        )
+
+    return Tool(
+        name="xauusd_take_over",
+        description=(
+            "Hand a Browserbase session (already logged into Hugosway "
+            "and viewing XAUUSD) to the agent. Verifies the page is on "
+            "Hugosway and scrapes account info as a smoke test before "
+            "installing the adapter. Requires confirm='TAKEOVER' "
+            "verbatim and account_type='demo'|'live'. Risk-class "
+            "FINANCIAL so the operator must approve every attach."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "browser_session_id": {"type": "string"},
+                "account_type": {
+                    "type": "string",
+                    "enum": ["demo", "live"],
+                },
+                "confirm": {
+                    "type": "string",
+                    "description": "Must be 'TAKEOVER' exactly.",
+                },
+                "note": {"type": "string"},
+            },
+            "required": ["browser_session_id", "account_type", "confirm"],
+        },
+        risk=RiskClass.FINANCIAL,
+        handler=_take_over,
+    )
+
+
 XAUUSD_TOOLS: list[Tool] = [
     xauusd_evaluate_tool,
     xauusd_calc_size_tool,
     xauusd_state_tool,
     xauusd_get_candles_tool,
+    xauusd_account_info_tool,
+    xauusd_open_positions_tool,
+    xauusd_release_tool,
     xauusd_place_order_tool,
     xauusd_flatten_all_tool,
 ]
+"""Broker-independent XAUUSD tools.
+
+``xauusd_take_over`` is session-bound and lives in
+``make_xauusd_take_over_tool(browser_sessions)`` — registered by the
+FastAPI lifespan, not here."""
 
 
 def reset_state_for_tests() -> None:
-    """Test helper — pytest only. Zeros the process-local state."""
+    """Test helper — pytest only. Zeros every process-local singleton
+    the tools share: state machine, attached broker, attached session."""
     global _STATE
     _STATE = StateMachine()
+    set_broker(None)
+    clear_attached_session()
 
 
 __all__ = [
     "XAUUSD_TOOLS",
+    "make_xauusd_take_over_tool",
     "reset_state_for_tests",
+    "xauusd_account_info_tool",
     "xauusd_calc_size_tool",
     "xauusd_evaluate_tool",
     "xauusd_flatten_all_tool",
     "xauusd_get_candles_tool",
+    "xauusd_open_positions_tool",
     "xauusd_place_order_tool",
+    "xauusd_release_tool",
     "xauusd_state_tool",
 ]

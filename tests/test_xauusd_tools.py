@@ -290,6 +290,250 @@ async def test_get_candles_without_key_errors(monkeypatch) -> None:
     assert "Twelve Data" in out.content
 
 
+# ── Broker-bound tools: account_info / open_positions / release ──
+
+
+@pytest.mark.asyncio
+async def test_account_info_refuses_without_broker() -> None:
+    from core.tools.builtin.xauusd import xauusd_account_info_tool
+    from core.trading.xauusd.broker import set_broker
+
+    set_broker(None)
+    out = await xauusd_account_info_tool.handler({}, ToolContext())
+    assert out.is_error
+    assert "xauusd_take_over" in out.content
+
+
+@pytest.mark.asyncio
+async def test_account_info_reads_from_mock_broker() -> None:
+    from core.tools.builtin.xauusd import xauusd_account_info_tool
+    from core.trading.xauusd.broker import MockBroker, set_broker
+
+    set_broker(MockBroker(balance_usd=500.0, leverage=300))
+    try:
+        out = await xauusd_account_info_tool.handler({}, ToolContext())
+        assert not out.is_error
+        assert out.data["balance_usd"] == 500.0
+        assert out.data["leverage"] == 300
+    finally:
+        set_broker(None)
+
+
+@pytest.mark.asyncio
+async def test_open_positions_empty_via_mock() -> None:
+    from core.tools.builtin.xauusd import xauusd_open_positions_tool
+    from core.trading.xauusd.broker import MockBroker, set_broker
+
+    set_broker(MockBroker())
+    try:
+        out = await xauusd_open_positions_tool.handler({}, ToolContext())
+        assert not out.is_error
+        assert out.data["count"] == 0
+    finally:
+        set_broker(None)
+
+
+@pytest.mark.asyncio
+async def test_release_clears_adapter_and_forces_disable() -> None:
+    from core.tools.builtin.xauusd import xauusd_release_tool
+    from core.trading.xauusd.broker import MockBroker, set_broker
+    from core.trading.xauusd.session import (
+        get_attached_session,
+        set_attached_session,
+    )
+
+    set_broker(MockBroker())
+    set_attached_session(session_id="bb-1", account_type="demo")
+    try:
+        out = await xauusd_release_tool.handler(
+            {"reason": "eod"}, ToolContext()
+        )
+        assert not out.is_error
+        assert out.data["state"] == "DISABLED"
+        assert get_attached_session() is None
+    finally:
+        from core.trading.xauusd.session import clear_attached_session
+
+        clear_attached_session()
+        set_broker(None)
+
+
+# ── place_order: four gates ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_place_order_refuses_without_broker_even_if_gate_flipped(
+    monkeypatch,
+) -> None:
+    # Temporarily pretend LIVE_TRADING_ENABLED were True. We do NOT edit
+    # the module constant globally — only the imported name in the tool
+    # module — to test the "no broker attached" path cleanly.
+    from core.tools.builtin import xauusd as xtools
+    from core.trading.xauusd.broker import set_broker
+
+    monkeypatch.setattr(xtools, "LIVE_TRADING_ENABLED", True, raising=True)
+    set_broker(None)
+    out = await xtools.xauusd_place_order_tool.handler(
+        {"side": "LONG", "lots": 0.05, "stop_price": 2395.0},
+        ToolContext(),
+    )
+    assert out.is_error
+    assert "take_over" in out.content
+
+
+@pytest.mark.asyncio
+async def test_place_order_success_via_mock(monkeypatch) -> None:
+    from core.tools.builtin import xauusd as xtools
+    from core.trading.xauusd.broker import MockBroker, set_broker
+
+    monkeypatch.setattr(xtools, "LIVE_TRADING_ENABLED", True, raising=True)
+    broker = MockBroker()
+    set_broker(broker)
+    try:
+        out = await xtools.xauusd_place_order_tool.handler(
+            {
+                "side": "LONG",
+                "lots": 0.05,
+                "order_type": "LIMIT",
+                "entry_price": 2400.0,
+                "stop_price": 2395.0,
+                "take_profit_price": 2410.0,
+            },
+            ToolContext(),
+        )
+        assert not out.is_error
+        assert out.data["placed"] is True
+        assert broker.last_order is not None
+        assert broker.last_order.side == "LONG"
+        assert broker.last_order.lots == 0.05
+    finally:
+        set_broker(None)
+
+
+@pytest.mark.asyncio
+async def test_place_order_still_refuses_in_paper_mode() -> None:
+    # The default — LIVE_TRADING_ENABLED is False — must refuse even
+    # with a broker attached.
+    from core.tools.builtin.xauusd import xauusd_place_order_tool
+    from core.trading.xauusd.broker import MockBroker, set_broker
+
+    set_broker(MockBroker())
+    try:
+        out = await xauusd_place_order_tool.handler(
+            {"side": "LONG", "lots": 0.05, "stop_price": 2395.0},
+            ToolContext(),
+        )
+        assert out.is_error
+        assert "LIVE_TRADING_ENABLED" in out.content
+    finally:
+        set_broker(None)
+
+
+# ── flatten_all: calls broker when live, state always flips ───────
+
+
+@pytest.mark.asyncio
+async def test_flatten_all_with_broker_live(monkeypatch) -> None:
+    from core.tools.builtin import xauusd as xtools
+    from core.trading.xauusd.broker import (
+        MockBroker,
+        OrderRequest,
+        set_broker,
+    )
+
+    monkeypatch.setattr(xtools, "LIVE_TRADING_ENABLED", True, raising=True)
+    broker = MockBroker()
+    # Seed one position so close_all has work to do.
+    await broker.place_order(
+        OrderRequest(
+            side="LONG", lots=0.05, order_type="LIMIT", limit_price=2400.0
+        )
+    )
+    set_broker(broker)
+    try:
+        # Move out of OFF first so force_disable is a real transition.
+        await xtools.xauusd_state_tool.handler(
+            {"action": "transition", "to": "SCANNING", "reason": "start"},
+            ToolContext(),
+        )
+        out = await xtools.xauusd_flatten_all_tool.handler(
+            {"reason": "test"}, ToolContext()
+        )
+        assert not out.is_error
+        assert out.data["state"] == "DISABLED"
+        assert len(out.data["results"]) == 1
+    finally:
+        set_broker(None)
+
+
+# ── take_over factory ──────────────────────────────────────────────
+
+
+class _FakeBrowserSessions:
+    """Stand-in for BrowserSessionManager. Exposes ``_pages`` dict."""
+
+    def __init__(self, pages: dict) -> None:
+        self._pages = pages
+
+
+class _FakeHugoswayPage:
+    url = "https://trade.hugosway.com/xauusd"
+
+    def get_by_role(self, *a, **kw):  # pragma: no cover - not reached
+        raise NotImplementedError("verify_session never reaches this in tests")
+
+
+@pytest.mark.asyncio
+async def test_take_over_requires_confirm_phrase() -> None:
+    from core.tools.builtin.xauusd import make_xauusd_take_over_tool
+
+    tool = make_xauusd_take_over_tool(_FakeBrowserSessions({}))
+    out = await tool.handler(
+        {
+            "browser_session_id": "bb-1",
+            "account_type": "demo",
+            "confirm": "sure",
+        },
+        ToolContext(),
+    )
+    assert out.is_error
+    assert "TAKEOVER" in out.content
+
+
+@pytest.mark.asyncio
+async def test_take_over_rejects_unknown_account_type() -> None:
+    from core.tools.builtin.xauusd import make_xauusd_take_over_tool
+
+    tool = make_xauusd_take_over_tool(_FakeBrowserSessions({}))
+    out = await tool.handler(
+        {
+            "browser_session_id": "bb-1",
+            "account_type": "funny-money",
+            "confirm": "TAKEOVER",
+        },
+        ToolContext(),
+    )
+    assert out.is_error
+    assert "demo" in out.content
+
+
+@pytest.mark.asyncio
+async def test_take_over_refuses_unknown_session_id() -> None:
+    from core.tools.builtin.xauusd import make_xauusd_take_over_tool
+
+    tool = make_xauusd_take_over_tool(_FakeBrowserSessions({}))
+    out = await tool.handler(
+        {
+            "browser_session_id": "bb-missing",
+            "account_type": "demo",
+            "confirm": "TAKEOVER",
+        },
+        ToolContext(),
+    )
+    assert out.is_error
+    assert "no Browserbase page" in out.content
+
+
 @pytest.mark.asyncio
 async def test_get_candles_happy_path(monkeypatch) -> None:
     import json

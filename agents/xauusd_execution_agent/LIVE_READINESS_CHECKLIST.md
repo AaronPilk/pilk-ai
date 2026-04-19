@@ -9,19 +9,50 @@ evidence attached, and signed off by someone other than the author.
 
 - [ ] `LIVE_TRADING_ENABLED = False` today. Flipping to `True` is a
       single-file edit in `core/trading/xauusd/config.py`, reviewed
-      alongside the broker-adapter PR — never in isolation.
-- [ ] Broker adapter (Hugosway via Browserbase, PR C) is merged and
-      its tests cover: successful order, rejected order, order that
-      never confirms (timeout path), broker UI change detection.
-- [ ] Price-feed adapter (Twelve Data, PR B) is merged. Feed latency
-      is below 2 seconds per timeframe fetch in normal conditions.
-- [ ] `xauusd_place_order` and `xauusd_flatten_all` are still
-      `RiskClass.FINANCIAL` and the approval gate still fires.
-- [ ] `forbidden_ui_labels` is current (audit the Hugosway UI for any
-      added funding-related labels).
-- [ ] Stop-loss is attached on every live order. The broker adapter
-      refuses orders without a confirmed stop.
-- [ ] `xauusd_state` force-disables on any broker-adapter exception.
+      as its own PR titled `ENABLE LIVE TRADING` with evidence from
+      the smoke-test run attached.
+- [x] Broker adapter plumbing (PR C) merged: `BrokerAdapter` protocol,
+      `MockBroker`, `HugoswayAdapter` skeleton, `xauusd_take_over` /
+      `xauusd_release` / `xauusd_account_info` / `xauusd_open_positions`
+      tools, four-gate `place_order`.
+- [ ] `HugoswayAdapter` selectors verified against live Hugosway DOM.
+      Every `NEEDS_LIVE_VERIFY` comment in `core/trading/xauusd/broker.py`
+      either resolved (comment removed) or replaced with a justified
+      current selector.
+- [ ] `HugoswayAdapter.close_position` and `close_all_positions` are
+      implemented (currently raise `BrokerError`).
+- [x] Price-feed adapter (Twelve Data, PR B) is merged.
+- [ ] Feed latency is below 2 seconds per timeframe fetch in normal
+      conditions — measured, not assumed.
+- [x] `xauusd_place_order`, `xauusd_flatten_all`, `xauusd_take_over`,
+      `xauusd_release` are all `RiskClass.FINANCIAL` and the approval
+      gate still fires even in `autonomous` execution_mode for
+      `take_over` (the operator's explicit hand-off).
+- [x] `forbidden_ui_labels` + the adapter's `FORBIDDEN_EXACT_LABELS`
+      list cover deposit/withdraw/transfer/bank/card/payment/cashier/
+      funding/wallet — every click and fill runs through
+      `forbidden_label_error` before touching the DOM.
+- [ ] Stop-loss is attached on every live order. The adapter refuses
+      orders that arrive without `stop_loss_price`.
+- [x] `xauusd_flatten_all` always force-disables regardless of adapter
+      state or `LIVE_TRADING_ENABLED`.
+
+## Smoke-test gate (runs once before the flip)
+
+- [ ] Operator logs into a **demo** Hugosway account in a Browserbase
+      live-view. Balance ≥ $100, leverage set matches config.
+- [ ] `xauusd_take_over(browser_session_id=..., account_type='demo',
+      confirm='TAKEOVER')` attaches cleanly; balance/leverage match
+      what's visible in the browser.
+- [ ] `xauusd_account_info` reads balance / equity / free-margin
+      identical to the bottom strip.
+- [ ] `xauusd_open_positions` on a fresh demo returns `[]`.
+- [ ] Manual trade test: flip `LIVE_TRADING_ENABLED` to `True` in a
+      short-lived local branch, run a single 0.01-lot MARKET order
+      through `xauusd_place_order` end-to-end, verify the position
+      appears both in Hugosway Positions and in `xauusd_open_positions`.
+- [ ] `xauusd_release(reason='smoke test done')` detaches; state
+      forces to `DISABLED`.
 
 ## Pre-flight (data)
 

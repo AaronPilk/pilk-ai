@@ -76,31 +76,52 @@ on the dashboard (PR C).
 agent must transition to `DISABLED`; the next-candle loop will see
 DISABLED and skip evaluation until the operator re-enables.
 
-## Layer 6 — Forbidden UI actions (future, PR C)
+## Layer 6 — Forbidden UI actions (PR C, shipped)
 
-When the Hugosway Browserbase adapter ships, every click/fill action
-against the broker UI will be cross-checked against
-`forbidden_ui_labels`:
+Every click / fill through `HugoswayAdapter._safe_click` and
+`_fill_by_label` runs through
+`core.trading.xauusd.safety.forbidden_label_error` before touching the
+DOM. The refusal list lives in two places (belt + suspenders):
 
-```
-("withdraw", "deposit", "transfer", "bank", "card",
- "payment", "funding", "wallet", "cashier")
-```
+- `XAUUSDConfig.forbidden_ui_labels` — operator-visible, editable in
+  a follow-up PR: `withdraw / deposit / transfer / bank / card /
+  payment / funding / wallet / cashier`.
+- `broker.FORBIDDEN_EXACT_LABELS` — code-level floor, cannot be
+  shrunk below the operator list: `Deposit / Withdraw / Withdrawals /
+  Transfer / Bank / Card / Cashier / Funding / Wallet / Payment`.
 
-If a selector matches any of these (case-insensitive), the adapter
-refuses the action, journals a safety interrupt, and force-disables
-the agent. Defends against prompt-injected plan steps trying to move
-money outside of trading.
+Match is case-insensitive substring. On match the adapter raises
+`BrokerError(kind="forbidden")`, which the tool layer logs as a
+safety interrupt. No silent drop, no retry.
 
-## Layer 7 — Approval gate (via PILK governor)
+## Layer 7 — Attached-session runtime permission (PR C)
 
-The two execution tools (`xauusd_place_order`, `xauusd_flatten_all`)
-are tagged `RiskClass.FINANCIAL`. PILK's approval gate requires
-explicit operator approval for every call in `assistant` / `operator`
-autonomy profiles. Even when the Python hard gate flips, the
-approval gate still fires until the operator grants a trust rule.
+There is no "live trading enabled" runtime config. The runtime
+permission model is:
 
-## Layer 8 — State machine invariants
+1. Operator logs into Hugosway manually in a Browserbase live-view.
+2. Operator calls `xauusd_take_over(browser_session_id=...,
+   account_type='demo'|'live', confirm='TAKEOVER')`.
+3. Adapter verifies the page is on Hugosway, XAUUSD is selected, and
+   account info is scrape-able. Any failure refuses the attach.
+4. Only with an attached session installed does `xauusd_place_order`
+   reach the broker. All other execution tools also refuse.
+
+Detach is `xauusd_release` — always allowed, forces `DISABLED`.
+
+## Layer 8 — Approval gate (via PILK governor)
+
+Every execution tool (`xauusd_take_over`, `xauusd_release`,
+`xauusd_place_order`, `xauusd_flatten_all`) is tagged
+`RiskClass.FINANCIAL`. PILK's approval gate requires explicit operator
+approval for every call in `assistant` / `operator` autonomy profiles.
+
+The execution_mode toggle (PR B) does **not** relax this for
+`take_over` — handing the broker session to the agent is always a
+manual operator decision. `autonomous` mode only skips approvals on
+`place_order` *after* the session has been attached.
+
+## Layer 9 — State machine invariants
 
 - Every transition requires a non-empty `reason`.
 - Illegal transitions raise `IllegalTransition` — the caller MUST
@@ -110,7 +131,7 @@ approval gate still fires until the operator grants a trust rule.
 - `IN_POSITION → COOLDOWN` is the only exit from a live trade. No
   direct `IN_POSITION → READY_*` — forces a gap between trades.
 
-## Layer 9 — Journaling = blameability
+## Layer 10 — Journaling = blameability
 
 Every decision is logged with:
 - event class (`xauusd.state | .verdict | .risk | .order | .safety`)

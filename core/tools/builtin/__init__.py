@@ -22,11 +22,15 @@ from core.tools.builtin.sales_ops import (
 from core.tools.builtin.shell import shell_exec_tool
 from core.tools.builtin.xauusd import (
     XAUUSD_TOOLS,
+    make_xauusd_take_over_tool,
+    xauusd_account_info_tool,
     xauusd_calc_size_tool,
     xauusd_evaluate_tool,
     xauusd_flatten_all_tool,
     xauusd_get_candles_tool,
+    xauusd_open_positions_tool,
     xauusd_place_order_tool,
+    xauusd_release_tool,
     xauusd_state_tool,
 )
 
@@ -48,14 +52,18 @@ __all__ = [
     "make_browser_tools",
     "make_code_task_tool",
     "make_llm_ask_tool",
+    "make_xauusd_take_over_tool",
     "net_fetch_tool",
     "shell_exec_tool",
     "site_audit_tool",
     "trade_execute_tool",
+    "xauusd_account_info_tool",
     "xauusd_calc_size_tool",
     "xauusd_evaluate_tool",
     "xauusd_flatten_all_tool",
     "xauusd_get_candles_tool",
+    "xauusd_open_positions_tool",
     "xauusd_place_order_tool",
+    "xauusd_release_tool",
     "xauusd_state_tool",
 ]

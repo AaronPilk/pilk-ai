@@ -99,6 +99,7 @@ from core.tools.builtin import (
     make_browser_tools,
     make_code_task_tool,
     make_llm_ask_tool,
+    make_xauusd_take_over_tool,
     net_fetch_tool,
     shell_exec_tool,
     trade_execute_tool,
@@ -306,6 +307,11 @@ async def lifespan(app: FastAPI):
         )
         for t in make_browser_tools(browser_sessions):
             registry.register(t)
+        # xauusd_take_over is browser-session-bound, so it registers
+        # only when Browserbase is available. The rest of XAUUSD_TOOLS
+        # is always registered a few lines below — the agent degrades
+        # gracefully when Browserbase is unconfigured.
+        registry.register(make_xauusd_take_over_tool(browser_sessions))
         log.info("browserbase_ready", project=settings.browserbase_project_id)
     else:
         log.info(
