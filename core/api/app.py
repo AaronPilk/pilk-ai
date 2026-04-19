@@ -87,6 +87,7 @@ from core.supabase import SupabaseClient
 from core.tools import Gateway, ToolRegistry
 from core.tools.builtin import (
     SALES_OPS_TOOLS,
+    XAUUSD_TOOLS,
     BrowserSessionManager,
     finance_deposit_tool,
     finance_transfer_tool,
@@ -189,6 +190,13 @@ async def lifespan(app: FastAPI):
     for t in SALES_OPS_TOOLS:
         registry.register(t)
     log.info("sales_ops_registered", tools=[t.name for t in SALES_OPS_TOOLS])
+    # XAU/USD execution-agent toolkit. Analysis + risk + state tools are
+    # live; the broker tools (place_order, flatten_all) refuse in paper
+    # mode and stay that way until core/trading/xauusd/config.py is
+    # edited AND a Hugosway Browserbase adapter ships.
+    for t in XAUUSD_TOOLS:
+        registry.register(t)
+    log.info("xauusd_registered", tools=[t.name for t in XAUUSD_TOOLS])
 
     # Connected accounts: one AccountsStore + one ProviderRegistry for
     # every OAuth-backed integration. Provider-specific tool factories

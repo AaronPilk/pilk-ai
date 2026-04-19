@@ -20,9 +20,19 @@ from core.tools.builtin.sales_ops import (
     site_audit_tool,
 )
 from core.tools.builtin.shell import shell_exec_tool
+from core.tools.builtin.xauusd import (
+    XAUUSD_TOOLS,
+    xauusd_calc_size_tool,
+    xauusd_evaluate_tool,
+    xauusd_flatten_all_tool,
+    xauusd_get_candles_tool,
+    xauusd_place_order_tool,
+    xauusd_state_tool,
+)
 
 __all__ = [
     "SALES_OPS_TOOLS",
+    "XAUUSD_TOOLS",
     "BrowserSessionManager",
     "finance_deposit_tool",
     "finance_transfer_tool",
@@ -42,4 +52,10 @@ __all__ = [
     "shell_exec_tool",
     "site_audit_tool",
     "trade_execute_tool",
+    "xauusd_calc_size_tool",
+    "xauusd_evaluate_tool",
+    "xauusd_flatten_all_tool",
+    "xauusd_get_candles_tool",
+    "xauusd_place_order_tool",
+    "xauusd_state_tool",
 ]
