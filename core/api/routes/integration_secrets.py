@@ -8,12 +8,24 @@ Values only travel browser → daemon. Reads return ``configured: true/false``
 plus an ``updated_at`` timestamp so the dashboard can show "set 3 days ago"
 next to each field without ever re-revealing the actual token.
 
-The set of ``name`` values is validated against a known-integrations list
-so typos don't pile up ghost rows. Adding a new integration is a one-line
-addition to ``KNOWN_SECRETS`` below.
+Two ways a secret name becomes "known":
+
+* **Static entries** in :data:`KNOWN_SECRETS` — single-tenant integrations
+  where one key exists per deploy (HubSpot, Hunter, Twelve Data, etc.).
+  These always appear in the list-secrets response.
+
+* **Pattern entries** in :data:`KNOWN_SECRET_PATTERNS` — families of
+  names where we can't enumerate the exact slugs at build time
+  (e.g. ``wordpress_<site>_app_password`` with one slot per client site).
+  Any DB row whose name matches a pattern is surfaced in the list with
+  a synthesized label; callers can also PUT new names matching a
+  pattern and we'll accept them.
 """
 
 from __future__ import annotations
+
+import re
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -25,10 +37,11 @@ log = get_logger("pilkd.integration_secrets")
 
 router = APIRouter(prefix="/integration-secrets")
 
-# Known integrations that can be set via the dashboard. Keep this list
-# short and curated: every entry becomes a row in the UI, and each tool
-# reads by the matching name in `_secret(name, fallback)`.
-KNOWN_SECRETS: dict[str, dict[str, str]] = {
+# Static known integrations. Each entry becomes a row in the UI and
+# each tool reads by the matching name. Add a new entry when adding
+# a single-tenant integration; reach for a pattern when the slug is
+# per-site / per-client / per-user.
+KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
     "hubspot_private_token": {
         "label": "HubSpot",
         "description": (
@@ -73,6 +86,61 @@ KNOWN_SECRETS: dict[str, dict[str, str]] = {
 }
 
 
+class _PatternDef:
+    """One pattern entry: regex + metadata to synthesize a list row
+    when a DB row matches."""
+
+    def __init__(
+        self,
+        *,
+        pattern: str,
+        label_template: str,
+        description: str,
+    ) -> None:
+        self.pattern = re.compile(pattern)
+        self.label_template = label_template
+        self.description = description
+
+    def match(self, name: str) -> dict[str, str | None] | None:
+        """Return synthesized metadata if ``name`` matches, else None.
+        The label template can reference ``{slug}`` captured from the
+        first group of the regex."""
+        m = self.pattern.fullmatch(name)
+        if m is None:
+            return None
+        slug = m.group(1) if m.groups() else name
+        return {
+            "label": self.label_template.format(slug=slug),
+            "description": self.description,
+            "env": None,
+        }
+
+
+# Pattern-based known secrets. Order is irrelevant — at most one
+# pattern should match any given name.
+KNOWN_SECRET_PATTERNS: list[_PatternDef] = [
+    _PatternDef(
+        pattern=r"wordpress_([a-z0-9][a-z0-9-]*)_app_password",
+        label_template="WordPress ({slug})",
+        description=(
+            "Per-site WordPress credential in the form "
+            "`username:app_password`. The app password comes from "
+            "Users → Profile → Application Passwords on the target "
+            "WordPress site. This key's ``{slug}`` should match the "
+            "client's `wordpress_secret_key` in `clients/<slug>.yaml`."
+        ),
+    ),
+]
+
+
+def _match_pattern(name: str) -> dict[str, str | None] | None:
+    for pat in KNOWN_SECRET_PATTERNS:
+        meta = pat.match(name)
+        if meta is not None:
+            return meta
+    return None
+
+
 class SetBody(BaseModel):
     value: str = Field(
         min_length=1,
@@ -91,26 +159,32 @@ def _store(request: Request) -> IntegrationSecretsStore:
 
 
 def _ensure_known(name: str) -> None:
-    if name not in KNOWN_SECRETS:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"unknown integration secret '{name}'. "
-                f"Known: {sorted(KNOWN_SECRETS)}"
-            ),
-        )
+    if name in KNOWN_SECRETS:
+        return
+    if _match_pattern(name) is not None:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"unknown integration secret '{name}'. "
+            f"Known: {sorted(KNOWN_SECRETS)} + patterns: "
+            f"{[p.pattern.pattern for p in KNOWN_SECRET_PATTERNS]}"
+        ),
+    )
 
 
 @router.get("")
 async def list_secrets(request: Request) -> dict:
     """Return every known integration and whether it's configured.
 
-    Never echoes stored values. The dashboard uses `configured` + the
-    per-entry metadata to decide between "Add key" and "Replace key".
+    Static entries always appear. Pattern entries appear only when a
+    matching row has been written — we can't enumerate all possible
+    slugs, so "configured" names show up, unconfigured pattern slots
+    don't.
     """
     store = _store(request)
     have = {e.name: e.updated_at for e in store.list_entries()}
-    entries = [
+    entries: list[dict[str, Any]] = [
         {
             "name": name,
             "label": meta["label"],
@@ -121,6 +195,41 @@ async def list_secrets(request: Request) -> dict:
         }
         for name, meta in KNOWN_SECRETS.items()
     ]
+    # Surface pattern-matched rows that exist in the DB. We can't list
+    # ones that don't exist (the user has to know the slug to PUT a
+    # new value), but the ones already saved should be visible.
+    for db_name, updated_at in have.items():
+        if db_name in KNOWN_SECRETS:
+            continue
+        meta = _match_pattern(db_name)
+        if meta is None:
+            # Row that matches neither static nor pattern — surface
+            # with a neutral label so orphans are visible instead of
+            # invisible.
+            entries.append(
+                {
+                    "name": db_name,
+                    "label": db_name,
+                    "description": (
+                        "Legacy / pattern-unmatched secret. Review + "
+                        "delete if no longer used."
+                    ),
+                    "env": None,
+                    "configured": True,
+                    "updated_at": updated_at,
+                }
+            )
+            continue
+        entries.append(
+            {
+                "name": db_name,
+                "label": meta["label"],
+                "description": meta["description"],
+                "env": meta["env"],
+                "configured": True,
+                "updated_at": updated_at,
+            }
+        )
     return {"entries": entries}
 
 

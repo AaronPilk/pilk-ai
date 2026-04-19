@@ -34,6 +34,7 @@ from core.tools.builtin.design.ir import (
     Text,
     Video,
 )
+from core.tools.builtin.design.wordpress_push import wordpress_push_tool
 
 __all__ = [
     "Button",
@@ -56,4 +57,5 @@ __all__ = [
     "Video",
     "html_export_tool",
     "ir_to_html",
+    "wordpress_push_tool",
 ]
