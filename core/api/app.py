@@ -41,6 +41,7 @@ from core.api.routes.supabase import router as supabase_router
 from core.api.routes.voice import router as voice_router
 from core.api.routes.xauusd_settings import router as xauusd_settings_router
 from core.api.ws import router as ws_router
+from core.clients import ClientStore, set_client_store
 from core.coding import (
     AgentSDKEngine,
     APIEngine,
@@ -120,6 +121,7 @@ from core.voice.openai_driver import OpenAISTT, OpenAITTS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / "agents"
+CLIENTS_DIR = REPO_ROOT / "clients"
 
 
 @asynccontextmanager
@@ -146,6 +148,14 @@ async def lifespan(app: FastAPI):
     # secrets — the UI renders them as switches.
     xauusd_settings = XAUUSDSettingsStore(settings.db_path)
     set_xauusd_settings_store(xauusd_settings)
+
+    # Per-client brand / WordPress / recipient config, read from YAML
+    # files under clients/. Source of truth is the filesystem — no DB
+    # mirror. Bad files log + skip; the daemon keeps booting.
+    clients = ClientStore(CLIENTS_DIR)
+    loaded, errors = clients.reload()
+    set_client_store(clients)
+    log.info("client_store_ready", loaded=loaded, errors=errors)
 
     # Sentinel supervisor state — reads Hub events, emits incidents.
     sentinel_heartbeats = HeartbeatStore(settings.db_path)
@@ -520,6 +530,7 @@ async def lifespan(app: FastAPI):
     app.state.memory = memory
     app.state.integration_secrets = integration_secrets
     app.state.xauusd_settings = xauusd_settings
+    app.state.clients = clients
     app.state.sentinel = sentinel
     app.state.sentinel_heartbeats = sentinel_heartbeats
     app.state.sentinel_incidents = sentinel_incidents
