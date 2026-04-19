@@ -95,6 +95,7 @@ from core.sentinel.remediate import RemediationResult
 from core.supabase import SupabaseClient
 from core.tools import Gateway, ToolRegistry
 from core.tools.builtin import (
+    CREATIVE_TOOLS,
     SALES_OPS_TOOLS,
     XAUUSD_TOOLS,
     BrowserSessionManager,
@@ -246,6 +247,13 @@ async def lifespan(app: FastAPI):
     for t in XAUUSD_TOOLS:
         registry.register(t)
     log.info("xauusd_registered", tools=[t.name for t in XAUUSD_TOOLS])
+
+    # Creative-content toolkit (nano_banana image gen + higgsfield video
+    # gen). Both surface a clean "not configured" outcome when their key
+    # is unset, so registration is unconditional.
+    for t in CREATIVE_TOOLS:
+        registry.register(t)
+    log.info("creative_registered", tools=[t.name for t in CREATIVE_TOOLS])
 
     # Web-design toolkit — html_export emits the static bundle; the
     # wordpress_push tool ships it to a client's WP site as an Elementor
