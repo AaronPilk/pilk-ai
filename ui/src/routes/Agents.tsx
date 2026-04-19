@@ -34,14 +34,26 @@ export default function Agents() {
   const [accountsById, setAccountsById] = useState<Record<string, ConnectedAccount>>(
     {},
   );
+  // Populated when the /agents fetch fails. Critical for debugging —
+  // without this, a 401 from an expired Supabase session or a 500 from
+  // a misconfigured backend looked identical to "no agents registered,"
+  // which sent operators down the wrong rabbit hole.
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   const refresh = useCallback(() => {
     fetchAgents()
       .then((r) => {
         setAgents(r.agents);
         if (r.agents.length > 0 && selected === null) setSelected(r.agents[0].name);
+        setFetchError(null);
+        setLoaded(true);
       })
-      .catch(() => {});
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        setFetchError(msg);
+        setLoaded(true);
+      });
     fetchGrants()
       .then((r) => {
         const out: Record<string, string[]> = {};
@@ -105,10 +117,28 @@ export default function Agents() {
     <div className="tasks">
       <div className="tasks-list">
         <div className="tasks-list-head">Registered agents</div>
-        {agents.length === 0 && (
+        {fetchError && (
+          <div className="tasks-error" role="alert">
+            <div className="tasks-error-title">Couldn't load agents</div>
+            <div className="tasks-error-body">{fetchError}</div>
+            <div className="tasks-error-hint">
+              Common causes: Supabase session expired (reload the page),
+              or <code>PILK_SUPABASE_JWT_SECRET</code> missing on the
+              server. Check <code>/system/status</code> — that route is
+              public and will tell you if pilkd itself is up.
+            </div>
+            <button className="btn btn--ghost" onClick={refresh}>
+              Retry
+            </button>
+          </div>
+        )}
+        {loaded && !fetchError && agents.length === 0 && (
           <div className="tasks-empty">
             No agents registered yet. Ask PILK in Chat: <em>"Build me a sales agent."</em>
           </div>
+        )}
+        {!loaded && !fetchError && (
+          <div className="tasks-empty">Loading agents…</div>
         )}
         {agents.map((a) => (
           <button
