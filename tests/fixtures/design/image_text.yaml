@@ -1,0 +1,35 @@
+title: Image + Text
+slug: image-text
+containers:
+  - id: it-sec
+    settings:
+      flex_direction: {mobile: column, desktop: row}
+      gap: {mobile: 24, desktop: 48}
+      padding: {mobile: {top: 48, right: 20, bottom: 48, left: 20}}
+      margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+      align_items: {mobile: stretch, desktop: center}
+      justify_content: {mobile: start}
+      max_width: {mobile: null, desktop: 1200}
+    children:
+      - widget_type: image
+        src: "https://example.com/feature.jpg"
+        alt: Screenshot of the PILK dashboard showing the Approvals tab
+      - id: it-copy
+        settings:
+          flex_direction: {mobile: column}
+          gap: {mobile: 12}
+          padding: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          align_items: {mobile: start}
+          justify_content: {mobile: start}
+          max_width: {mobile: null}
+        children:
+          - widget_type: heading
+            text: Everything reviewable
+            level: h2
+          - widget_type: text
+            body: Every destructive action queues for your approval before it runs.
+          - widget_type: button
+            label: Learn more
+            link: "#approvals"
+            variant: secondary

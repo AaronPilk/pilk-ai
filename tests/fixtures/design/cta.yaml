@@ -1,0 +1,22 @@
+title: CTA Band
+slug: cta
+containers:
+  - id: cta-sec
+    settings:
+      flex_direction: {mobile: column, desktop: row}
+      gap: {mobile: 16, desktop: 32}
+      padding: {mobile: {top: 48, right: 20, bottom: 48, left: 20}}
+      margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+      align_items: {mobile: center}
+      justify_content: {mobile: center, desktop: between}
+      max_width: {mobile: null, desktop: 1200}
+      background_color: "#1d4ed8"
+    children:
+      - widget_type: heading
+        text: Ready to ship?
+        level: h2
+        align: {mobile: center, desktop: left}
+      - widget_type: button
+        label: Start building
+        link: "/start"
+        variant: primary

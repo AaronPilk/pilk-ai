@@ -1,0 +1,24 @@
+title: Testimonial
+slug: testimonial
+containers:
+  - id: test-sec
+    settings:
+      flex_direction: {mobile: column}
+      gap: {mobile: 16}
+      padding: {mobile: {top: 48, right: 24, bottom: 48, left: 24}}
+      margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+      align_items: {mobile: center}
+      justify_content: {mobile: center}
+      max_width: {mobile: null, desktop: 720}
+      background_color: "#f8fafc"
+    children:
+      - widget_type: image
+        src: "https://example.com/avatar.jpg"
+        alt: Portrait of Jane Doe, CEO of Example Inc
+      - widget_type: text
+        body: "\"PILK cut our landing-page turnaround from two weeks to two days.\""
+        align: {mobile: center}
+      - widget_type: heading
+        text: Jane Doe, CEO, Example Inc
+        level: h6
+        align: {mobile: center}

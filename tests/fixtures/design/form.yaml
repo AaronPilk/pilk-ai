@@ -1,0 +1,33 @@
+title: Contact Form
+slug: contact
+containers:
+  - id: form-sec
+    settings:
+      flex_direction: {mobile: column}
+      gap: {mobile: 16}
+      padding: {mobile: {top: 32, right: 20, bottom: 32, left: 20}}
+      margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+      align_items: {mobile: stretch}
+      justify_content: {mobile: start}
+      max_width: {mobile: null, desktop: 640}
+    children:
+      - widget_type: heading
+        text: Get in touch
+        level: h2
+      - widget_type: form
+        action: "/api/contact"
+        method: POST
+        submit_label: Send message
+        fields:
+          - name: full_name
+            label: Full name
+            type: text
+            required: true
+          - name: email
+            label: Email
+            type: email
+            required: true
+          - name: message
+            label: Message
+            type: textarea
+            required: true
