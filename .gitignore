@@ -20,6 +20,7 @@ dist-ssr/
 # keep them out so local `npm install` during agent work doesn't dirty the
 # tree.
 package-lock.json
+uv.lock
 
 # Tauri (when added)
 ui/src-tauri/target/
