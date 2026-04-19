@@ -79,6 +79,48 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Sales-ops agent integrations ──────────────────────────────
+    # Google Places + PageSpeed share the same Google Cloud API key
+    # pattern in practice; we split them so the operator can rotate
+    # independently or scope them to different Cloud projects. A single
+    # shared `PILK_GOOGLE_API_KEY` also satisfies both as a fallback.
+    google_places_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_PLACES_API_KEY",
+            "PILK_GOOGLE_PLACES_API_KEY",
+            "GOOGLE_API_KEY",
+            "PILK_GOOGLE_API_KEY",
+        ),
+    )
+    pagespeed_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PAGESPEED_API_KEY",
+            "PILK_PAGESPEED_API_KEY",
+            "GOOGLE_API_KEY",
+            "PILK_GOOGLE_API_KEY",
+        ),
+    )
+    # Hunter.io email-finder key. Used by hunter_find_email + the
+    # domain-search helper for lead enrichment.
+    hunter_io_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "HUNTER_IO_API_KEY", "PILK_HUNTER_IO_API_KEY"
+        ),
+    )
+    # HubSpot Private App access token — simpler than OAuth for v1.
+    # Create in HubSpot → Settings → Integrations → Private Apps and
+    # grant contact + note scopes. Single-tenant for now; Phase 2 will
+    # move this onto AccountsStore so each user brings their own.
+    hubspot_private_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "HUBSPOT_PRIVATE_TOKEN", "PILK_HUBSPOT_PRIVATE_TOKEN"
+        ),
+    )
+
     # ── Coding engines ────────────────────────────────────────────
     # Claude Code runs locally via a bridge when the user has one set
     # up; unset = not available, PILK falls back to the API engine.

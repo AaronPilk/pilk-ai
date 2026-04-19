@@ -81,6 +81,7 @@ from core.sandbox import SandboxManager
 from core.supabase import SupabaseClient
 from core.tools import Gateway, ToolRegistry
 from core.tools.builtin import (
+    SALES_OPS_TOOLS,
     BrowserSessionManager,
     finance_deposit_tool,
     finance_transfer_tool,
@@ -172,6 +173,12 @@ async def lifespan(app: FastAPI):
     registry.register(finance_withdraw_tool)
     registry.register(finance_transfer_tool)
     registry.register(trade_execute_tool)
+    # Sales-ops toolkit (prospecting, site audit, email enrichment, HubSpot).
+    # Handlers surface a clean "not configured" error if the matching API
+    # key is missing, so registration stays unconditional.
+    for t in SALES_OPS_TOOLS:
+        registry.register(t)
+    log.info("sales_ops_registered", tools=[t.name for t in SALES_OPS_TOOLS])
 
     # Connected accounts: one AccountsStore + one ProviderRegistry for
     # every OAuth-backed integration. Provider-specific tool factories
