@@ -4750,3 +4750,157 @@ body {
   align-items: center;
   gap: 8px;
 }
+
+/* ── Tasks gallery ─────────────────────────────────────────────
+   Piggybacks on .agents-gallery + .agent-card for consistency with
+   the springboard look on /agents. Per-status icon chip colour is
+   the main difference. */
+.tasks-gallery .agent-card {
+  padding: 16px;
+  gap: 8px;
+}
+
+.task-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--surface-hover);
+  color: var(--text-dim);
+}
+
+.task-card-icon--running {
+  background: rgba(101, 209, 155, 0.14);
+  color: var(--ok);
+}
+
+.task-card-icon--completed {
+  background: rgba(101, 209, 155, 0.10);
+  color: var(--ok);
+}
+
+.task-card-icon--failed {
+  background: rgba(239, 95, 95, 0.14);
+  color: var(--danger);
+}
+
+.task-card-icon--cancelled {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-faint);
+}
+
+.task-card-icon--paused,
+.task-card-icon--pending {
+  background: rgba(240, 192, 80, 0.14);
+  color: var(--warn);
+}
+
+.task-card-time {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: lowercase;
+}
+
+.task-card-goal {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.4;
+  /* Keep every card the same height; three-line clamp fits most
+     real-world goals. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: calc(1.4em * 3);
+}
+
+.task-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.task-card-cost {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.task-card-stop {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: rgba(239, 95, 95, 0.14);
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 500;
+  width: fit-content;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.task-card-stop:hover {
+  background: rgba(239, 95, 95, 0.22);
+}
+
+/* Status-colour the card left edge so the gallery reads at a glance */
+.task-card.agent-card {
+  border-left-width: 3px;
+}
+
+.task-card--running {
+  border-left-color: var(--ok);
+}
+
+.task-card--completed {
+  border-left-color: rgba(101, 209, 155, 0.45);
+}
+
+.task-card--failed {
+  border-left-color: var(--danger);
+}
+
+.task-card--cancelled,
+.task-card--pending,
+.task-card--paused {
+  border-left-color: var(--warn);
+}
+
+/* Same color tokens on the agent-card-status pill when re-used for
+   plan statuses, so the dot colour matches the icon chip. */
+.agent-card-status--completed .agent-card-status-dot {
+  background: rgba(101, 209, 155, 0.65);
+}
+
+.agent-card-status--failed .agent-card-status-dot {
+  background: var(--danger);
+}
+
+.agent-card-status--cancelled .agent-card-status-dot {
+  background: var(--text-faint);
+}
+
+.agent-card-status--pending .agent-card-status-dot,
+.agent-card-status--paused .agent-card-status-dot {
+  background: var(--warn);
+}
