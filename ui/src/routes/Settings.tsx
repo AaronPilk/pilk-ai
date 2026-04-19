@@ -82,7 +82,83 @@ const CAP_OPTIONS: Array<{ value: number; label: string }> = [
   { value: 0, label: "Unlimited" },
 ];
 
+/** Settings is a gallery-first springboard (matches /agents). The
+ * table below defines every category that gets a card. Each entry
+ * maps to a single `<section>` block in the render; tapping a card
+ * swaps the pane to just that section with a back button. Keep this
+ * list in order of most-common usage first so a new operator sees
+ * the important stuff up top. */
+type SettingsCategory =
+  | "api-keys"
+  | "accounts"
+  | "voice"
+  | "budget"
+  | "xauusd"
+  | "coding"
+  | "trust";
+
+interface SettingsCategoryDef {
+  id: SettingsCategory;
+  avatar: string;
+  label: string;
+  blurb: string;
+}
+
+const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
+  {
+    id: "api-keys",
+    avatar: "🔑",
+    label: "API Keys",
+    blurb:
+      "Paste HubSpot, Hunter, Nano Banana, Higgsfield, Browserbase, and the rest — live instantly, no redeploy.",
+  },
+  {
+    id: "accounts",
+    avatar: "🔗",
+    label: "Connected Accounts",
+    blurb:
+      "Sign in to Google, LinkedIn, and friends with OAuth so agents can send email, post, and read on your behalf.",
+  },
+  {
+    id: "voice",
+    avatar: "🎤",
+    label: "Voice & Listening",
+    blurb:
+      "Wake phrase, acknowledgement style, listen patience, and TTS speed — how PILK hears you and talks back.",
+  },
+  {
+    id: "budget",
+    avatar: "💰",
+    label: "Reasoning & Budget",
+    blurb:
+      "Model tier routing (Haiku / Sonnet / Opus), daily cost caps, and the premium-gate approval flow.",
+  },
+  {
+    id: "xauusd",
+    avatar: "🪙",
+    label: "XAU/USD Agent",
+    blurb:
+      "Execution mode for the gold-trading agent: approve every order, or let it run autonomously inside its risk caps.",
+  },
+  {
+    id: "coding",
+    avatar: "⌨️",
+    label: "Coding Engines",
+    blurb:
+      "Which backend routes code tasks — Claude Code bridge, Agent SDK, or the bare API engine.",
+  },
+  {
+    id: "trust",
+    avatar: "🛡️",
+    label: "Trust Rules",
+    blurb:
+      "Fine-grained per-tool trust editor. Placeholder — arriving in a follow-up batch.",
+  },
+];
+
 export default function Settings() {
+  const [selectedCategory, setSelectedCategory] =
+    useState<SettingsCategory | null>(null);
   const [cfg, setCfg] = useState<AmbientConfig>(ambient.getConfig());
   const [supported] = useState<boolean>(ambient.supported);
   const [permissionError, setPermissionError] = useState<string | null>(null);
@@ -212,6 +288,37 @@ export default function Settings() {
         </p>
       </header>
 
+      {selectedCategory === null && (
+        <div className="settings-gallery agents-gallery">
+          {SETTINGS_CATEGORIES.map((c) => (
+            <button
+              key={c.id}
+              className="agent-card"
+              onClick={() => setSelectedCategory(c.id)}
+            >
+              <div className="agent-card-avatar" aria-hidden>
+                {c.avatar}
+              </div>
+              <div className="agent-card-body">
+                <div className="agent-card-name">{c.label}</div>
+                <div className="agent-card-blurb">{c.blurb}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {selectedCategory !== null && (
+        <button
+          type="button"
+          className="agents-back"
+          onClick={() => setSelectedCategory(null)}
+        >
+          ← All settings
+        </button>
+      )}
+
+      {selectedCategory === "voice" && (
       <section className="settings-card">
         <div className="settings-card-head">
           <div className="settings-card-title">Ambient listening</div>
@@ -346,7 +453,9 @@ export default function Settings() {
           Applies to both the acknowledgement and PILK's reply.
         </div>
       </section>
+      )}
 
+      {selectedCategory === "budget" && (
       <section className="settings-card">
         <div className="settings-card-head">
           <div className="settings-card-title">Reasoning &amp; budget</div>
@@ -503,7 +612,9 @@ export default function Settings() {
           </div>
         )}
       </section>
+      )}
 
+      {selectedCategory === "accounts" && (
       <section className="settings-card">
         <div className="settings-card-head">
           <div className="settings-card-title">Connected accounts</div>
@@ -780,7 +891,9 @@ export default function Settings() {
           />
         )}
       </section>
+      )}
 
+      {selectedCategory === "coding" && (
       <section className="settings-card">
         <div className="settings-card-head">
           <div className="settings-card-title">Coding engines</div>
@@ -826,17 +939,20 @@ export default function Settings() {
           </div>
         )}
       </section>
+      )}
 
-      <IntegrationSecretsSection />
+      {selectedCategory === "api-keys" && <IntegrationSecretsSection />}
 
-      <XAUUSDSettingsSection />
+      {selectedCategory === "xauusd" && <XAUUSDSettingsSection />}
 
+      {selectedCategory === "trust" && (
       <section className="settings-card settings-card--muted">
         <div className="settings-card-title">Trust rule editor</div>
         <p className="settings-card-body">
           Fine-grained per-tool trust rule editor arrives in a follow-up batch.
         </p>
       </section>
+      )}
     </div>
   );
 }

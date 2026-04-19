@@ -5129,3 +5129,42 @@ body {
     max-width: 92%;
   }
 }
+
+/* ── Agent detail — delegation note ────────────────────────────
+   Replaces the old per-agent "Assign a task" form. PILK is the
+   orchestrator; giving users a direct-run surface bypasses that
+   hierarchy and muddies what each agent should actually be for. */
+.agent-delegation-note {
+  padding: 16px 20px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.agent-delegation-note p {
+  margin: 6px 0 0;
+}
+
+.agent-delegation-note a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.agent-delegation-note a:hover {
+  text-decoration: underline;
+}
+
+/* ── Settings gallery (springboard) ─────────────────────────────
+   Mirrors .agents-gallery — category cards live in a minmax grid.
+   When the user picks a card the card hides and that category's
+   section renders below the back button. */
+.settings-gallery {
+  margin-top: 8px;
+}
+
+.settings .agents-back {
+  margin-bottom: 12px;
+}
