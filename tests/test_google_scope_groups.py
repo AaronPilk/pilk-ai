@@ -56,5 +56,10 @@ def test_unknown_group_is_ignored() -> None:
 
 
 def test_provider_exposes_group_catalog() -> None:
-    assert set(google_provider.scope_groups) == {"mail", "drive", "calendar"}
+    assert set(google_provider.scope_groups) == {
+        "mail",
+        "drive",
+        "calendar",
+        "slides",
+    }
     assert google_provider.default_scope_groups == ("mail",)
