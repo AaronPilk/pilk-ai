@@ -9,7 +9,6 @@ import time
 from unittest.mock import patch
 
 import jwt
-import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -79,16 +78,16 @@ def _settings(**overrides) -> Settings:
         "SUPABASE_JWT_SECRET": _HS256_SECRET,
         "SUPABASE_URL": _SUPABASE_URL,
     }
-    _UNSET = object()
-    secret_override = overrides.pop("supabase_jwt_secret", _UNSET)
-    url_override = overrides.pop("supabase_url", _UNSET)
+    unset = object()
+    secret_override = overrides.pop("supabase_jwt_secret", unset)
+    url_override = overrides.pop("supabase_url", unset)
     if secret_override is None:
         env.pop("SUPABASE_JWT_SECRET")
-    elif secret_override is not _UNSET:
+    elif secret_override is not unset:
         env["SUPABASE_JWT_SECRET"] = secret_override
     if url_override is None:
         env.pop("SUPABASE_URL")
-    elif url_override is not _UNSET:
+    elif url_override is not unset:
         env["SUPABASE_URL"] = url_override
     with patch.dict("os.environ", env, clear=False):
         return Settings(**overrides)
