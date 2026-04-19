@@ -12,7 +12,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-CURRENT_VERSION = 7
+CURRENT_VERSION = 8
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
 
@@ -103,6 +103,41 @@ MIGRATIONS: dict[int, list[str]] = {
             value      TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )""",
+    ],
+    # v8: Sentinel supervisor tables. Heartbeats are written by every
+    # long-running agent via `sentinel_heartbeat`; Sentinel's stale-
+    # heartbeat rule reads from this table on its 30s scan.
+    # Incidents are the source-of-truth for every finding Sentinel
+    # has surfaced — mirrored to ``<home>/sentinel/incidents.jsonl``
+    # for tail-based operator tools.
+    8: [
+        """CREATE TABLE IF NOT EXISTS agent_heartbeats (
+            agent_name             TEXT PRIMARY KEY,
+            status                 TEXT NOT NULL,
+            progress               TEXT,
+            active_task_id         TEXT,
+            last_at                TEXT NOT NULL,
+            interval_seconds       INTEGER NOT NULL DEFAULT 60,
+            stuck_task_timeout_s   INTEGER NOT NULL DEFAULT 900
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_heartbeats_last_at ON agent_heartbeats(last_at)",
+        """CREATE TABLE IF NOT EXISTS sentinel_incidents (
+            id              TEXT PRIMARY KEY,
+            agent_name      TEXT,
+            category        TEXT NOT NULL,
+            severity        TEXT NOT NULL,
+            finding_kind    TEXT NOT NULL,
+            summary         TEXT NOT NULL,
+            details_json    TEXT,
+            triage_json     TEXT,
+            remediation     TEXT,
+            outcome         TEXT,
+            acknowledged_at TEXT,
+            created_at      TEXT NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_incidents_created ON sentinel_incidents(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_incidents_agent ON sentinel_incidents(agent_name)",
+        "CREATE INDEX IF NOT EXISTS idx_incidents_severity ON sentinel_incidents(severity)",
     ],
 }
 
