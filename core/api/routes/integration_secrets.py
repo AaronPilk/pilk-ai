@@ -83,6 +83,24 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         ),
         "env": "TWELVEDATA_API_KEY",
     },
+    "nano_banana_api_key": {
+        "label": "Nano Banana (Gemini 2.5 Flash Image)",
+        "description": (
+            "Google AI Studio API key for image generation. Get one at "
+            "aistudio.google.com → Get API Key. The same key works as a "
+            "generic Gemini key."
+        ),
+        "env": "NANO_BANANA_API_KEY",
+    },
+    "higgsfield_api_key": {
+        "label": "Higgsfield (cinematic video gen)",
+        "description": (
+            "API key from cloud.higgsfield.ai → API Tokens. Used for "
+            "text→video and image→video generations by the "
+            "creative_content_agent."
+        ),
+        "env": "HIGGSFIELD_API_KEY",
+    },
 }
 
 

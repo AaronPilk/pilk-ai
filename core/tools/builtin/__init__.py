@@ -1,6 +1,11 @@
 from core.tools.builtin.agent_meta import make_agent_create_tool
 from core.tools.builtin.browser import BrowserSessionManager, make_browser_tools
 from core.tools.builtin.code_task import make_code_task_tool
+from core.tools.builtin.creative import (
+    CREATIVE_TOOLS,
+    higgsfield_generate_tool,
+    nano_banana_generate_tool,
+)
 from core.tools.builtin.finance import (
     finance_deposit_tool,
     finance_transfer_tool,
@@ -42,6 +47,7 @@ from core.tools.builtin.xauusd import (
 )
 
 __all__ = [
+    "CREATIVE_TOOLS",
     "SALES_OPS_TOOLS",
     "XAUUSD_TOOLS",
     "BrowserSessionManager",
@@ -51,6 +57,7 @@ __all__ = [
     "fs_read_tool",
     "fs_write_tool",
     "google_places_search_tool",
+    "higgsfield_generate_tool",
     "hubspot_add_note_tool",
     "hubspot_search_contact_tool",
     "hubspot_upsert_contact_tool",
@@ -65,6 +72,7 @@ __all__ = [
     "make_sentinel_status_tool",
     "make_sentinel_tools",
     "make_xauusd_take_over_tool",
+    "nano_banana_generate_tool",
     "net_fetch_tool",
     "shell_exec_tool",
     "site_audit_tool",
