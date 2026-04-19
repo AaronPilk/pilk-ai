@@ -10,6 +10,7 @@ import {
 } from "../state/api";
 import { isCloudMode } from "../lib/supabase";
 import { signOutAndReturnToPortal } from "../lib/AuthGate";
+import { useTheme } from "../lib/theme";
 import VoiceOrb from "./VoiceOrb";
 
 export default function TopBar() {
@@ -19,6 +20,7 @@ export default function TopBar() {
   const [summary, setSummary] = useState<CostSummary | null>(null);
   const [stopping, setStopping] = useState(false);
   const [sentinelCount, setSentinelCount] = useState(0);
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     fetchCostSummary().then(setSummary).catch(() => {});
@@ -106,6 +108,20 @@ export default function TopBar() {
         {!hasLargeOrb && (
           <VoiceOrb size="small" showLabel={false} showCaption={false} />
         )}
+        <button
+          className="topbar-theme"
+          onClick={toggleTheme}
+          title={
+            theme === "dark"
+              ? "Switch to light mode"
+              : "Switch to dark mode"
+          }
+          aria-label={
+            theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+          }
+        >
+          {theme === "dark" ? "☀" : "☾"}
+        </button>
         {isCloudMode && (
           <button
             className="topbar-signout"
