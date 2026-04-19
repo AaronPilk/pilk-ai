@@ -128,3 +128,13 @@ policy:
     daily_usd: 2.00
 
 memory_namespace: xauusd_execution
+
+integrations:
+  - name: browserbase_api_key
+    kind: api_key
+    label: Browserbase API key (remote broker sessions)
+    docs_url: https://browserbase.com/
+  - name: browserbase_project_id
+    kind: api_key
+    label: Browserbase project id
+    docs_url: https://browserbase.com/

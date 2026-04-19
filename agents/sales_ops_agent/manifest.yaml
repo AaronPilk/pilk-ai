@@ -86,3 +86,28 @@ policy:
     daily_usd: 15.00
 
 memory_namespace: sales_ops
+
+integrations:
+  - name: google
+    kind: oauth
+    role: user
+    label: Google (Gmail for outbound + reporting)
+    scopes:
+      - https://www.googleapis.com/auth/gmail.send
+      - https://www.googleapis.com/auth/gmail.readonly
+  - name: hubspot_private_token
+    kind: api_key
+    label: HubSpot private app token
+    docs_url: https://developers.hubspot.com/docs/api/private-apps
+  - name: hunter_io_api_key
+    kind: api_key
+    label: Hunter.io API key (email discovery)
+    docs_url: https://hunter.io/api-keys
+  - name: google_places_api_key
+    kind: api_key
+    label: Google Places API key (prospect search)
+    docs_url: https://developers.google.com/maps/documentation/places/web-service/get-api-key
+  - name: pagespeed_api_key
+    kind: api_key
+    label: PageSpeed Insights API key (site audit)
+    docs_url: https://developers.google.com/speed/docs/insights/v5/get-started

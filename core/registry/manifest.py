@@ -54,6 +54,63 @@ class AgentPolicy(BaseModel):
     budget: Budget = Field(default_factory=Budget)
 
 
+class IntegrationSpec(BaseModel):
+    """A third-party dependency this agent needs before it can run.
+
+    Two flavors:
+
+    * ``api_key`` — a string the operator pastes into Settings → API Keys
+      (lives in ``integration_secrets``). The manifest's ``name`` is the
+      row key; env fallbacks still apply.
+    * ``oauth`` — an OAuth-provider account the operator links via
+      ``/integrations/oauth/<provider>``. The manifest's ``name`` is the
+      provider id (google, slack, linkedin, ...); ``role`` picks
+      which account binding within the provider (e.g. "me" vs
+      "system"-sender).
+
+    The UI renders each integration inline on the agent detail panel
+    with a "configured ✓" chip or an inline input/Connect button, so the
+    operator never has to hunt for where to paste a key.
+    """
+
+    name: str = Field(
+        ...,
+        description=(
+            "For api_key: the integration_secrets row key (e.g. "
+            "'higgsfield_api_key'). For oauth: the provider id "
+            "(e.g. 'google')."
+        ),
+    )
+    kind: Literal["api_key", "oauth"]
+    label: str = Field(
+        ...,
+        description="Human-readable name rendered in the UI.",
+    )
+    role: Literal["user", "system"] | None = Field(
+        default=None,
+        description=(
+            "OAuth only: which role's account the agent uses. Matches "
+            "``core.identity.accounts.Role`` — 'user' is the operator's "
+            "personal account, 'system' is the daemon-owned one."
+        ),
+    )
+    scopes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "OAuth only: scopes required for this agent to function. "
+            "Surfaced in the UI so the operator knows what they're "
+            "granting."
+        ),
+    )
+    docs_url: str | None = Field(
+        default=None,
+        description=(
+            "Link to provider docs / where to generate a key. Shown "
+            "as a helper link next to the input."
+        ),
+    )
+
+
 class Manifest(BaseModel):
     name: str
     version: str = "0.1.0"
@@ -64,6 +121,13 @@ class Manifest(BaseModel):
     sandbox: SandboxSpec
     policy: AgentPolicy = Field(default_factory=AgentPolicy)
     memory_namespace: str | None = None
+    integrations: list[IntegrationSpec] = Field(
+        default_factory=list,
+        description=(
+            "Per-agent third-party dependencies. Opt-in; agents that "
+            "only touch local state leave this empty."
+        ),
+    )
 
     @field_validator("name")
     @classmethod

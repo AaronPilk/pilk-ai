@@ -26,9 +26,49 @@ async def list_agents(request: Request) -> dict:
     if registry is None:
         return {"agents": [], "profiles": sorted(VALID_PROFILES)}
     rows = await registry.list_rows()
+
+    # Stamp each row with per-agent integration requirements + whether
+    # they're configured. The UI renders these inline so the operator
+    # can paste keys / Connect OAuth without bouncing to Settings.
+    secrets = getattr(request.app.state, "integration_secrets", None)
+    accounts = getattr(request.app.state, "accounts", None)
+    manifests = registry.manifests()
     for row in rows:
+        manifest = manifests.get(row["name"])
         row["autonomy_profile"] = policies.get(row["name"], "assistant")
+        row["integrations"] = _integrations_for(manifest, secrets, accounts)
     return {"agents": rows, "profiles": sorted(VALID_PROFILES)}
+
+
+def _integrations_for(manifest, secrets, accounts) -> list[dict]:
+    """Map a manifest's declared integrations → UI-ready dicts.
+
+    Missing stores (local dev without Settings seeded) fall back to
+    ``configured=False`` rather than raising — the UI still renders the
+    row, just with the "Needs setup" affordance.
+    """
+    if manifest is None or not manifest.integrations:
+        return []
+    out: list[dict] = []
+    for spec in manifest.integrations:
+        configured = False
+        if spec.kind == "api_key" and secrets is not None:
+            configured = secrets.get_value(spec.name) is not None
+        elif spec.kind == "oauth" and accounts is not None:
+            role = spec.role or "user"
+            configured = accounts.default(spec.name, role) is not None
+        out.append(
+            {
+                "name": spec.name,
+                "kind": spec.kind,
+                "label": spec.label,
+                "role": spec.role,
+                "scopes": list(spec.scopes),
+                "docs_url": spec.docs_url,
+                "configured": configured,
+            }
+        )
+    return out
 
 
 @router.post("/{name}/policy")

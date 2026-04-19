@@ -826,6 +826,16 @@ export interface CostEntry {
   occurred_at: string;
 }
 
+export interface AgentIntegration {
+  name: string;
+  kind: "api_key" | "oauth";
+  label: string;
+  role: "user" | "system" | null;
+  scopes: string[];
+  docs_url: string | null;
+  configured: boolean;
+}
+
 export interface AgentRow {
   name: string;
   version: string;
@@ -838,6 +848,7 @@ export interface AgentRow {
   sandbox?: { type: string; profile: string; capabilities?: string[] };
   budget?: { per_run_usd: number; daily_usd: number };
   autonomy_profile?: AutonomyProfile;
+  integrations?: AgentIntegration[];
 }
 
 export interface SandboxRow {

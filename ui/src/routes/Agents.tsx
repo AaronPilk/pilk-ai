@@ -7,6 +7,9 @@ import {
   pilk,
   runAgent,
   setAgentPolicy,
+  setIntegrationSecret,
+  startOAuthConnection,
+  type AgentIntegration,
   type AgentRow,
   type AutonomyProfile,
   type ConnectedAccount,
@@ -163,6 +166,23 @@ export default function Agents() {
                   prev.map((a) =>
                     a.name === current.name
                       ? { ...a, autonomy_profile: profile }
+                      : a,
+                  ),
+                );
+              }}
+            />
+            <IntegrationsPanel
+              agent={current}
+              onConfigured={(name) => {
+                setAgents((prev) =>
+                  prev.map((a) =>
+                    a.name === current.name
+                      ? {
+                          ...a,
+                          integrations: (a.integrations ?? []).map((i) =>
+                            i.name === name ? { ...i, configured: true } : i,
+                          ),
+                        }
                       : a,
                   ),
                 );
@@ -339,6 +359,216 @@ const PROFILE_BLURB: Record<AutonomyProfile, string> = {
   autonomous:
     "Trusted for outbound comms too (email, posts). Finance and irreversible actions still approve every time.",
 };
+
+function IntegrationsPanel({
+  agent,
+  onConfigured,
+}: {
+  agent: AgentRow;
+  onConfigured: (name: string) => void;
+}) {
+  const integrations = agent.integrations ?? [];
+  if (integrations.length === 0) return null;
+
+  const apiKeys = integrations.filter((i) => i.kind === "api_key");
+  const oauths = integrations.filter((i) => i.kind === "oauth");
+
+  return (
+    <div className="agent-tools agent-integrations">
+      <div className="agent-tools-head">Integrations this agent needs</div>
+      {oauths.length > 0 && (
+        <div className="agent-integrations-group">
+          <div className="agent-integrations-sub">OAuth accounts</div>
+          {oauths.map((i) => (
+            <OAuthIntegrationRow
+              key={`${i.name}:${i.role}`}
+              integration={i}
+              onConfigured={() => onConfigured(i.name)}
+            />
+          ))}
+        </div>
+      )}
+      {apiKeys.length > 0 && (
+        <div className="agent-integrations-group">
+          <div className="agent-integrations-sub">API keys</div>
+          {apiKeys.map((i) => (
+            <ApiKeyIntegrationRow
+              key={i.name}
+              integration={i}
+              onConfigured={() => onConfigured(i.name)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ApiKeyIntegrationRow({
+  integration,
+  onConfigured,
+}: {
+  integration: AgentIntegration;
+  onConfigured: () => void;
+}) {
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(!integration.configured);
+
+  const save = async () => {
+    if (!value.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await setIntegrationSecret(integration.name, value.trim());
+      setValue("");
+      setEditing(false);
+      onConfigured();
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className={`agent-integration-row agent-integration-row--${
+        integration.configured ? "configured" : "missing"
+      }`}
+    >
+      <div className="agent-integration-head">
+        <span className="agent-integration-label">{integration.label}</span>
+        <span
+          className={`agent-integration-chip agent-integration-chip--${
+            integration.configured ? "configured" : "missing"
+          }`}
+        >
+          {integration.configured ? "Configured ✓" : "Needs setup"}
+        </span>
+      </div>
+      <div className="agent-integration-key-name">Key: {integration.name}</div>
+      {integration.configured && !editing && (
+        <button
+          className="btn btn--ghost"
+          onClick={() => setEditing(true)}
+        >
+          Rotate key
+        </button>
+      )}
+      {editing && (
+        <div className="agent-integration-form">
+          <input
+            type="password"
+            placeholder="Paste key…"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            disabled={saving}
+            autoComplete="off"
+          />
+          <button
+            className="btn btn--primary"
+            onClick={save}
+            disabled={saving || !value.trim()}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+          {integration.configured && (
+            <button
+              className="btn btn--ghost"
+              onClick={() => {
+                setEditing(false);
+                setValue("");
+                setError(null);
+              }}
+              disabled={saving}
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      )}
+      {integration.docs_url && (
+        <a
+          href={integration.docs_url}
+          target="_blank"
+          rel="noreferrer"
+          className="agent-integration-docs"
+        >
+          Where to get this key →
+        </a>
+      )}
+      {error && <div className="agent-flash">Error: {error}</div>}
+    </div>
+  );
+}
+
+function OAuthIntegrationRow({
+  integration,
+  onConfigured,
+}: {
+  integration: AgentIntegration;
+  onConfigured: () => void;
+}) {
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const connect = async () => {
+    setConnecting(true);
+    setError(null);
+    try {
+      const r = await startOAuthConnection({
+        provider: integration.name,
+        role: integration.role ?? "user",
+        make_default: true,
+      });
+      // Hand off to the provider — onConfigured will flip via the
+      // account.linked WS event the parent page already listens for.
+      window.location.href = r.auth_url;
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+      setConnecting(false);
+    }
+  };
+
+  return (
+    <div
+      className={`agent-integration-row agent-integration-row--${
+        integration.configured ? "configured" : "missing"
+      }`}
+    >
+      <div className="agent-integration-head">
+        <span className="agent-integration-label">{integration.label}</span>
+        <span
+          className={`agent-integration-chip agent-integration-chip--${
+            integration.configured ? "configured" : "missing"
+          }`}
+        >
+          {integration.configured ? "Connected ✓" : "Needs connection"}
+        </span>
+      </div>
+      {integration.scopes.length > 0 && (
+        <div className="agent-integration-scopes">
+          Scopes: {integration.scopes.join(", ")}
+        </div>
+      )}
+      {!integration.configured && (
+        <button
+          className="btn btn--primary"
+          onClick={() => {
+            void connect();
+            onConfigured();
+          }}
+          disabled={connecting}
+        >
+          {connecting ? "Opening consent…" : `Connect ${humanizeProvider(integration.name)}`}
+        </button>
+      )}
+      {error && <div className="agent-flash">Error: {error}</div>}
+    </div>
+  );
+}
 
 function AutonomyControl({
   agent,
