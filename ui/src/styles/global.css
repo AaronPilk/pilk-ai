@@ -4996,3 +4996,29 @@ body {
     align-items: stretch;
   }
 }
+
+/* ── Tasks session gallery extras ──────────────────────────────
+   Session cards piggyback on .task-card. These additions: a subtle
+   "+ N more" inline note in the goal line, and a small "Live"
+   pulse chip on sessions whose running plan is actively going. */
+.task-card-more {
+  color: var(--text-dim);
+  font-weight: 400;
+  font-size: 13px;
+}
+
+.task-card-session-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(101, 209, 155, 0.16);
+  color: var(--ok);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  width: fit-content;
+  margin-top: 4px;
+}
