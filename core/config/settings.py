@@ -163,12 +163,19 @@ class Settings(BaseSettings):
     )
 
     # ── Coding engines ────────────────────────────────────────────
-    # Claude Code runs locally via a bridge when the user has one set
-    # up; unset = not available, PILK falls back to the API engine.
-    claude_code_bridge_url: str | None = Field(
-        default=None,
+    # Path (or bare command name on PATH) for the local Claude Code
+    # binary. When resolvable and responsive, the ClaudeCodeBridge
+    # engine delegates coding tasks to it so they're billed against
+    # the operator's Claude subscription instead of PILK's per-token
+    # API budget. Legacy alias `PILK_CLAUDE_CODE_BRIDGE_URL` is kept
+    # so existing deploys don't need to rename their env var.
+    claude_code_binary: str = Field(
+        default="claude",
         validation_alias=AliasChoices(
-            "PILK_CLAUDE_CODE_BRIDGE_URL", "CLAUDE_CODE_BRIDGE_URL"
+            "PILK_CLAUDE_CODE_BINARY",
+            "CLAUDE_CODE_BINARY",
+            "PILK_CLAUDE_CODE_BRIDGE_URL",
+            "CLAUDE_CODE_BRIDGE_URL",
         ),
     )
     # Dedicated model for the draft-only APIEngine. Defaults to the
