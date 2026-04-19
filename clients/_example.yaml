@@ -1,0 +1,22 @@
+# Example client manifest.
+#
+# Files starting with an underscore (`_`) are IGNORED by ClientStore.
+# Copy this file to `clients/<slug>.yaml` (no underscore) and edit.
+
+name: Example Corporation
+
+canva_brand_kit_id: example-brand-kit-id
+canva_brand_kit_name: Example Primary Brand
+
+wordpress_site_url: https://example.com
+# This field holds the *name* of a row in the IntegrationSecretsStore —
+# paste the actual WordPress application password into Settings → API Keys
+# under that exact name.
+wordpress_secret_key: wordpress_example_app_password
+
+default_email_recipients:
+  - contact@example.com
+
+style_notes: |
+  Straightforward corporate voice. Prefer photography over illustration.
+  Keep hero sections under 60 characters. No exclamation marks.
