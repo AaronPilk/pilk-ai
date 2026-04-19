@@ -18,6 +18,7 @@ const groups: Group[] = [
       { to: "/agents", label: "Agents" },
       { to: "/sandboxes", label: "Sandboxes" },
       { to: "/approvals", label: "Approvals" },
+      { to: "/sentinel", label: "Sentinel" },
     ],
   },
   {

@@ -38,6 +38,7 @@ from core.api.routes.memory import router as memory_router
 from core.api.routes.migration import router as migration_router
 from core.api.routes.plans import router as plans_router
 from core.api.routes.sandboxes import router as sandboxes_router
+from core.api.routes.sentinel import router as sentinel_router
 from core.api.routes.supabase import router as supabase_router
 from core.api.routes.system_status import router as system_status_router
 from core.api.routes.voice import router as voice_router
@@ -133,6 +134,58 @@ from core.voice.openai_driver import OpenAISTT, OpenAITTS
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / "agents"
 CLIENTS_DIR = REPO_ROOT / "clients"
+
+# Cap the number of unacked incidents that get prepended to a planner
+# system prompt. More than a handful and the brief becomes noise; if
+# there really are 50 unacked incidents the operator has a bigger
+# problem than prompt framing.
+SENTINEL_BRIEF_MAX_INCIDENTS = 5
+# Only promote incidents that rise above low-grade chatter into the
+# orchestrator's system prompt. LOW severity stays logged but doesn't
+# pollute every chat turn.
+SENTINEL_BRIEF_MIN_SEVERITY_RANK = 1  # MED+
+
+
+def _compose_sentinel_brief(incidents: IncidentStore) -> str:
+    """Render unacked incidents as a tight bullet list the orchestrator
+    can prepend to its system prompt.
+
+    Empty string when there's nothing worth surfacing — the orchestrator
+    uses that as the "all clear" signal and leaves the prompt alone.
+    Runs on every chat turn so we keep it cheap: a single indexed SQL
+    query + a couple dozen characters per row.
+    """
+    try:
+        rows = incidents.recent(
+            limit=SENTINEL_BRIEF_MAX_INCIDENTS,
+            only_unacked=True,
+        )
+    except Exception:
+        # Sentinel-store trouble must never keep the orchestrator from
+        # running. A silent skip here just means PILK doesn't get the
+        # brief for this turn — the incident, if any, is still in SQLite.
+        return ""
+    promoted = [
+        r for r in rows
+        if r.severity.rank() >= SENTINEL_BRIEF_MIN_SEVERITY_RANK
+    ]
+    if not promoted:
+        return ""
+    lines = ["[Sentinel situation report — unacked incidents]"]
+    for inc in promoted:
+        agent = inc.agent_name or "unknown"
+        cause = inc.triage.likely_cause if inc.triage else None
+        suffix = f" — {cause}" if cause else ""
+        lines.append(
+            f"- [{inc.severity.value}] {agent}: "
+            f"{inc.summary}{suffix} (id={inc.id})"
+        )
+    lines.append(
+        "When answering the operator, mention any of the above that's "
+        "relevant to what they're asking. You can acknowledge or restart "
+        "via the sentinel tools if you decide that's appropriate."
+    )
+    return "\n".join(lines)
 
 
 @asynccontextmanager
@@ -454,6 +507,16 @@ async def lifespan(app: FastAPI):
             anthropic_client=client,
             openai_api_key=settings.openai_api_key,
         )
+        # Sentinel → orchestrator handoff. Before the first planner
+        # turn of any run, the orchestrator asks us "anything on fire?"
+        # and we answer with a compact brief pulled straight from the
+        # unacked incidents. The orchestrator prepends it to the system
+        # prompt so PILK plans *around* current trouble instead of
+        # finding out after-the-fact. Empty brief = all clear = no
+        # prompt mutation.
+        async def sentinel_context_fn() -> str:
+            return _compose_sentinel_brief(sentinel_incidents)
+
         orchestrator = Orchestrator(
             client=client,
             registry=registry,
@@ -467,6 +530,7 @@ async def lifespan(app: FastAPI):
             sandboxes=sandboxes,
             governor=governor,
             providers=providers,
+            sentinel_context_fn=sentinel_context_fn,
         )
         log.info(
             "orchestrator_ready",
@@ -525,6 +589,9 @@ async def lifespan(app: FastAPI):
                         # Haiku via the governor in a follow-up once
                         # we've observed a day of real findings and
                         # know the prompt is stable.
+        broadcast=broadcast,  # emits `sentinel.incident` on every new
+                              # incident so the UI top-bar + orchestrator
+                              # hear about trouble without polling.
     )
     for t in make_sentinel_tools(
         heartbeats=sentinel_heartbeats,
@@ -594,6 +661,11 @@ async def lifespan(app: FastAPI):
     app.state.sentinel = sentinel
     app.state.sentinel_heartbeats = sentinel_heartbeats
     app.state.sentinel_incidents = sentinel_incidents
+    # Expose the broadcast callable to routes that emit their own events
+    # (e.g. `sentinel.incident.acked`). Nothing else needs this; routes
+    # that already had a direct handle (orchestrator, approvals) still
+    # receive `broadcast` via constructor injection.
+    app.state.broadcast = broadcast
     app.state.coding_router = coding_router
     app.state.accounts = accounts
     app.state.grants = grants
@@ -666,6 +738,7 @@ def create_app() -> FastAPI:
     app.include_router(integration_secrets_router)
     app.include_router(xauusd_settings_router)
     app.include_router(logs_router)
+    app.include_router(sentinel_router)
     app.include_router(coding_http_router)
     app.include_router(supabase_router)
     app.include_router(ws_router)

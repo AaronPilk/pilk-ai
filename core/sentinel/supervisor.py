@@ -77,6 +77,13 @@ RestartFn = Callable[[str], Awaitable[RemediationResult]]
 an agent. Wired in the FastAPI lifespan against the AgentRegistry."""
 
 
+BroadcastFn = Callable[[str, Any], Awaitable[None]]
+"""Optional broadcaster the supervisor calls on every created incident
+so the UI + the orchestrator can react without polling. Shape matches
+the Hub's ``broadcast(event, payload)`` signature. ``None`` keeps the
+pre-existing "sentinel is silent externally" behaviour."""
+
+
 @dataclass
 class _TokenLedger:
     """In-memory per-day token accumulator. Resets on UTC day rollover.
@@ -127,6 +134,7 @@ class Supervisor:
         scan_interval_seconds: int = DEFAULT_SCAN_INTERVAL_SECONDS,
         log_buffer_per_agent: int = DEFAULT_LOG_BUFFER_PER_AGENT,
         daily_token_limit: int = DEFAULT_DAILY_TOKEN_LIMIT,
+        broadcast: BroadcastFn | None = None,
     ) -> None:
         self._heartbeats = heartbeats
         self._incidents = incidents
@@ -135,6 +143,7 @@ class Supervisor:
         self._restart_fn = restart_fn or _noop_restart
         self._logs_dir = logs_dir
         self._llm_call = llm_call
+        self._broadcast = broadcast
         self._triage_cache = TriageCache()
         self._scan_interval = scan_interval_seconds
         self._log_buffer_per_agent = log_buffer_per_agent
@@ -375,6 +384,22 @@ class Supervisor:
             # block the next rule pass.
             await asyncio.to_thread(self._notifier.notify, incident)
 
+        if self._broadcast is not None:
+            # In-process broadcast so the UI + orchestrator learn about
+            # new incidents without polling. Best-effort — a broadcaster
+            # failure must never block the supervisor loop.
+            try:
+                await self._broadcast(
+                    "sentinel.incident",
+                    _incident_broadcast_payload(incident),
+                )
+            except Exception as e:
+                log.warning(
+                    "sentinel_broadcast_failed",
+                    incident_id=incident.id,
+                    error=str(e),
+                )
+
         log.info(
             "sentinel_finding",
             incident_id=incident.id,
@@ -431,10 +456,34 @@ def _infer_level(event_type: str, payload: dict[str, Any]) -> str:
     return "info"
 
 
+def _incident_broadcast_payload(incident: Incident) -> dict[str, Any]:
+    """Compact payload for WebSocket subscribers + orchestrator context.
+    Full details live in the DB; this shape is optimized for a top-bar
+    badge + a one-line chat interjection."""
+    return {
+        "id": incident.id,
+        "agent": incident.agent_name,
+        "severity": incident.severity.value,
+        "category": incident.category.value,
+        "kind": incident.finding_kind,
+        "summary": incident.summary,
+        "likely_cause": (
+            incident.triage.likely_cause if incident.triage else None
+        ),
+        "recommended_action": (
+            incident.triage.recommended_action if incident.triage else None
+        ),
+        "remediation": incident.remediation,
+        "outcome": incident.outcome,
+        "created_at": incident.created_at,
+    }
+
+
 __all__ = [
     "DEDUPE_WINDOW_SECONDS",
     "DEFAULT_DAILY_TOKEN_LIMIT",
     "DEFAULT_SCAN_INTERVAL_SECONDS",
+    "BroadcastFn",
     "RestartFn",
     "Supervisor",
 ]
