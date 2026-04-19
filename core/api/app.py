@@ -550,7 +550,17 @@ async def lifespan(app: FastAPI):
     # are scaffolded and report unavailable until wired in follow-up
     # batches; the API engine is the only one that actually runs today.
     coding_engines: dict = {
-        "claude-code": ClaudeCodeBridge(settings.claude_code_binary),
+        "claude-code": ClaudeCodeBridge(
+            settings.claude_code_binary,
+            max_turns=settings.claude_code_max_turns,
+            permission_mode=settings.claude_code_permission_mode,
+            max_budget_usd=(
+                settings.claude_code_max_budget_usd
+                if settings.claude_code_max_budget_usd > 0
+                else None
+            ),
+            model=settings.claude_code_model,
+        ),
         "agent-sdk": AgentSDKEngine(
             client=client, model=settings.coding_api_model
         ),

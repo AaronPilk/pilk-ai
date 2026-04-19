@@ -178,6 +178,50 @@ class Settings(BaseSettings):
             "CLAUDE_CODE_BRIDGE_URL",
         ),
     )
+    # Upper bound on agentic turns per Claude Code run. The CLI has
+    # no default cap, so leaving this unset risks an autonomous loop
+    # burning the operator's whole work-session. 10 is plenty for
+    # repo-scope refactors and short enough to notice when something's
+    # stuck.
+    claude_code_max_turns: int = Field(
+        default=10,
+        validation_alias=AliasChoices(
+            "PILK_CLAUDE_CODE_MAX_TURNS", "CLAUDE_CODE_MAX_TURNS"
+        ),
+    )
+    # Passed straight to `claude --permission-mode`. Default is
+    # `bypassPermissions` because PILK already held a single approval
+    # for the delegated task; per-tool prompts would stall in headless
+    # mode. Set `acceptEdits` for a more conservative posture that
+    # still auto-approves file edits, or `plan` to force Claude Code
+    # to emit a plan without executing.
+    claude_code_permission_mode: str = Field(
+        default="bypassPermissions",
+        validation_alias=AliasChoices(
+            "PILK_CLAUDE_CODE_PERMISSION_MODE",
+            "CLAUDE_CODE_PERMISSION_MODE",
+        ),
+    )
+    # Optional hard per-run spend cap forwarded as `--max-budget-usd`.
+    # Subscription runs report $0 cost; this only matters when the CLI
+    # is authed with an API key (e.g. a workstation without a Claude
+    # subscription logged in). Leave at 0 / unset to disable.
+    claude_code_max_budget_usd: float = Field(
+        default=0.0,
+        validation_alias=AliasChoices(
+            "PILK_CLAUDE_CODE_MAX_BUDGET_USD",
+            "CLAUDE_CODE_MAX_BUDGET_USD",
+        ),
+    )
+    # Optional model override forwarded as `--model`. Accepts a short
+    # alias (`sonnet`, `opus`, `haiku`) or a full model name. Unset =
+    # whatever Claude Code's own default is.
+    claude_code_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PILK_CLAUDE_CODE_MODEL", "CLAUDE_CODE_MODEL"
+        ),
+    )
     # Dedicated model for the draft-only APIEngine. Defaults to the
     # standard tier so the governor can re-route via its normal rules
     # later without a settings change.
