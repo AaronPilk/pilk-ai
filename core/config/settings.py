@@ -130,6 +130,38 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Creative-content agent integrations ───────────────────────
+    # Google AI (Gemini) key for Nano Banana = `gemini-2.5-flash-image`.
+    # Get one at https://aistudio.google.com/app/apikey. Falls back to
+    # the generic GEMINI_API_KEY / GOOGLE_API_KEY env names.
+    nano_banana_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "NANO_BANANA_API_KEY",
+            "PILK_NANO_BANANA_API_KEY",
+            "GEMINI_API_KEY",
+            "PILK_GEMINI_API_KEY",
+        ),
+    )
+    # Higgsfield Cloud API key for cinematic text→video / image→video.
+    # Dashboard: https://cloud.higgsfield.ai. Tokens are short-lived;
+    # rotate via the dashboard-paste flow rather than baking long-lived
+    # values into the deploy.
+    higgsfield_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "HIGGSFIELD_API_KEY", "PILK_HIGGSFIELD_API_KEY"
+        ),
+    )
+    # Higgsfield API base — kept overridable so an enterprise tenant or
+    # a regional endpoint doesn't need a code change.
+    higgsfield_api_base: str = Field(
+        default="https://platform.higgsfield.ai",
+        validation_alias=AliasChoices(
+            "HIGGSFIELD_API_BASE", "PILK_HIGGSFIELD_API_BASE"
+        ),
+    )
+
     # ── Coding engines ────────────────────────────────────────────
     # Claude Code runs locally via a bridge when the user has one set
     # up; unset = not available, PILK falls back to the API engine.
