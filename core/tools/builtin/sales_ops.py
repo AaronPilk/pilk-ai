@@ -22,10 +22,16 @@ import httpx
 
 from core.config import get_settings
 from core.policy.risk import RiskClass
+from core.secrets import resolve_secret
 from core.tools.registry import Tool, ToolContext, ToolOutcome
 
 DEFAULT_TIMEOUT_S = 20.0
 HUBSPOT_API_BASE = "https://api.hubapi.com"
+
+
+def _secret(name: str, fallback: str | None) -> str | None:
+    """User-set secret from the dashboard wins; fall back to env var."""
+    return resolve_secret(name, fallback)
 
 
 # ── Google Maps / Places ──────────────────────────────────────────
@@ -39,12 +45,12 @@ async def _google_places_search(
             content="google_places_search requires a 'query' argument.",
             is_error=True,
         )
-    api_key = get_settings().google_places_api_key
+    api_key = _secret("google_places_api_key", get_settings().google_places_api_key)
     if not api_key:
         return ToolOutcome(
             content=(
-                "Google Places is not configured. Set "
-                "GOOGLE_PLACES_API_KEY (or GOOGLE_API_KEY) to enable."
+                "Google Places is not configured. Add a Google Places API "
+                "key in Settings → API Keys (or set GOOGLE_PLACES_API_KEY)."
             ),
             is_error=True,
         )
@@ -143,12 +149,13 @@ async def _site_audit(args: dict, ctx: ToolContext) -> ToolOutcome:
         )
     if not (url.startswith("http://") or url.startswith("https://")):
         url = f"https://{url}"
-    api_key = get_settings().pagespeed_api_key
+    api_key = _secret("pagespeed_api_key", get_settings().pagespeed_api_key)
     if not api_key:
         return ToolOutcome(
             content=(
-                "PageSpeed is not configured. Set PAGESPEED_API_KEY "
-                "(or GOOGLE_API_KEY) to enable."
+                "PageSpeed is not configured. Add a PageSpeed Insights "
+                "API key in Settings → API Keys (or set "
+                "PAGESPEED_API_KEY)."
             ),
             is_error=True,
         )
@@ -246,11 +253,12 @@ async def _hunter_find_email(args: dict, ctx: ToolContext) -> ToolOutcome:
             content="hunter_find_email requires a 'domain' argument.",
             is_error=True,
         )
-    api_key = get_settings().hunter_io_api_key
+    api_key = _secret("hunter_io_api_key", get_settings().hunter_io_api_key)
     if not api_key:
         return ToolOutcome(
             content=(
-                "Hunter.io is not configured. Set HUNTER_IO_API_KEY."
+                "Hunter.io is not configured. Add a Hunter.io API key in "
+                "Settings → API Keys (or set HUNTER_IO_API_KEY)."
             ),
             is_error=True,
         )
@@ -332,7 +340,7 @@ hunter_find_email_tool = Tool(
 # ── HubSpot (single-tenant Private App token) ─────────────────────
 
 def _hubspot_headers() -> dict[str, str] | None:
-    token = get_settings().hubspot_private_token
+    token = _secret("hubspot_private_token", get_settings().hubspot_private_token)
     if not token:
         return None
     return {
@@ -344,9 +352,10 @@ def _hubspot_headers() -> dict[str, str] | None:
 def _hubspot_not_configured() -> ToolOutcome:
     return ToolOutcome(
         content=(
-            "HubSpot is not configured. Create a Private App in "
-            "HubSpot → Settings → Integrations → Private Apps, grant "
-            "CRM contact + note scopes, and set HUBSPOT_PRIVATE_TOKEN."
+            "HubSpot is not configured. Create a Private App in HubSpot "
+            "(Settings → Integrations → Private Apps) with CRM contact + "
+            "note scopes, then paste the token in PILK's Settings → API "
+            "Keys (or set HUBSPOT_PRIVATE_TOKEN)."
         ),
         is_error=True,
     )

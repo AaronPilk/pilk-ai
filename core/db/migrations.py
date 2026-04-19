@@ -78,6 +78,19 @@ MIGRATIONS: dict[int, list[str]] = {
             updated_at TEXT NOT NULL
         )""",
     ],
+    # v6: user-managed API keys for external integrations (HubSpot,
+    # Hunter.io, Google APIs, etc.). One row per logical secret name;
+    # values are plaintext under 0600 OS perms on the SQLite file
+    # (same security boundary as OAuth tokens in accounts/secrets/).
+    # Phase 2 moves this table (and the OAuth blob) onto Supabase with
+    # per-user scoping; single-tenant v1 keeps it alongside the daemon.
+    6: [
+        """CREATE TABLE IF NOT EXISTS integration_secrets (
+            name       TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""",
+    ],
 }
 
 
