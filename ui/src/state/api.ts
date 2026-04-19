@@ -918,3 +918,45 @@ export interface TrustRule {
   reason: string | null;
   uses: number;
 }
+
+// ── Integration secrets (user-managed API keys) ─────────────────
+
+export interface IntegrationSecretEntry {
+  name: string;
+  label: string;
+  description: string;
+  env: string;
+  configured: boolean;
+  updated_at: string | null;
+}
+
+export async function fetchIntegrationSecrets(): Promise<{
+  entries: IntegrationSecretEntry[];
+}> {
+  const r = await apiFetch(`/integration-secrets`);
+  if (!r.ok) throw new Error(`GET /integration-secrets failed: ${r.status}`);
+  return r.json();
+}
+
+export async function setIntegrationSecret(
+  name: string,
+  value: string,
+): Promise<{ name: string; configured: boolean }> {
+  const r = await apiFetch(`/integration-secrets/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value }),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function clearIntegrationSecret(
+  name: string,
+): Promise<{ name: string; configured: boolean; removed: boolean }> {
+  const r = await apiFetch(`/integration-secrets/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}

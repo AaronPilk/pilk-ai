@@ -319,3 +319,40 @@ async def test_hubspot_add_note_requires_args() -> None:
         {"contact_id": "", "body": ""}, ToolContext()
     )
     assert out.is_error
+
+
+# ── store → settings fallback plumbing ────────────────────────────
+
+@pytest.mark.asyncio
+async def test_store_override_beats_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A key written via the Settings UI must win over a matching env
+    var — otherwise the dashboard's "overrides take effect immediately"
+    promise would be a lie."""
+    from core.db import ensure_schema
+    from core.secrets import IntegrationSecretsStore, set_integration_secrets_store
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("HUBSPOT_PRIVATE_TOKEN", "env-token")
+    settings = get_settings()
+    ensure_schema(settings.db_path)
+    store = IntegrationSecretsStore(settings.db_path)
+    store.upsert("hubspot_private_token", "ui-token")
+    set_integration_secrets_store(store)
+
+    seen: dict[str, str] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["auth"] = req.headers.get("authorization", "")
+        return httpx.Response(200, json={"results": []})
+
+    _install_transport(monkeypatch, handler)
+    try:
+        out = await hubspot_search_contact_tool.handler(
+            {"email": "x@acme.com"}, ToolContext()
+        )
+    finally:
+        set_integration_secrets_store(None)
+    assert not out.is_error
+    assert seen["auth"] == "Bearer ui-token"

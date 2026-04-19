@@ -7,12 +7,14 @@ import {
   type WakePhrase,
 } from "../voice/ambient";
 import {
+  clearIntegrationSecret,
   deleteConnectedAccount,
   fetchAgents,
   fetchCodingEngines,
   fetchConnectedAccounts,
   fetchGovernorStatus,
   fetchGrants,
+  fetchIntegrationSecrets,
   fetchProviders,
   grantAgentAccess,
   pilk,
@@ -20,11 +22,13 @@ import {
   setDefaultConnectedAccount,
   setGovernorConfig,
   setGovernorOverride,
+  setIntegrationSecret,
   startOAuthConnection,
   type AgentRow,
   type CodingEngineHealth,
   type ConnectedAccount,
   type GovernorStatus,
+  type IntegrationSecretEntry,
   type OverrideMode,
   type ProviderInfo,
 } from "../state/api";
@@ -819,13 +823,196 @@ export default function Settings() {
         )}
       </section>
 
+      <IntegrationSecretsSection />
+
       <section className="settings-card settings-card--muted">
-        <div className="settings-card-title">Session vault &amp; trust rules</div>
+        <div className="settings-card-title">Trust rule editor</div>
         <p className="settings-card-body">
-          Encrypted credential vault and fine-grained trust rule editor arrive
-          in a follow-up batch.
+          Fine-grained per-tool trust rule editor arrives in a follow-up batch.
         </p>
       </section>
+    </div>
+  );
+}
+
+/** Settings → API Keys.
+ *
+ * Single-tenant form over the `/integration-secrets` route. Each row
+ * toggles between "Add key" and "Replace / Clear" based on whether the
+ * server says it's configured. The dashboard never reads the stored
+ * value back — once saved, the textarea clears and only the timestamp
+ * changes. Env-var fallback stays live, so Railway vars keep working
+ * when nothing's been set via this UI.
+ */
+function IntegrationSecretsSection() {
+  const [entries, setEntries] = useState<IntegrationSecretEntry[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const refresh = useCallback(() => {
+    fetchIntegrationSecrets()
+      .then((r) => setEntries(r.entries))
+      .catch((e: Error) => setErr(e.message));
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return (
+    <section className="settings-card">
+      <div className="settings-card-title">API Keys</div>
+      <p className="settings-card-body">
+        Paste third-party keys here and they become live immediately — no
+        Railway redeploy. Values are never echoed back after save.
+      </p>
+      {err && <div className="settings-error">Could not load: {err}</div>}
+      <div className="apikeys-list">
+        {entries === null ? (
+          <div className="settings-card-body">Loading…</div>
+        ) : (
+          entries.map((e) => (
+            <IntegrationSecretRow
+              key={e.name}
+              entry={e}
+              onChanged={refresh}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function IntegrationSecretRow({
+  entry,
+  onChanged,
+}: {
+  entry: IntegrationSecretEntry;
+  onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState<boolean>(!entry.configured);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setErr("Paste a key first.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await setIntegrationSecret(entry.name, trimmed);
+      setValue("");
+      setEditing(false);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clear = async () => {
+    if (
+      !confirm(
+        `Clear the stored ${entry.label} key? The agent will fall back ` +
+          `to the ${entry.env} env var (if set).`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await clearIntegrationSecret(entry.name);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="apikeys-row">
+      <div className="apikeys-row-head">
+        <div className="apikeys-row-label">
+          {entry.label}
+          {entry.configured ? (
+            <span className="apikeys-badge apikeys-badge--ok">Configured</span>
+          ) : (
+            <span className="apikeys-badge apikeys-badge--off">Not set</span>
+          )}
+        </div>
+        <div className="apikeys-row-env">env: {entry.env}</div>
+      </div>
+      <div className="apikeys-row-desc">{entry.description}</div>
+      {editing ? (
+        <div className="apikeys-row-form">
+          <input
+            type="password"
+            className="apikeys-input"
+            placeholder={`Paste your ${entry.label} key`}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            disabled={busy}
+          />
+          <div className="apikeys-row-actions">
+            <button
+              type="button"
+              className="apikeys-btn apikeys-btn--primary"
+              onClick={() => void save()}
+              disabled={busy}
+            >
+              {busy ? "Saving…" : "Save"}
+            </button>
+            {entry.configured && (
+              <button
+                type="button"
+                className="apikeys-btn"
+                onClick={() => {
+                  setEditing(false);
+                  setValue("");
+                  setErr(null);
+                }}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="apikeys-row-actions">
+          <button
+            type="button"
+            className="apikeys-btn"
+            onClick={() => setEditing(true)}
+            disabled={busy}
+          >
+            Replace key
+          </button>
+          <button
+            type="button"
+            className="apikeys-btn apikeys-btn--danger"
+            onClick={() => void clear()}
+            disabled={busy}
+          >
+            Clear
+          </button>
+          {entry.updated_at && (
+            <span className="apikeys-row-updated">
+              Updated {new Date(entry.updated_at).toLocaleString()}
+            </span>
+          )}
+        </div>
+      )}
+      {err && <div className="settings-error">{err}</div>}
     </div>
   );
 }

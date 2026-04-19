@@ -31,6 +31,7 @@ from core.api.routes.coding import router as coding_http_router
 from core.api.routes.cost import router as cost_router
 from core.api.routes.governor import router as governor_router
 from core.api.routes.health import router as health_router
+from core.api.routes.integration_secrets import router as integration_secrets_router
 from core.api.routes.integrations import router as integrations_router
 from core.api.routes.logs import router as logs_router
 from core.api.routes.memory import router as memory_router
@@ -78,6 +79,10 @@ from core.orchestrator import Orchestrator, PlanStore
 from core.policy import AgentPolicyStore, ApprovalManager, Gate, TrustStore
 from core.registry import AgentRegistry
 from core.sandbox import SandboxManager
+from core.secrets import (
+    IntegrationSecretsStore,
+    set_integration_secrets_store,
+)
 from core.supabase import SupabaseClient
 from core.tools import Gateway, ToolRegistry
 from core.tools.builtin import (
@@ -119,6 +124,11 @@ async def lifespan(app: FastAPI):
     ledger = Ledger(settings.db_path)
     plans = PlanStore(settings.db_path)
     memory = MemoryStore(settings.db_path)
+    # User-managed API keys for external integrations — read by tools
+    # via `core.secrets.resolve_secret()` with env-var fallback, and
+    # written via PUT /integration-secrets from Settings → API Keys.
+    integration_secrets = IntegrationSecretsStore(settings.db_path)
+    set_integration_secrets_store(integration_secrets)
 
     async def broadcast(event_type: str, payload: dict) -> None:
         await hub.broadcast(event_type, payload)
@@ -425,6 +435,7 @@ async def lifespan(app: FastAPI):
     app.state.browser_sessions = browser_sessions
     app.state.governor = governor
     app.state.memory = memory
+    app.state.integration_secrets = integration_secrets
     app.state.coding_router = coding_router
     app.state.accounts = accounts
     app.state.grants = grants
@@ -489,6 +500,7 @@ def create_app() -> FastAPI:
     app.include_router(accounts_router)
     app.include_router(apple_router)
     app.include_router(memory_router)
+    app.include_router(integration_secrets_router)
     app.include_router(logs_router)
     app.include_router(coding_http_router)
     app.include_router(supabase_router)
