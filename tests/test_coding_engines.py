@@ -122,27 +122,98 @@ async def test_claude_code_unavailable_when_probe_returns_nonzero(
 async def test_claude_code_run_happy_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Happy-path: CLI returns a JSON result envelope under
+    `--output-format json`; engine parses it and surfaces the final
+    result text + session metadata."""
     monkeypatch.setattr("shutil.which", lambda _: "/fake/bin/claude")
     version_proc = _FakeProc(returncode=0, stdout=b"2.0.0\n")
-    run_proc = _FakeProc(
-        returncode=0,
-        stdout=b"First line of Claude's answer.\nA second line with detail.\n",
+    payload = (
+        b'{"type":"result","subtype":"success","is_error":false,'
+        b'"result":"Refactored main.py into two modules.\\n'
+        b'Added a quick sanity test.","total_cost_usd":0.0,'
+        b'"session_id":"sess-abc","num_turns":4}'
     )
+    run_proc = _FakeProc(returncode=0, stdout=payload)
     fake = _exec_factory(version_proc, run_proc)
     monkeypatch.setattr("asyncio.create_subprocess_exec", fake)
 
-    bridge = ClaudeCodeBridge("claude")
+    bridge = ClaudeCodeBridge("claude", max_turns=8)
     task = CodeTask(goal="refactor main.py", scope="file", repo_path=tmp_path)
     result = await bridge.run(task)
 
     assert result.ok
-    assert "First line of Claude's answer." in result.summary
-    assert "A second line with detail." in result.detail
-    assert result.usd == 0.0  # subscription-billed
-    # At least one run call was made with --print
-    run_args = [c for c in fake.calls if "--print" in c]
-    assert run_args, "expected a --print invocation"
-    assert "refactor main.py" in run_args[0]
+    assert "Refactored main.py" in result.summary
+    assert "Refactored main.py" in result.detail
+    assert result.usd == 0.0
+    assert result.metadata["session_id"] == "sess-abc"
+    assert result.metadata["num_turns"] == 4
+
+    # Invocation shape: expected flags are present, goal is last arg.
+    run_argv = next(c for c in fake.calls if "-p" in c)
+    assert "--output-format" in run_argv
+    assert "json" in run_argv
+    assert "--max-turns" in run_argv
+    assert "8" in run_argv
+    assert "--permission-mode" in run_argv
+    assert "bypassPermissions" in run_argv
+    assert "--append-system-prompt" in run_argv
+    assert "--bare" in run_argv
+    assert "--no-session-persistence" in run_argv
+    assert "--add-dir" in run_argv
+    assert str(tmp_path) in run_argv
+    assert run_argv[-1] == "refactor main.py"
+
+
+@pytest.mark.asyncio
+async def test_claude_code_run_falls_back_to_raw_stdout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Older CLIs may not emit valid JSON — engine should still
+    return the stdout as the result detail rather than failing."""
+    monkeypatch.setattr("shutil.which", lambda _: "/fake/bin/claude")
+    fake = _exec_factory(
+        _FakeProc(returncode=0, stdout=b"2.0.0"),
+        _FakeProc(
+            returncode=0,
+            stdout=b"Plain text answer, no JSON envelope.\nLine two.\n",
+        ),
+    )
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake)
+    bridge = ClaudeCodeBridge("claude")
+    result = await bridge.run(
+        CodeTask(goal="do a thing", scope="file", repo_path=tmp_path)
+    )
+    assert result.ok
+    assert "Plain text answer" in result.detail
+    assert result.metadata["output_format"] == "raw"
+
+
+@pytest.mark.asyncio
+async def test_claude_code_run_forwards_model_and_budget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Optional `model` and `max_budget_usd` constructor args get
+    threaded through to the CLI argv."""
+    monkeypatch.setattr("shutil.which", lambda _: "/fake/bin/claude")
+    fake = _exec_factory(
+        _FakeProc(returncode=0, stdout=b"2.0.0"),
+        _FakeProc(
+            returncode=0,
+            stdout=b'{"type":"result","is_error":false,"result":"ok"}',
+        ),
+    )
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake)
+    bridge = ClaudeCodeBridge(
+        "claude", model="claude-opus-4-7", max_budget_usd=2.50
+    )
+    await bridge.run(
+        CodeTask(goal="short", scope="function", repo_path=tmp_path)
+    )
+    run_argv = next(c for c in fake.calls if "-p" in c)
+    assert "--model" in run_argv
+    assert "claude-opus-4-7" in run_argv
+    assert "--max-budget-usd" in run_argv
+    assert "2.5" in run_argv
 
 
 @pytest.mark.asyncio
@@ -162,6 +233,35 @@ async def test_claude_code_run_nonzero_exit_surfaces_stderr(
     assert not result.ok
     assert "exited 3" in result.summary
     assert "auth required" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_claude_code_run_surfaces_json_error_envelope(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When the CLI reports an agent-side error inside a JSON envelope
+    (exit 0, is_error: true) we still flag the result as not-ok and
+    surface the error message in the summary."""
+    monkeypatch.setattr("shutil.which", lambda _: "/fake/bin/claude")
+    fake = _exec_factory(
+        _FakeProc(returncode=0, stdout=b"2.0.0"),
+        _FakeProc(
+            returncode=0,
+            stdout=(
+                b'{"type":"result","subtype":"error_during_execution",'
+                b'"is_error":true,"result":"hit max turns without '
+                b'converging","total_cost_usd":0.0}'
+            ),
+        ),
+    )
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake)
+    bridge = ClaudeCodeBridge("claude")
+    result = await bridge.run(
+        CodeTask(goal="impossible", scope="file", repo_path=tmp_path)
+    )
+    assert not result.ok
+    assert "error_during_execution" in result.summary
+    assert "hit max turns" in result.detail
 
 
 @pytest.mark.asyncio
