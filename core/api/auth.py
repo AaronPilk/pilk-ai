@@ -30,7 +30,7 @@ from core.logging import get_logger
 
 log = get_logger("pilkd.auth")
 
-_PUBLIC_PATHS = frozenset({"/health", "/version"})
+_PUBLIC_PATHS = frozenset({"/health", "/version", "/system/status"})
 _PUBLIC_PREFIXES = ("/ws",)
 
 

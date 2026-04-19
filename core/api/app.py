@@ -38,6 +38,7 @@ from core.api.routes.memory import router as memory_router
 from core.api.routes.plans import router as plans_router
 from core.api.routes.sandboxes import router as sandboxes_router
 from core.api.routes.supabase import router as supabase_router
+from core.api.routes.system_status import router as system_status_router
 from core.api.routes.voice import router as voice_router
 from core.api.routes.xauusd_settings import router as xauusd_settings_router
 from core.api.ws import router as ws_router
@@ -632,6 +633,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health_router)
+    app.include_router(system_status_router)
     app.include_router(plans_router)
     app.include_router(cost_router)
     app.include_router(agents_router)
