@@ -6,7 +6,6 @@ import {
   fetchGrants,
   fetchSentinelSummary,
   pilk,
-  runAgent,
   setAgentPolicy,
   setIntegrationSecret,
   startOAuthConnection,
@@ -75,9 +74,6 @@ function blurbFor(agent: AgentRow): string {
 export default function Agents() {
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [task, setTask] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [flash, setFlash] = useState<string | null>(null);
   // Sentinel lives a tier above the other agents — it watches them
   // rather than being one of them. We pull its unacked-incident count
   // separately so the supervisor row can surface "all quiet" vs
@@ -161,21 +157,6 @@ export default function Agents() {
   }, [refresh]);
 
   const current = agents.find((a) => a.name === selected) ?? null;
-
-  const submit = async () => {
-    if (!current || !task.trim()) return;
-    setSubmitting(true);
-    setFlash(null);
-    try {
-      await runAgent(current.name, task.trim());
-      setTask("");
-      setFlash("Queued — watch the plan stream on the Chat tab.");
-    } catch (e: any) {
-      setFlash(`Error: ${e?.message ?? e}`);
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   // Gallery-first pattern (iOS-style): tapping a card swaps the whole
   // pane to that agent's detail. A back button flips back to the grid.
@@ -518,25 +499,17 @@ export default function Agents() {
                 );
               })()}
             </div>
-            <div className="agent-run">
-              <div className="agent-tools-head">Assign a task</div>
-              <textarea
-                value={task}
-                onChange={(e) => setTask(e.target.value)}
-                placeholder={`Tell ${humanizeAgentName(current.name)} what to do…`}
-                rows={3}
-                disabled={submitting}
-              />
-              <div className="chat-actions">
-                <button
-                  className="btn btn--primary"
-                  onClick={submit}
-                  disabled={submitting || !task.trim()}
-                >
-                  {submitting ? "Queueing…" : "Run"}
-                </button>
-              </div>
-              {flash && <div className="agent-flash">{flash}</div>}
+            <div className="agent-delegation-note">
+              <div className="agent-tools-head">How to use this agent</div>
+              <p>
+                PILK assigns tasks. Ask in{" "}
+                <Link to="/chat">Chat</Link> — something like{" "}
+                <em>
+                  "use {humanizeAgentName(current.name)} to …"
+                </em>{" "}
+                — and PILK routes the work here, or fans it out across
+                multiple agents if the job needs it.
+              </p>
             </div>
       </div>
     </div>
