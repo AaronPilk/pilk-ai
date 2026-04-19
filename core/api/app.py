@@ -61,6 +61,7 @@ from core.integrations.google import (
     make_gmail_tools,
     migrate_legacy_if_needed,
 )
+from core.integrations.google.slides import make_slides_tools
 from core.integrations.legacy_migration import migrate_batch_k_google_files
 from core.integrations.linkedin import make_linkedin_tools
 from core.integrations.meta import make_meta_tools
@@ -108,6 +109,8 @@ from core.tools.builtin import (
     shell_exec_tool,
     trade_execute_tool,
 )
+from core.tools.builtin.delivery import make_agent_email_deliver_tool
+from core.tools.builtin.delivery.email import recipients_in_allowlist
 from core.tools.builtin.design import html_export_tool, wordpress_push_tool
 from core.trading.xauusd.settings_store import (
     XAUUSDSettingsStore,
@@ -278,7 +281,11 @@ async def lifespan(app: FastAPI):
         registry.register(t)
     for t in make_calendar_tools(accounts):
         registry.register(t)
-    log.info("google_drive_calendar_registered")
+    # Slides — user-role only. One tool, slides_create. Needs the
+    # slides.edit + drive.file scopes on the connected Google account.
+    for t in make_slides_tools(accounts):
+        registry.register(t)
+    log.info("google_drive_calendar_slides_registered")
 
     # Slack — one user-role tool today (post). Registers unconditionally;
     # the tool surfaces a "connect it in Settings" message at call time
@@ -286,6 +293,34 @@ async def lifespan(app: FastAPI):
     for t in make_slack_tools(accounts):
         registry.register(t)
     log.info("slack_registered", linked=accounts.default("slack", "user") is not None)
+
+    # agent_email_deliver — the shared "agent hands a work product to a
+    # human" delivery path. Uses the 'system' Google account for the
+    # from-address and enforces [{agent_name}] {task_description} as
+    # the subject format. See the permanent trust-rule seeding below.
+    agent_email_deliver = make_agent_email_deliver_tool(accounts)
+    registry.register(agent_email_deliver)
+
+    # Seed permanent trust rules so deliveries to a small internal
+    # allowlist bypass approval. Permanent = live until daemon restart;
+    # re-seeded on every boot so a compromised SQLite can't forge trust.
+    # The allowlist is two operator addresses — anything else flows
+    # through normal approval.
+    trust.add(
+        agent_name=None,
+        tool_name="agent_email_deliver",
+        ttl_seconds=None,
+        permanent=True,
+        created_by="system",
+        reason="operator-scoped auto-approve for internal deliveries",
+        predicate=recipients_in_allowlist(
+            {"aaron@skyway.media", "pilkingtonent@gmail.com"}
+        ),
+        predicate_label=(
+            "all recipients in {aaron@skyway.media, pilkingtonent@gmail.com}"
+        ),
+    )
+    log.info("agent_email_deliver_registered", auto_approve_allowlist=2)
 
     # LinkedIn + X — one post tool each, user-role only. Same pattern:
     # always register, tool handler surfaces "connect in Settings" if no
