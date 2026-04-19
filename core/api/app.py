@@ -35,6 +35,7 @@ from core.api.routes.integration_secrets import router as integration_secrets_ro
 from core.api.routes.integrations import router as integrations_router
 from core.api.routes.logs import router as logs_router
 from core.api.routes.memory import router as memory_router
+from core.api.routes.migration import router as migration_router
 from core.api.routes.plans import router as plans_router
 from core.api.routes.sandboxes import router as sandboxes_router
 from core.api.routes.supabase import router as supabase_router
@@ -500,6 +501,7 @@ def create_app() -> FastAPI:
     app.include_router(accounts_router)
     app.include_router(apple_router)
     app.include_router(memory_router)
+    app.include_router(migration_router)
     app.include_router(integration_secrets_router)
     app.include_router(logs_router)
     app.include_router(coding_http_router)
