@@ -56,6 +56,49 @@
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
 
+/* ── Light palette override ──────────────────────────────────────
+   The root block above stays the dark (default) palette. Setting
+   `data-theme="light"` on <html> swaps the colours via CSS var
+   inheritance — every component that uses --bg / --text / ...
+   automatically picks up the new values, so we don't have to touch
+   per-component CSS. */
+[data-theme="light"] {
+  --bg: #f5f6f8;
+  --bg-solid: #ffffff;
+
+  --bg-elev: rgba(255, 255, 255, 0.80);
+  --bg-elev-2: rgba(255, 255, 255, 0.92);
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-strong: rgba(255, 255, 255, 0.92);
+  --surface-hover: rgba(10, 14, 32, 0.04);
+  --surface-active: rgba(92, 117, 218, 0.14);
+
+  --border: rgba(10, 14, 32, 0.10);
+  --border-strong: rgba(10, 14, 32, 0.18);
+
+  --text: #15181f;
+  --text-dim: #565c6b;
+  --text-faint: #8890a0;
+
+  --accent: #5d77da;
+  --accent-strong: #4a64c9;
+  --accent-soft: rgba(93, 119, 218, 0.16);
+  --violet: #a56ddb;
+  --danger: #d94545;
+  --warn: #c18a0e;
+  --ok: #1e9a63;
+
+  --shadow-sm: 0 1px 2px rgba(12, 18, 40, 0.06);
+  --shadow: 0 2px 4px rgba(12, 18, 40, 0.06), 0 12px 32px rgba(12, 18, 40, 0.10);
+  --shadow-lg: 0 4px 8px rgba(12, 18, 40, 0.08), 0 24px 64px rgba(12, 18, 40, 0.14);
+
+  --bg-wash:
+    radial-gradient(ellipse 60% 50% at 18% 0%, rgba(93, 119, 218, 0.10), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 82% 100%, rgba(165, 109, 219, 0.06), transparent 70%),
+    radial-gradient(ellipse 40% 35% at 100% 20%, rgba(30, 154, 99, 0.04), transparent 70%),
+    linear-gradient(180deg, #f7f8fb 0%, #eef0f5 100%);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -4321,4 +4364,149 @@ body {
 
 .topbar-stat--alert .topbar-stat-value {
   color: #ff8a4d;
+}
+
+/* ── Top-bar theme toggle ─────────────────────────────────────── */
+.topbar-theme {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.topbar-theme:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* ── Settings → API Keys (card layout) ─────────────────────────
+   Supplements the row/list rules above. When the flat list is
+   eventually retired the older rules can be removed; for now both
+   shapes coexist — the card grid is the default, the list styles
+   stay in case something else renders a lone row. */
+.apikeys-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.apikeys-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.apikeys-summary-num {
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.apikeys-summary-denom {
+  font-size: 13px;
+}
+
+.apikeys-summary-label {
+  color: var(--text-faint);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  margin-left: 4px;
+}
+
+.apikeys-search {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 20px;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.apikeys-search:focus {
+  outline: none;
+  border-color: var(--accent-dim, var(--accent));
+  background: var(--surface-strong);
+}
+
+.apikeys-category {
+  margin-top: 20px;
+}
+
+.apikeys-category:first-of-type {
+  margin-top: 0;
+}
+
+.apikeys-category-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.apikeys-category-name {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.apikeys-category-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.apikeys-category-blurb {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+
+.apikeys-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+/* Reuse the existing .apikeys-row styles as the card body; the grid
+   above arranges them in two columns on wide screens. Nudge padding
+   and borders so the cards feel distinct rather than list-ish. */
+.apikeys-grid .apikeys-row {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.apikeys-grid .apikeys-row-head {
+  flex-wrap: wrap;
+}
+
+.apikeys-empty {
+  color: var(--text-faint);
+  padding: 20px 2px;
+  font-size: 13px;
+  text-align: center;
 }

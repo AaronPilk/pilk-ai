@@ -843,16 +843,68 @@ export default function Settings() {
 
 /** Settings → API Keys.
  *
- * Single-tenant form over the `/integration-secrets` route. Each row
- * toggles between "Add key" and "Replace / Clear" based on whether the
- * server says it's configured. The dashboard never reads the stored
- * value back — once saved, the textarea clears and only the timestamp
- * changes. Env-var fallback stays live, so Railway vars keep working
- * when nothing's been set via this UI.
+ * Grouped card layout over `/integration-secrets`. Each secret lives
+ * in a category inferred from `SECRET_CATEGORY` — with ~30-50 keys
+ * coming, a flat vertical list becomes unusable.
+ *
+ * The dashboard never reads stored values back. Once saved, the input
+ * clears and only the `updated_at` timestamp changes. Env-var fallback
+ * stays live, so Railway vars keep working when nothing's been set via
+ * this UI.
  */
+type ApiKeyCategory =
+  | "Sales-ops"
+  | "Trading"
+  | "Creative"
+  | "Design"
+  | "Core"
+  | "Other";
+
+const CATEGORY_ORDER: ApiKeyCategory[] = [
+  "Sales-ops",
+  "Creative",
+  "Trading",
+  "Design",
+  "Core",
+  "Other",
+];
+
+const CATEGORY_BLURB: Record<ApiKeyCategory, string> = {
+  "Sales-ops": "Prospecting, enrichment, and CRM sync keys.",
+  Trading: "Price feeds and remote-browser broker sessions.",
+  Creative: "Image and video generation providers.",
+  Design: "Per-site credentials for web-design delivery.",
+  Core: "Platform-wide keys used by every agent.",
+  Other: "Uncategorised or legacy entries — review and clean up.",
+};
+
+/** Static map: secret name → category. Keep this table in sync with
+ * `core/api/routes/integration_secrets.KNOWN_SECRETS`. An entry that
+ * doesn't appear here falls into "Other". */
+const SECRET_CATEGORY: Record<string, ApiKeyCategory> = {
+  hubspot_private_token: "Sales-ops",
+  hunter_io_api_key: "Sales-ops",
+  google_places_api_key: "Sales-ops",
+  pagespeed_api_key: "Sales-ops",
+  twelvedata_api_key: "Trading",
+  browserbase_api_key: "Trading",
+  browserbase_project_id: "Trading",
+  nano_banana_api_key: "Creative",
+  higgsfield_api_key: "Creative",
+};
+
+function categorize(name: string): ApiKeyCategory {
+  if (name in SECRET_CATEGORY) return SECRET_CATEGORY[name];
+  // Pattern-matched secrets (e.g. wordpress_<slug>_app_password) all
+  // land under Design for now; any future patterns can extend this.
+  if (/^wordpress_.+_app_password$/.test(name)) return "Design";
+  return "Other";
+}
+
 function IntegrationSecretsSection() {
   const [entries, setEntries] = useState<IntegrationSecretEntry[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   const refresh = useCallback(() => {
     fetchIntegrationSecrets()
@@ -864,27 +916,91 @@ function IntegrationSecretsSection() {
     refresh();
   }, [refresh]);
 
+  const filtered = (entries ?? []).filter((e) => {
+    if (!query.trim()) return true;
+    const q = query.trim().toLowerCase();
+    return (
+      e.label.toLowerCase().includes(q) ||
+      e.name.toLowerCase().includes(q) ||
+      (e.description ?? "").toLowerCase().includes(q)
+    );
+  });
+
+  const byCategory = new Map<ApiKeyCategory, IntegrationSecretEntry[]>();
+  for (const e of filtered) {
+    const cat = categorize(e.name);
+    const bucket = byCategory.get(cat) ?? [];
+    bucket.push(e);
+    byCategory.set(cat, bucket);
+  }
+
+  const configuredCount = (entries ?? []).filter((e) => e.configured).length;
+  const totalCount = (entries ?? []).length;
+
   return (
     <section className="settings-card">
-      <div className="settings-card-title">API Keys</div>
-      <p className="settings-card-body">
-        Paste third-party keys here and they become live immediately — no
-        Railway redeploy. Values are never echoed back after save.
-      </p>
-      {err && <div className="settings-error">Could not load: {err}</div>}
-      <div className="apikeys-list">
-        {entries === null ? (
-          <div className="settings-card-body">Loading…</div>
-        ) : (
-          entries.map((e) => (
-            <IntegrationSecretRow
-              key={e.name}
-              entry={e}
-              onChanged={refresh}
-            />
-          ))
+      <div className="apikeys-header">
+        <div>
+          <div className="settings-card-title">API Keys</div>
+          <p className="settings-card-body">
+            Paste third-party keys here and they become live immediately —
+            no Railway redeploy. Values are never echoed back after save.
+          </p>
+        </div>
+        {entries !== null && (
+          <div className="apikeys-summary">
+            <span className="apikeys-summary-num">{configuredCount}</span>
+            <span className="apikeys-summary-denom">/ {totalCount}</span>
+            <span className="apikeys-summary-label">configured</span>
+          </div>
         )}
       </div>
+
+      <input
+        type="search"
+        className="apikeys-search"
+        placeholder="Search API keys…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+
+      {err && <div className="settings-error">Could not load: {err}</div>}
+      {entries === null && (
+        <div className="settings-card-body">Loading…</div>
+      )}
+
+      {entries !== null &&
+        CATEGORY_ORDER.filter((c) => (byCategory.get(c) ?? []).length > 0).map(
+          (cat) => {
+            const bucket = byCategory.get(cat) ?? [];
+            return (
+              <div key={cat} className="apikeys-category">
+                <div className="apikeys-category-head">
+                  <span className="apikeys-category-name">{cat}</span>
+                  <span className="apikeys-category-count">
+                    {bucket.filter((e) => e.configured).length} / {bucket.length}
+                  </span>
+                </div>
+                <p className="apikeys-category-blurb">{CATEGORY_BLURB[cat]}</p>
+                <div className="apikeys-grid">
+                  {bucket.map((e) => (
+                    <IntegrationSecretRow
+                      key={e.name}
+                      entry={e}
+                      onChanged={refresh}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          },
+        )}
+
+      {entries !== null && filtered.length === 0 && (
+        <div className="apikeys-empty">
+          No keys match &ldquo;{query}&rdquo;.
+        </div>
+      )}
     </section>
   );
 }
