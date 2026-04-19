@@ -5022,3 +5022,110 @@ body {
   width: fit-content;
   margin-top: 4px;
 }
+
+/* ── Session detail: chat-log timeline ─────────────────────────
+   Each plan in a session renders as a user→PILK bubble exchange.
+   Non-chat plans add a "tool run" footer that opens the full
+   PlanCard so the operator can drill into actual steps. */
+.session-log {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 4px;
+}
+
+.session-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-bubble {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  max-width: 80%;
+  position: relative;
+}
+
+.session-bubble-who {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+
+.session-bubble-body {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.session-bubble--user {
+  align-self: flex-end;
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.session-bubble--user .session-bubble-body {
+  color: var(--text);
+}
+
+.session-bubble--pilk {
+  align-self: flex-start;
+}
+
+.session-bubble-time {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 4px;
+  text-align: right;
+}
+
+.session-bubble-loading,
+.session-bubble-dim {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.session-bubble-err {
+  color: var(--danger);
+}
+
+.session-bubble-tools {
+  display: inline-flex;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.session-bubble-tools:hover {
+  background: var(--surface-strong);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.session-bubble-cost {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 6px;
+}
+
+.session-turn--failed .session-bubble--pilk {
+  border-color: rgba(239, 95, 95, 0.35);
+}
+
+@media (max-width: 640px) {
+  .session-bubble {
+    max-width: 92%;
+  }
+}
