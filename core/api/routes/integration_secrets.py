@@ -101,6 +101,25 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         ),
         "env": "HIGGSFIELD_API_KEY",
     },
+    "browserbase_api_key": {
+        "label": "Browserbase API key",
+        "description": (
+            "API token from browserbase.com → Settings → API Keys. "
+            "Used by the xauusd_execution_agent (Hugosway broker) and "
+            "any other agent that needs a remote headful browser."
+        ),
+        "env": "BROWSERBASE_API_KEY",
+    },
+    "browserbase_project_id": {
+        "label": "Browserbase project ID",
+        "description": (
+            "Project ID that scopes Browserbase sessions. Find it next "
+            "to the API key on browserbase.com → Projects. Stored "
+            "alongside the API key; both must be set for remote "
+            "browser sessions to work."
+        ),
+        "env": "BROWSERBASE_PROJECT_ID",
+    },
 }
 
 

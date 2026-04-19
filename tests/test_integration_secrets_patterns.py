@@ -96,5 +96,9 @@ def test_known_static_entries_unchanged_contract() -> None:
         "google_places_api_key",
         "pagespeed_api_key",
         "twelvedata_api_key",
+        "nano_banana_api_key",
+        "higgsfield_api_key",
+        "browserbase_api_key",
+        "browserbase_project_id",
     }
     assert expected.issubset(set(KNOWN_SECRETS))
