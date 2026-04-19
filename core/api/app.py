@@ -55,6 +55,7 @@ from core.db import ensure_schema
 from core.governor import DailyBudget, Governor, Tier, Tiers, TierSpec
 from core.governor.providers import build_providers
 from core.identity import AccountsStore, GrantsStore
+from core.identity.bootstrap import seed_identity_memory
 from core.integrations.apple import check_messages_status, make_messages_tools
 from core.integrations.client_secrets import load_client
 from core.integrations.google import (
@@ -142,6 +143,12 @@ async def lifespan(app: FastAPI):
 
     home.mkdir(parents=True, exist_ok=True)
     ensure_schema(settings.db_path)
+
+    # Plant PILK's self-identity facts (acronym, north star, operator,
+    # role) before anything boots. Idempotent — reseeds the same four
+    # rows on every cold start so post-migration or post-Redeploy the
+    # agent re-anchors without relying on prior chat context.
+    seed_identity_memory(settings.db_path)
 
     hub = Hub()
     ledger = Ledger(settings.db_path)
