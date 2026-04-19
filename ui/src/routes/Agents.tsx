@@ -4,6 +4,7 @@ import {
   fetchAgents,
   fetchConnectedAccounts,
   fetchGrants,
+  fetchSentinelSummary,
   pilk,
   runAgent,
   setAgentPolicy,
@@ -77,6 +78,12 @@ export default function Agents() {
   const [task, setTask] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  // Sentinel lives a tier above the other agents — it watches them
+  // rather than being one of them. We pull its unacked-incident count
+  // separately so the supervisor row can surface "all quiet" vs
+  // "3 open alerts" at a glance without the operator having to open
+  // the agent card first.
+  const [sentinelUnacked, setSentinelUnacked] = useState<number | null>(null);
   const [justCreated, setJustCreated] = useState<string | null>(null);
   const [grantsByAgent, setGrantsByAgent] = useState<Record<string, string[]>>({});
   const [accountsById, setAccountsById] = useState<Record<string, ConnectedAccount>>(
@@ -117,6 +124,9 @@ export default function Agents() {
         setAccountsById(out);
       })
       .catch(() => setAccountsById({}));
+    fetchSentinelSummary()
+      .then((s) => setSentinelUnacked(s.unacked_count))
+      .catch(() => setSentinelUnacked(null));
   }, [selected]);
 
   useEffect(() => {
@@ -139,6 +149,13 @@ export default function Agents() {
             4000,
           );
         }
+      }
+      // Keep the supervisor row in sync with the top-bar badge: a new
+      // incident bumps the pill, an acknowledge knocks it back down.
+      if (m.type === "sentinel.incident") {
+        setSentinelUnacked((n) => (n ?? 0) + 1);
+      } else if (m.type === "sentinel.incident.acked") {
+        setSentinelUnacked((n) => Math.max(0, (n ?? 0) - 1));
       }
     });
   }, [refresh]);
@@ -186,8 +203,61 @@ export default function Agents() {
 
   if (current === null) {
     // Gallery view
+    const sentinel = agents.find((a) => a.name === "sentinel") ?? null;
+    const workers = agents.filter((a) => a.name !== "sentinel");
     return (
       <div className="agents-page">
+        {sentinel && (
+          <div className="agents-supervisor-row">
+            <div className="agents-supervisor-head">
+              <span className="agents-supervisor-label">Supervisor</span>
+              <span className="agents-supervisor-sub">
+                Watches every other agent and flags problems to PILK.
+              </span>
+            </div>
+            <button
+              className={`agent-card agents-supervisor-card ${
+                (sentinelUnacked ?? 0) > 0
+                  ? "agents-supervisor-card--alert"
+                  : ""
+              }`}
+              onClick={() => setSelected(sentinel.name)}
+            >
+              <div className="agent-card-avatar" aria-hidden>
+                {avatarFor(sentinel.name)}
+              </div>
+              <div className="agent-card-body">
+                <div className="agent-card-name">
+                  {humanizeAgentName(sentinel.name)}
+                </div>
+                <div className="agent-card-blurb">{blurbFor(sentinel)}</div>
+                <div className="agent-card-meta">
+                  {sentinelUnacked === null ? (
+                    <span className="agent-card-status agent-card-status--ready">
+                      <span className="agent-card-status-dot" />
+                      {humanizeAgentState(sentinel.state)}
+                    </span>
+                  ) : sentinelUnacked === 0 ? (
+                    <span className="agent-card-status agent-card-status--ready">
+                      <span className="agent-card-status-dot" />
+                      All quiet
+                    </span>
+                  ) : (
+                    <span className="agents-supervisor-alerts">
+                      {sentinelUnacked}{" "}
+                      {sentinelUnacked === 1 ? "alert" : "alerts"} open
+                    </span>
+                  )}
+                  {sentinel.autonomy_profile && (
+                    <span className="agent-card-autonomy">
+                      {capitalize(sentinel.autonomy_profile)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </button>
+          </div>
+        )}
         <div className="agents-page-head">
           <h1>Your agents</h1>
           <p>
@@ -197,14 +267,14 @@ export default function Agents() {
         {!loaded && (
           <div className="agents-empty">Loading agents…</div>
         )}
-        {loaded && agents.length === 0 && (
+        {loaded && workers.length === 0 && (
           <div className="agents-empty">
             No agents yet. Ask PILK in Chat: <em>"Build me a sales agent."</em>
           </div>
         )}
-        {loaded && agents.length > 0 && (
+        {loaded && workers.length > 0 && (
           <div className="agents-gallery">
-            {agents.map((a) => (
+            {workers.map((a) => (
               <button
                 key={a.name}
                 className={`agent-card ${

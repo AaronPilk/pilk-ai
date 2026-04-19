@@ -4904,3 +4904,95 @@ body {
 .agent-card-status--paused .agent-card-status-dot {
   background: var(--warn);
 }
+
+/* ── Agents supervisor row — Sentinel hero ─────────────────────
+   Sentinel is a supervisor, not a peer, so it doesn't belong in the
+   peer grid. This renders it as a full-width hero above "Your agents"
+   with an unacked-incident count instead of the usual Ready dot. */
+.agents-supervisor-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.agents-supervisor-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agents-supervisor-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+}
+
+.agents-supervisor-sub {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.agents-supervisor-card {
+  /* Override the default column layout from .agent-card so the
+     supervisor row lays out horizontally on wide screens. */
+  flex-direction: row !important;
+  align-items: center;
+  gap: 20px !important;
+  padding: 20px !important;
+  border: 1px solid var(--border);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent-soft) 80%, transparent),
+    var(--surface)
+  );
+}
+
+.agents-supervisor-card:hover {
+  border-color: var(--accent);
+}
+
+.agents-supervisor-card .agent-card-avatar {
+  width: 76px;
+  height: 76px;
+  font-size: 46px;
+  flex-shrink: 0;
+}
+
+.agents-supervisor-card .agent-card-body {
+  flex: 1;
+}
+
+.agents-supervisor-card--alert {
+  border-color: var(--danger);
+  background: linear-gradient(
+    135deg,
+    rgba(239, 95, 95, 0.14),
+    var(--surface)
+  );
+}
+
+.agents-supervisor-alerts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: rgba(239, 95, 95, 0.18);
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+@media (max-width: 640px) {
+  /* On narrow screens stack the hero vertically so avatar + body
+     don't squeeze past readable widths. */
+  .agents-supervisor-card {
+    flex-direction: column !important;
+    align-items: stretch;
+  }
+}
