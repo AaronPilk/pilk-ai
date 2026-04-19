@@ -16,6 +16,7 @@ import {
   fetchGrants,
   fetchIntegrationSecrets,
   fetchProviders,
+  fetchXAUUSDSettings,
   grantAgentAccess,
   pilk,
   revokeAgentAccess,
@@ -23,6 +24,7 @@ import {
   setGovernorConfig,
   setGovernorOverride,
   setIntegrationSecret,
+  setXAUUSDExecutionMode,
   startOAuthConnection,
   type AgentRow,
   type CodingEngineHealth,
@@ -31,6 +33,8 @@ import {
   type IntegrationSecretEntry,
   type OverrideMode,
   type ProviderInfo,
+  type XAUUSDExecutionMode,
+  type XAUUSDSettings,
 } from "../state/api";
 import { humanizeAgentName } from "../lib/humanize";
 
@@ -825,6 +829,8 @@ export default function Settings() {
 
       <IntegrationSecretsSection />
 
+      <XAUUSDSettingsSection />
+
       <section className="settings-card settings-card--muted">
         <div className="settings-card-title">Trust rule editor</div>
         <p className="settings-card-body">
@@ -1299,5 +1305,95 @@ function ManageAccessModal({
         )}
       </div>
     </div>
+  );
+}
+
+/** Settings → XAU/USD Agent.
+ *
+ * Execution-mode toggle. "Approve" queues every trade for operator
+ * confirmation via the ApprovalManager; "Autonomous" lets the agent
+ * trade within its risk caps without per-trade approval. Safe default
+ * is "Approve" — operator flips when they've watched enough live
+ * decisions to trust the model on fast-moving bars.
+ */
+function XAUUSDSettingsSection() {
+  const [settings, setSettings] = useState<XAUUSDSettings | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(() => {
+    fetchXAUUSDSettings()
+      .then(setSettings)
+      .catch((e: Error) => setErr(e.message));
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const pick = async (mode: XAUUSDExecutionMode) => {
+    if (!settings || settings.execution_mode === mode || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await setXAUUSDExecutionMode(mode);
+      refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="settings-card">
+      <div className="settings-card-title">XAU/USD Agent</div>
+      <p className="settings-card-body">
+        Execution mode controls how the gold agent places trades.
+        <strong> Approve</strong> — every order is queued for you to
+        confirm before the broker click. Safe but slow on fast bars.
+        <strong> Autonomous</strong> — the agent trades within its risk
+        caps without per-trade approval. Flip once you've watched enough
+        live decisions to trust it.
+      </p>
+      {err && <div className="settings-error">Could not load: {err}</div>}
+      {settings === null ? (
+        <div className="settings-card-body">Loading…</div>
+      ) : (
+        <div className="xauusd-mode-toggle">
+          {settings.allowed_modes.map((m) => {
+            const active = settings.execution_mode === m;
+            return (
+              <button
+                type="button"
+                key={m}
+                className={`xauusd-mode-btn${active ? " xauusd-mode-btn--active" : ""}`}
+                onClick={() => pick(m)}
+                disabled={busy || active}
+              >
+                <span className="xauusd-mode-btn-label">
+                  {m === "approve" ? "Approve each trade" : "Autonomous"}
+                </span>
+                <span className="xauusd-mode-btn-sub">
+                  {m === "approve"
+                    ? "Confirm before every order"
+                    : "Trade within risk caps, no prompt"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {settings && settings.updated_at && (
+        <div className="settings-card-hint">
+          Last changed {settings.updated_at}
+        </div>
+      )}
+      {settings && settings.is_default && (
+        <div className="settings-card-hint">
+          Using default ({settings.execution_mode}).
+        </div>
+      )}
+    </section>
   );
 }

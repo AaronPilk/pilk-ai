@@ -12,7 +12,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-CURRENT_VERSION = 5
+CURRENT_VERSION = 7
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
 
@@ -86,6 +86,19 @@ MIGRATIONS: dict[int, list[str]] = {
     # per-user scoping; single-tenant v1 keeps it alongside the daemon.
     6: [
         """CREATE TABLE IF NOT EXISTS integration_secrets (
+            name       TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""",
+    ],
+    # v7: runtime settings for the XAUUSD execution agent. A tiny
+    # key/value table — today it only holds `execution_mode`
+    # (approve | autonomous), but future non-secret toggles
+    # (cooldown length, countertrend enable, etc.) land here too.
+    # Separate from integration_secrets because these aren't secrets
+    # and the UI treats them differently (toggles, not password inputs).
+    7: [
+        """CREATE TABLE IF NOT EXISTS xauusd_settings (
             name       TEXT PRIMARY KEY,
             value      TEXT NOT NULL,
             updated_at TEXT NOT NULL

@@ -22,7 +22,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.config import get_settings
 from core.policy.risk import RiskClass
+from core.secrets import resolve_secret
 from core.tools.registry import Tool, ToolContext, ToolOutcome
 from core.trading.xauusd import (
     ALLOWED_SYMBOLS,
@@ -34,12 +36,18 @@ from core.trading.xauusd import (
     evaluate_setup,
     position_size_for_risk,
 )
+from core.trading.xauusd.feed import FeedError, TwelveDataFeed
 from core.trading.xauusd.journal import (
     journal_order_attempt,
     journal_risk,
     journal_safety_interrupt,
     journal_state,
     journal_verdict,
+)
+from core.trading.xauusd.settings_store import (
+    EXECUTION_MODES,
+    get_execution_mode,
+    set_execution_mode,
 )
 
 # Process-local state machine — tools share it within one pilkd instance.
@@ -252,10 +260,12 @@ xauusd_calc_size_tool = Tool(
 async def _state(args: dict, ctx: ToolContext) -> ToolOutcome:
     action = str(args.get("action") or "get")
     if action == "get":
+        mode = get_execution_mode()
         return ToolOutcome(
-            content=f"state={_STATE.current.value}",
+            content=f"state={_STATE.current.value} mode={mode}",
             data={
                 "state": _STATE.current.value,
+                "execution_mode": mode,
                 "history": [
                     {
                         "from": t.from_state.value,
@@ -266,6 +276,23 @@ async def _state(args: dict, ctx: ToolContext) -> ToolOutcome:
                     for t in _STATE.history[-20:]
                 ],
             },
+        )
+    if action == "get_mode":
+        mode = get_execution_mode()
+        return ToolOutcome(
+            content=f"execution_mode={mode}",
+            data={"execution_mode": mode},
+        )
+    if action == "set_mode":
+        try:
+            mode = set_execution_mode(str(args.get("mode") or ""))
+        except ValueError as e:
+            return ToolOutcome(content=f"refused: {e}", is_error=True)
+        except RuntimeError as e:
+            return ToolOutcome(content=f"unavailable: {e}", is_error=True)
+        return ToolOutcome(
+            content=f"execution_mode set to {mode}",
+            data={"execution_mode": mode},
         )
     if action == "transition":
         try:
@@ -316,16 +343,27 @@ xauusd_state_tool = Tool(
     name="xauusd_state",
     description=(
         "Read or advance the XAUUSD agent's state machine. Actions: "
-        "'get' returns current + last 20 transitions; 'transition' "
-        "requires {to, reason} and rejects illegal transitions; "
-        "'disable' force-moves to DISABLED and is always allowed."
+        "'get' returns current state + execution_mode + last 20 "
+        "transitions; 'transition' requires {to, reason} and rejects "
+        "illegal transitions; 'disable' force-moves to DISABLED and is "
+        "always allowed; 'get_mode' / 'set_mode' read-or-write the "
+        "execution_mode (approve | autonomous). In 'approve' mode every "
+        "order request is queued for operator confirmation; in "
+        "'autonomous' mode the agent trades within its risk caps without "
+        "per-trade approval."
     ),
     input_schema={
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["get", "transition", "disable"],
+                "enum": [
+                    "get",
+                    "transition",
+                    "disable",
+                    "get_mode",
+                    "set_mode",
+                ],
             },
             "to": {
                 "type": "string",
@@ -334,6 +372,11 @@ xauusd_state_tool = Tool(
                     "BIASED_SHORT, READY_LONG, READY_SHORT, IN_POSITION, "
                     "COOLDOWN, DISABLED."
                 ),
+            },
+            "mode": {
+                "type": "string",
+                "enum": sorted(EXECUTION_MODES),
+                "description": "Execution mode for action=set_mode.",
             },
             "reason": {"type": "string"},
         },
@@ -351,22 +394,71 @@ xauusd_state_tool = Tool(
 # loud "not configured" error explaining which PR lands it.
 
 async def _get_candles(args: dict, ctx: ToolContext) -> ToolOutcome:
+    tf = str(args.get("timeframe") or "").upper().strip()
+    if not tf:
+        return ToolOutcome(
+            content="xauusd_get_candles requires a 'timeframe' argument.",
+            is_error=True,
+        )
+    count = int(args.get("count") or 200)
+    count = max(1, min(count, 500))
+
+    api_key = resolve_secret(
+        "twelvedata_api_key", get_settings().twelvedata_api_key
+    )
+    if not api_key:
+        return ToolOutcome(
+            content=(
+                "Twelve Data is not configured. Paste your API key in "
+                "Settings → API Keys → Twelve Data (free tier at "
+                "twelvedata.com)."
+            ),
+            is_error=True,
+        )
+
+    feed = TwelveDataFeed(api_key)
+    try:
+        try:
+            result = await feed.fetch_candles(tf, count)
+        except FeedError as e:
+            return ToolOutcome(
+                content=f"xauusd_get_candles: {e}", is_error=True
+            )
+    finally:
+        await feed.aclose()
+
     return ToolOutcome(
         content=(
-            "xauusd_get_candles is not yet wired to a price feed. "
-            "This is implemented in PR B (Twelve Data adapter). Until "
-            "then, pass candle arrays directly to xauusd_evaluate."
+            f"fetched {len(result.candles)} {result.timeframe} candles "
+            f"({result.fetched_at or 'no server timestamp'})"
         ),
-        is_error=True,
+        data={
+            "timeframe": result.timeframe,
+            "count": len(result.candles),
+            "fetched_at": result.fetched_at,
+            "candles": [
+                {
+                    "ts": c.ts,
+                    "open": c.open,
+                    "high": c.high,
+                    "low": c.low,
+                    "close": c.close,
+                    "volume": c.volume,
+                }
+                for c in result.candles
+            ],
+        },
     )
 
 
 xauusd_get_candles_tool = Tool(
     name="xauusd_get_candles",
     description=(
-        "Fetch recent XAU/USD candles for a given timeframe. Placeholder "
-        "in this PR — returns a 'not configured' error; PR B wires Twelve "
-        "Data as the feed."
+        "Fetch recent XAU/USD candles from Twelve Data for a given "
+        "timeframe (1M/5M/15M/1H/4H). Returns oldest-first bars ready "
+        "for xauusd_evaluate. Requires twelvedata_api_key in Settings. "
+        "Respects free-tier rate limits; surface errors rather than "
+        "retry-loop on 429."
     ),
     input_schema={
         "type": "object",
