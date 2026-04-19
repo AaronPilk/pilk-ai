@@ -2,17 +2,29 @@
 
 When PILK_CLOUD=1, every request must carry an
 `Authorization: Bearer <supabase_access_token>` header. Tokens are
-verified against the Supabase JWT secret (HS256). On success, the
-caller's user_id, email, and role are attached to request.state.auth.
+verified against whatever signing material Supabase currently uses:
+
+    • HS256 — legacy symmetric secret (SUPABASE_JWT_SECRET).
+    • ES256 / RS256 — asymmetric signing keys fetched from the project's
+      JWKS endpoint at `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`.
+
+The middleware picks the path based on the token header's `alg`, so a
+single deployment works before, during, and after Supabase's 2025
+migration to asymmetric signing keys without a config change.
+
+On success, the caller's user_id, email, and role are attached to
+request.state.auth.
 
 Local mode (PILK_CLOUD=0) bypasses this middleware entirely — pilkd on
 127.0.0.1 trusts its local caller and keeps the pre-cloud behaviour.
 
 Public paths that skip auth even in cloud mode:
-    /health, /version — liveness + build info
-    /ws/*             — WebSocket upgrade; WS auth lives in the route
-                        itself via ?token= query param (browsers can't
-                        attach Authorization headers on WS upgrade).
+    /health, /version, /system/status — liveness + deploy diagnostics
+    /ws/*                              — WebSocket upgrade; WS auth lives
+                                         in the route itself via ?token=
+                                         query param (browsers can't
+                                         attach Authorization headers on
+                                         WS upgrade).
 """
 
 from __future__ import annotations
@@ -20,6 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import jwt
+from jwt import PyJWKClient
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -32,6 +45,8 @@ log = get_logger("pilkd.auth")
 
 _PUBLIC_PATHS = frozenset({"/health", "/version", "/system/status"})
 _PUBLIC_PREFIXES = ("/ws",)
+
+_ASYMMETRIC_ALGS = ("ES256", "RS256")
 
 
 @dataclass
@@ -51,17 +66,22 @@ class SupabaseJWTMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp, *, settings: Settings):
         super().__init__(app)
         self._jwt_secret = settings.supabase_jwt_secret
+        self._jwks_client: PyJWKClient | None = None
+        if settings.supabase_url:
+            jwks_url = (
+                settings.supabase_url.rstrip("/")
+                + "/auth/v1/.well-known/jwks.json"
+            )
+            # PyJWKClient caches keys in-memory and only refetches on
+            # unknown-kid. 1-hour lifespan covers Supabase's typical
+            # rotation cadence without hammering the JWKS endpoint.
+            self._jwks_client = PyJWKClient(
+                jwks_url, cache_keys=True, lifespan=3600
+            )
 
     async def dispatch(self, request: Request, call_next):
         if _is_public(request.url.path):
             return await call_next(request)
-
-        if not self._jwt_secret:
-            log.error("jwt_secret_missing_in_cloud_mode")
-            return JSONResponse(
-                {"error": "server_misconfigured"},
-                status_code=500,
-            )
 
         auth_header = request.headers.get("authorization", "")
         if not auth_header.lower().startswith("bearer "):
@@ -71,17 +91,49 @@ class SupabaseJWTMiddleware(BaseHTTPMiddleware):
             )
 
         token = auth_header.split(" ", 1)[1].strip()
+
         try:
-            claims = jwt.decode(
-                token,
-                self._jwt_secret,
-                algorithms=["HS256"],
-                audience="authenticated",
-            )
+            unverified = jwt.get_unverified_header(token)
+        except jwt.InvalidTokenError as e:
+            log.info("jwt_header_unreadable", reason=str(e))
+            return JSONResponse({"error": "invalid_token"}, status_code=401)
+
+        alg = unverified.get("alg", "")
+        try:
+            if alg in _ASYMMETRIC_ALGS:
+                if self._jwks_client is None:
+                    log.error("jwks_client_unconfigured", alg=alg)
+                    return JSONResponse(
+                        {"error": "server_misconfigured"},
+                        status_code=500,
+                    )
+                signing_key = self._jwks_client.get_signing_key_from_jwt(token)
+                claims = jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=[alg],
+                    audience="authenticated",
+                )
+            elif alg == "HS256":
+                if not self._jwt_secret:
+                    log.error("jwt_secret_missing_in_cloud_mode")
+                    return JSONResponse(
+                        {"error": "server_misconfigured"},
+                        status_code=500,
+                    )
+                claims = jwt.decode(
+                    token,
+                    self._jwt_secret,
+                    algorithms=["HS256"],
+                    audience="authenticated",
+                )
+            else:
+                log.info("jwt_alg_unsupported", alg=alg)
+                return JSONResponse({"error": "invalid_token"}, status_code=401)
         except jwt.ExpiredSignatureError:
             return JSONResponse({"error": "token_expired"}, status_code=401)
         except jwt.InvalidTokenError as e:
-            log.info("jwt_rejected", reason=str(e))
+            log.info("jwt_rejected", reason=str(e), alg=alg)
             return JSONResponse({"error": "invalid_token"}, status_code=401)
 
         user_id = claims.get("sub")
