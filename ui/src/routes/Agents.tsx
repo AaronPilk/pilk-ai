@@ -23,6 +23,54 @@ import {
   providerForTool,
 } from "../lib/humanize";
 
+/** Emoji avatars for each registered agent. Emoji are a deliberate
+ * choice over icon assets or SVGs: they render everywhere without a
+ * build step, they're universally legible (the "grandma test"), and
+ * they give each agent a distinct personality that a round initial
+ * avatar can't. Keep the list in sync with each agent's manifest;
+ * unmapped agents fall back to a generic robot. */
+const AGENT_AVATAR: Record<string, string> = {
+  creative_content_agent: "🎬",
+  elementor_converter_agent: "🧩",
+  file_organization_agent: "🗂️",
+  pitch_deck_agent: "📊",
+  sales_ops_agent: "💼",
+  sentinel: "🛡️",
+  web_design_agent: "🖌️",
+  xauusd_execution_agent: "🪙",
+};
+
+/** One-sentence plain-English blurb. Goal: a brand-new user can scan
+ * the gallery and know exactly what each agent does without reading a
+ * 300-word manifest. Falls back to the manifest description when a
+ * blurb isn't supplied here. */
+const AGENT_BLURB: Record<string, string> = {
+  creative_content_agent:
+    "Makes images and short videos from a text brief.",
+  elementor_converter_agent:
+    "Turns a web design into a WordPress Elementor template.",
+  file_organization_agent:
+    "Cleans up and organizes files in your workspace.",
+  pitch_deck_agent:
+    "Builds pitch decks and presentations for clients.",
+  sales_ops_agent:
+    "Finds leads, enriches contacts, and runs outbound campaigns.",
+  sentinel:
+    "Watches every agent and flags problems to PILK.",
+  web_design_agent:
+    "Designs web pages and exports them ready for WordPress.",
+  xauusd_execution_agent:
+    "Trades gold (XAU/USD) through the broker.",
+};
+
+function avatarFor(name: string): string {
+  return AGENT_AVATAR[name] ?? "🤖";
+}
+
+function blurbFor(agent: AgentRow): string {
+  return AGENT_BLURB[agent.name] ?? (agent.description ?? "").split("\n")[0];
+}
+
 export default function Agents() {
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -45,7 +93,6 @@ export default function Agents() {
     fetchAgents()
       .then((r) => {
         setAgents(r.agents);
-        if (r.agents.length > 0 && selected === null) setSelected(r.agents[0].name);
         setFetchError(null);
         setLoaded(true);
       })
@@ -113,83 +160,138 @@ export default function Agents() {
     }
   };
 
-  return (
-    <div className="tasks">
-      <div className="tasks-list">
-        <div className="tasks-list-head">Registered agents</div>
-        {fetchError && (
-          <div className="tasks-error" role="alert">
-            <div className="tasks-error-title">Couldn't load agents</div>
-            <div className="tasks-error-body">{fetchError}</div>
-            <div className="tasks-error-hint">
-              Common causes: Supabase session expired (reload the page),
-              or <code>PILK_SUPABASE_JWT_SECRET</code> missing on the
-              server. Check <code>/system/status</code> — that route is
-              public and will tell you if pilkd itself is up.
-            </div>
-            <button className="btn btn--ghost" onClick={refresh}>
-              Retry
-            </button>
+  // Gallery-first pattern (iOS-style): tapping a card swaps the whole
+  // pane to that agent's detail. A back button flips back to the grid.
+  // Keeps discovery simple for new operators while giving one-click
+  // access to the dense detail view for anyone who needs it.
+  if (fetchError) {
+    return (
+      <div className="agents-page">
+        <div className="tasks-error" role="alert">
+          <div className="tasks-error-title">Couldn't load agents</div>
+          <div className="tasks-error-body">{fetchError}</div>
+          <div className="tasks-error-hint">
+            Common causes: Supabase session expired (reload the page),
+            or <code>PILK_SUPABASE_JWT_SECRET</code> missing on the
+            server. Check <code>/system/status</code> — that route is
+            public and will tell you if pilkd itself is up.
           </div>
-        )}
-        {loaded && !fetchError && agents.length === 0 && (
-          <div className="tasks-empty">
-            No agents registered yet. Ask PILK in Chat: <em>"Build me a sales agent."</em>
-          </div>
-        )}
-        {!loaded && !fetchError && (
-          <div className="tasks-empty">Loading agents…</div>
-        )}
-        {agents.map((a) => (
-          <button
-            key={a.name}
-            className={`tasks-row ${selected === a.name ? "tasks-row--active" : ""} ${justCreated === a.name ? "tasks-row--just-created" : ""}`}
-            onClick={() => setSelected(a.name)}
-            title={a.name}
-          >
-            <div className="tasks-row-goal">{humanizeAgentName(a.name)}</div>
-            <div className="tasks-row-meta">
-              <span className={`tasks-row-status tasks-row-status--${a.state}`}>
-                {humanizeAgentState(a.state)}
-              </span>
-              <span className="tasks-row-cost">v{a.version}</span>
-            </div>
+          <button className="btn btn--ghost" onClick={refresh}>
+            Retry
           </button>
-        ))}
+        </div>
       </div>
-      <div className="tasks-detail">
-        {current ? (
-          <>
-            <div className="tasks-detail-head">
-              <div className="tasks-detail-goal" title={current.name}>
-                {humanizeAgentName(current.name)}
-                {justCreated === current.name && (
-                  <span className="agent-new-badge">new</span>
-                )}
-              </div>
-              <div className="tasks-detail-meta">
-                <span>v{current.version}</span>
-                <span>{humanizeAgentState(current.state)}</span>
-                {current.sandbox && (
-                  <span>Sandbox · {capitalize(current.sandbox.type)}</span>
-                )}
-                {current.budget && (
-                  <span>
-                    ${current.budget.per_run_usd}/run · $
-                    {current.budget.daily_usd}/day
-                  </span>
-                )}
-                {current.last_run_at && (
-                  <span>
-                    Last run · {new Date(current.last_run_at).toLocaleString()}
-                  </span>
-                )}
-              </div>
+    );
+  }
+
+  if (current === null) {
+    // Gallery view
+    return (
+      <div className="agents-page">
+        <div className="agents-page-head">
+          <h1>Your agents</h1>
+          <p>
+            Tap a card to open it, assign a task, or wire up its integrations.
+          </p>
+        </div>
+        {!loaded && (
+          <div className="agents-empty">Loading agents…</div>
+        )}
+        {loaded && agents.length === 0 && (
+          <div className="agents-empty">
+            No agents yet. Ask PILK in Chat: <em>"Build me a sales agent."</em>
+          </div>
+        )}
+        {loaded && agents.length > 0 && (
+          <div className="agents-gallery">
+            {agents.map((a) => (
+              <button
+                key={a.name}
+                className={`agent-card ${
+                  justCreated === a.name ? "agent-card--just-created" : ""
+                }`}
+                onClick={() => setSelected(a.name)}
+              >
+                <div className="agent-card-avatar" aria-hidden>
+                  {avatarFor(a.name)}
+                </div>
+                <div className="agent-card-body">
+                  <div className="agent-card-name">
+                    {humanizeAgentName(a.name)}
+                    {justCreated === a.name && (
+                      <span className="agent-new-badge">new</span>
+                    )}
+                  </div>
+                  <div className="agent-card-blurb">{blurbFor(a)}</div>
+                  <div className="agent-card-meta">
+                    <span
+                      className={`agent-card-status agent-card-status--${a.state}`}
+                    >
+                      <span className="agent-card-status-dot" />
+                      {humanizeAgentState(a.state)}
+                    </span>
+                    {a.autonomy_profile && (
+                      <span className="agent-card-autonomy">
+                        {capitalize(a.autonomy_profile)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Detail view (single agent selected)
+  return (
+    <div className="agents-page">
+      <button
+        type="button"
+        className="agents-back"
+        onClick={() => setSelected(null)}
+        aria-label="Back to all agents"
+      >
+        ← All agents
+      </button>
+      <div className="agent-detail">
+        <div className="agent-detail-hero">
+          <div className="agent-detail-avatar" aria-hidden>
+            {avatarFor(current.name)}
+          </div>
+          <div className="agent-detail-hero-body">
+            <div className="agent-detail-name">
+              {humanizeAgentName(current.name)}
+              {justCreated === current.name && (
+                <span className="agent-new-badge">new</span>
+              )}
             </div>
-            {current.description && (
-              <div className="agent-desc">{current.description}</div>
-            )}
-            <AutonomyControl
+            <div className="tasks-detail-meta">
+              <span>v{current.version}</span>
+              <span>{humanizeAgentState(current.state)}</span>
+              {current.sandbox && (
+                <span>Sandbox · {capitalize(current.sandbox.type)}</span>
+              )}
+              {current.budget && (
+                <span>
+                  ${current.budget.per_run_usd}/run · $
+                  {current.budget.daily_usd}/day
+                </span>
+              )}
+              {current.last_run_at && (
+                <span>
+                  Last run · {new Date(current.last_run_at).toLocaleString()}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        {current.description && (
+          <div className="agent-desc">{current.description}</div>
+        )}
+        <AutonomyControl
               agent={current}
               onChange={(profile) => {
                 setAgents((prev) =>
@@ -366,10 +468,6 @@ export default function Agents() {
               </div>
               {flash && <div className="agent-flash">{flash}</div>}
             </div>
-          </>
-        ) : (
-          <div className="tasks-empty">Select an agent.</div>
-        )}
       </div>
     </div>
   );
