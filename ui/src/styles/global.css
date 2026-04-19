@@ -5168,3 +5168,226 @@ body {
 .settings .agents-back {
   margin-bottom: 12px;
 }
+
+/* ── Approvals gallery ─────────────────────────────────────────
+   Reuses .agents-page, .agents-gallery, .agent-card foundation
+   from /agents for visual consistency. Pending cards span two
+   columns because they're actionable; trust cards and recent
+   cards are the standard card size. */
+.approvals-page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.approvals-page-head .agents-page-head {
+  flex: 1;
+  min-width: 240px;
+}
+
+.approvals-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 20px;
+  margin-bottom: 6px;
+}
+
+.approvals-section-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.approvals-count {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  min-width: 20px;
+  text-align: center;
+}
+
+/* Pending: big cards, two per row at full width */
+.approvals-gallery {
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+}
+
+.approvals-pending-card {
+  padding: 18px;
+  gap: 12px;
+}
+
+.approvals-pending-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.approvals-pending-tool {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.approvals-pending-agent {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.approvals-pending-time {
+  color: var(--text-faint);
+}
+
+.approvals-pending-reason {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.approvals-pending-args {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.approvals-pending-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.approvals-pending-trust {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  flex-wrap: wrap;
+}
+
+.approvals-pending-trust select {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.approvals-pending-trust--locked {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.approvals-pending-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Trust cards: horizontal mini-cards (like Sentinel supervisor row) */
+.approvals-trust-gallery {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.approvals-trust-card {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 14px !important;
+  padding: 14px 16px !important;
+}
+
+.approvals-trust-card .agent-card-avatar {
+  width: 48px;
+  height: 48px;
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.approvals-trust-card .agent-card-blurb {
+  font-size: 12px;
+  -webkit-line-clamp: 2;
+}
+
+.approvals-trust-matcher {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  word-break: break-all;
+}
+
+.approvals-trust-revoke {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.approvals-trust-revoke:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* Status-colour the approved/rejected/expired card left-edges so
+   the Recent row reads at a glance. Piggybacks on task-card--*. */
+.task-card--approved {
+  border-left-color: rgba(101, 209, 155, 0.55);
+}
+
+.task-card--rejected {
+  border-left-color: var(--danger);
+}
+
+.task-card--expired {
+  border-left-color: var(--text-faint);
+}
+
+.task-card-icon--approved {
+  background: rgba(101, 209, 155, 0.14);
+  color: var(--ok);
+}
+
+.task-card-icon--rejected {
+  background: rgba(239, 95, 95, 0.14);
+  color: var(--danger);
+}
+
+.task-card-icon--expired {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-faint);
+}
+
+.agent-card-status--approved .agent-card-status-dot {
+  background: rgba(101, 209, 155, 0.65);
+}
+
+.agent-card-status--rejected .agent-card-status-dot {
+  background: var(--danger);
+}
+
+.agent-card-status--expired .agent-card-status-dot {
+  background: var(--text-faint);
+}
