@@ -10,6 +10,7 @@ import Approvals from "./routes/Approvals";
 import Cost from "./routes/Cost";
 import Memory from "./routes/Memory";
 import Logs from "./routes/Logs";
+import Sentinel from "./routes/Sentinel";
 import Settings from "./routes/Settings";
 import { AuthGate } from "./lib/AuthGate";
 
@@ -31,6 +32,7 @@ export default function App() {
               <Route path="/cost" element={<Cost />} />
               <Route path="/memory" element={<Memory />} />
               <Route path="/logs" element={<Logs />} />
+              <Route path="/sentinel" element={<Sentinel />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>
           </div>

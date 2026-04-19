@@ -4147,3 +4147,178 @@ body {
   color: var(--text-faint);
   font-size: 12px;
 }
+
+/* ── Sentinel surface ──────────────────────────────────────────── */
+.sentinel {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+
+.sentinel-header h1 {
+  margin: 0 0 8px;
+  font-size: 24px;
+}
+
+.sentinel-sub {
+  color: var(--text-dim);
+  font-size: 14px;
+  max-width: 64ch;
+  line-height: 1.5;
+  margin: 0 0 20px;
+}
+
+.sentinel-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.sentinel-toggle {
+  color: var(--text-dim);
+  font-size: 13px;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  margin-left: auto;
+  cursor: pointer;
+}
+
+.sentinel-error {
+  border: 1px solid rgba(239, 95, 95, 0.5);
+  background: rgba(239, 95, 95, 0.08);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.sentinel-loading,
+.sentinel-empty {
+  color: var(--text-faint);
+  font-size: 13px;
+  padding: 12px 2px;
+}
+
+.sentinel-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sentinel-row {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.sentinel-row.sev-critical {
+  border-left-color: #ff4d4d;
+}
+.sentinel-row.sev-high {
+  border-left-color: #ff8a4d;
+}
+.sentinel-row.sev-med {
+  border-left-color: #e0c35b;
+}
+.sentinel-row.sev-low {
+  border-left-color: var(--text-faint);
+}
+
+.sentinel-row-top {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.sentinel-sev {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.sentinel-sev--critical {
+  color: #ff4d4d;
+}
+.sentinel-sev--high {
+  color: #ff8a4d;
+}
+.sentinel-sev--med {
+  color: #e0c35b;
+}
+.sentinel-sev--low {
+  color: var(--text-faint);
+}
+
+.sentinel-agent {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sentinel-category {
+  color: var(--text-dim);
+}
+
+.sentinel-time {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+.sentinel-summary {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
+  margin-bottom: 4px;
+}
+
+.sentinel-cause,
+.sentinel-action,
+.sentinel-remediation,
+.sentinel-acked {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.sentinel-ack {
+  margin-top: 10px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sentinel-ack:hover {
+  border-color: var(--accent-dim);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* Top-bar alert badge: visually distinct from the stat cells so the
+   operator notices when something's on fire. */
+.topbar-stat--alert {
+  background: rgba(239, 95, 95, 0.10);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  color: #ff8a4d !important;
+  text-decoration: none;
+}
+
+.topbar-stat--alert .topbar-stat-value {
+  color: #ff8a4d;
+}

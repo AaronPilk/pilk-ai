@@ -682,6 +682,67 @@ export async function clearMemory(kind?: MemoryKind): Promise<{ cleared: number 
   return r.json();
 }
 
+// ── Sentinel ─────────────────────────────────────────────────
+
+export type SentinelSeverity = "low" | "med" | "high" | "critical";
+
+export interface SentinelIncident {
+  id: string;
+  agent: string | null;
+  severity: SentinelSeverity;
+  category: string;
+  kind: string;
+  summary: string;
+  likely_cause: string | null;
+  recommended_action: string | null;
+  remediation: string | null;
+  outcome: string | null;
+  acknowledged_at: string | null;
+  created_at: string;
+}
+
+export interface SentinelSummary {
+  unacked_count: number;
+  top_unacked: SentinelIncident[];
+}
+
+export async function fetchSentinelSummary(): Promise<SentinelSummary> {
+  const r = await apiFetch(`/sentinel/summary`);
+  if (!r.ok) throw new Error(`GET /sentinel/summary failed: ${r.status}`);
+  return r.json();
+}
+
+export async function fetchSentinelIncidents(opts?: {
+  limit?: number;
+  only_unacked?: boolean;
+  min_severity?: SentinelSeverity;
+}): Promise<{ incidents: SentinelIncident[] }> {
+  const params = new URLSearchParams();
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.only_unacked) params.set("only_unacked", "true");
+  if (opts?.min_severity) params.set("min_severity", opts.min_severity);
+  const qs = params.toString();
+  const r = await apiFetch(`/sentinel/incidents${qs ? `?${qs}` : ""}`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function acknowledgeSentinelIncident(
+  id: string,
+  reason?: string,
+): Promise<{ id: string; acked: boolean }> {
+  const r = await apiFetch(
+    `/sentinel/incidents/${encodeURIComponent(id)}/acknowledge`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: reason ?? null }),
+    },
+  );
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 // ── Logs ───────────────────────────────────────────────────────
 
 export type LogKind = "plan" | "approval" | "trust";

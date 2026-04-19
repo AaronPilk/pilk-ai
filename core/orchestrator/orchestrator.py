@@ -130,6 +130,7 @@ class Orchestrator:
         sandboxes: SandboxManager | None = None,
         governor: Any = None,
         providers: dict[str, PlannerProvider] | None = None,
+        sentinel_context_fn: Callable[[], Awaitable[str]] | None = None,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -143,6 +144,11 @@ class Orchestrator:
         self.sandboxes = sandboxes
         self.governor = governor
         self.providers = providers or {}
+        # Optional async hook: returns a short "here's what's broken
+        # right now" brief that gets prepended to the system prompt
+        # before the first planner turn. ``None`` keeps the legacy
+        # behaviour of a perfectly silent orchestrator→sentinel link.
+        self.sentinel_context_fn = sentinel_context_fn
         self._lock = asyncio.Lock()
         self._running_plan_id: str | None = None
         self._cancel_event: asyncio.Event | None = None
@@ -345,6 +351,22 @@ class Orchestrator:
         messages: list[dict[str, Any]] = [{"role": "user", "content": rc.goal}]
         final_text: str = ""
 
+        # Sentinel situational brief: if any unacked incidents exist,
+        # prepend them to the system prompt so PILK plans around current
+        # trouble instead of learning about it after-the-fact. Empty or
+        # None means "all quiet" and we leave the prompt alone.
+        effective_system_prompt = rc.system_prompt
+        if self.sentinel_context_fn is not None:
+            try:
+                brief = await self.sentinel_context_fn()
+            except Exception as e:
+                log.warning("sentinel_context_failed", error=str(e))
+                brief = ""
+            if brief:
+                effective_system_prompt = (
+                    f"{brief}\n\n{rc.system_prompt}"
+                )
+
         # The Governor picks the tier for the whole plan based on the
         # original goal. If the classifier wanted PREMIUM but the user
         # has the premium gate on, pick() returns gated=True + a
@@ -414,7 +436,7 @@ class Orchestrator:
             await self.broadcast("plan.step_added", step)
 
             response: PlannerResponse = await provider.plan_turn(
-                system=rc.system_prompt,
+                system=effective_system_prompt,
                 messages=messages,
                 tools=tools,
                 model=planner_model,

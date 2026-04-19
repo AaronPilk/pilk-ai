@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
   cancelAllRunning,
   fetchCostSummary,
+  fetchSentinelSummary,
   pilk,
   useConnection,
   type CostSummary,
@@ -17,9 +18,13 @@ export default function TopBar() {
   const [running, setRunning] = useState(0);
   const [summary, setSummary] = useState<CostSummary | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [sentinelCount, setSentinelCount] = useState(0);
 
   useEffect(() => {
     fetchCostSummary().then(setSummary).catch(() => {});
+    fetchSentinelSummary()
+      .then((s) => setSentinelCount(s.unacked_count))
+      .catch(() => {});
     return pilk.onMessage((m) => {
       if (m.type === "plan.created") setRunning((n) => n + 1);
       else if (m.type === "plan.completed") {
@@ -29,6 +34,10 @@ export default function TopBar() {
         fetchCostSummary().then(setSummary).catch(() => {});
       } else if (m.type === "system.hello" && m.running_plan_id) {
         setRunning(1);
+      } else if (m.type === "sentinel.incident") {
+        setSentinelCount((n) => n + 1);
+      } else if (m.type === "sentinel.incident.acked") {
+        setSentinelCount((n) => Math.max(0, n - 1));
       }
     });
   }, []);
@@ -83,6 +92,16 @@ export default function TopBar() {
               ${summary ? summary.day_usd.toFixed(4) : "0.0000"}
             </span>
           </div>
+          {sentinelCount > 0 && (
+            <Link
+              to="/sentinel"
+              className="topbar-stat topbar-stat--alert"
+              title="Unacknowledged sentinel incidents — click to review."
+            >
+              <span className="topbar-stat-label">Alerts</span>
+              <span className="topbar-stat-value">{sentinelCount}</span>
+            </Link>
+          )}
         </div>
         {!hasLargeOrb && (
           <VoiceOrb size="small" showLabel={false} showCaption={false} />
