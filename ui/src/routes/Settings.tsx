@@ -893,6 +893,31 @@ const SECRET_CATEGORY: Record<string, ApiKeyCategory> = {
   higgsfield_api_key: "Creative",
 };
 
+/** Deep-link each card to the provider's API-key page. If the user
+ * isn't logged in, the provider's sign-in flow will bounce them back
+ * to the same path — landing them as close to the key as possible
+ * without us having to scrape each provider's UI. URLs chosen to be
+ * the most-specific stable path per provider; a provider redesign
+ * might demote one of these to a generic dashboard, which is fine
+ * (still way better than "hunt through the settings menu yourself").
+ *
+ * Keys that aren't in this map render without a "Get key" link — the
+ * description already carries enough context in that case. */
+const SECRET_GET_KEY_URL: Record<string, string> = {
+  hubspot_private_token:
+    "https://app.hubspot.com/l/private-apps",
+  hunter_io_api_key: "https://hunter.io/api-keys",
+  google_places_api_key:
+    "https://console.cloud.google.com/apis/credentials",
+  pagespeed_api_key:
+    "https://console.cloud.google.com/apis/credentials",
+  twelvedata_api_key: "https://twelvedata.com/account/api-keys",
+  browserbase_api_key: "https://www.browserbase.com/settings/api-keys",
+  browserbase_project_id: "https://www.browserbase.com/projects",
+  nano_banana_api_key: "https://aistudio.google.com/app/apikey",
+  higgsfield_api_key: "https://cloud.higgsfield.ai/",
+};
+
 function categorize(name: string): ApiKeyCategory {
   if (name in SECRET_CATEGORY) return SECRET_CATEGORY[name];
   // Pattern-matched secrets (e.g. wordpress_<slug>_app_password) all
@@ -1058,6 +1083,8 @@ function IntegrationSecretRow({
     }
   };
 
+  const getKeyUrl = SECRET_GET_KEY_URL[entry.name];
+
   return (
     <div className="apikeys-row">
       <div className="apikeys-row-head">
@@ -1072,6 +1099,21 @@ function IntegrationSecretRow({
         <div className="apikeys-row-env">env: {entry.env}</div>
       </div>
       <div className="apikeys-row-desc">{entry.description}</div>
+      {getKeyUrl && (
+        <a
+          className="apikeys-get-key"
+          href={getKeyUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={
+            `Opens ${new URL(getKeyUrl).hostname} in a new tab. If ` +
+            `you're not signed in, the provider will prompt you and ` +
+            `redirect back to the API-key page.`
+          }
+        >
+          Get key ↗
+        </a>
+      )}
       {editing ? (
         <div className="apikeys-row-form">
           <input

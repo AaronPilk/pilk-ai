@@ -4510,3 +4510,30 @@ body {
   font-size: 13px;
   text-align: center;
 }
+
+/* ── Settings → API Keys: "Get key" deep link ──────────────────
+   Per-card link that opens the provider's API-key page in a new
+   tab. Small, inline, right-aligned — a quiet helper that doesn't
+   compete with the Save action. */
+.apikeys-get-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 500;
+  text-decoration: none;
+  width: fit-content;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.apikeys-get-key:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
