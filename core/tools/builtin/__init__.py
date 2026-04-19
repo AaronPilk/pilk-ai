@@ -19,6 +19,13 @@ from core.tools.builtin.sales_ops import (
     hunter_find_email_tool,
     site_audit_tool,
 )
+from core.tools.builtin.sentinel import (
+    make_sentinel_acknowledge_tool,
+    make_sentinel_heartbeat_tool,
+    make_sentinel_list_incidents_tool,
+    make_sentinel_status_tool,
+    make_sentinel_tools,
+)
 from core.tools.builtin.shell import shell_exec_tool
 from core.tools.builtin.xauusd import (
     XAUUSD_TOOLS,
@@ -52,6 +59,11 @@ __all__ = [
     "make_browser_tools",
     "make_code_task_tool",
     "make_llm_ask_tool",
+    "make_sentinel_acknowledge_tool",
+    "make_sentinel_heartbeat_tool",
+    "make_sentinel_list_incidents_tool",
+    "make_sentinel_status_tool",
+    "make_sentinel_tools",
     "make_xauusd_take_over_tool",
     "net_fetch_tool",
     "shell_exec_tool",

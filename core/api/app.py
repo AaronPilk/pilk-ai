@@ -84,6 +84,9 @@ from core.secrets import (
     IntegrationSecretsStore,
     set_integration_secrets_store,
 )
+from core.sentinel import HeartbeatStore, IncidentStore, Supervisor
+from core.sentinel.notify import Notifier as SentinelNotifier
+from core.sentinel.remediate import RemediationResult
 from core.supabase import SupabaseClient
 from core.tools import Gateway, ToolRegistry
 from core.tools.builtin import (
@@ -99,6 +102,7 @@ from core.tools.builtin import (
     make_browser_tools,
     make_code_task_tool,
     make_llm_ask_tool,
+    make_sentinel_tools,
     make_xauusd_take_over_tool,
     net_fetch_tool,
     shell_exec_tool,
@@ -141,6 +145,13 @@ async def lifespan(app: FastAPI):
     # secrets — the UI renders them as switches.
     xauusd_settings = XAUUSDSettingsStore(settings.db_path)
     set_xauusd_settings_store(xauusd_settings)
+
+    # Sentinel supervisor state — reads Hub events, emits incidents.
+    sentinel_heartbeats = HeartbeatStore(settings.db_path)
+    sentinel_incidents = IncidentStore(
+        db_path=settings.db_path,
+        jsonl_path=home / "sentinel" / "incidents.jsonl",
+    )
 
     async def broadcast(event_type: str, payload: dict) -> None:
         await hub.broadcast(event_type, payload)
@@ -407,6 +418,44 @@ async def lifespan(app: FastAPI):
         api_available=client is not None,
     )
 
+    # Sentinel supervisor — wired to the AgentRegistry for restart
+    # remediations + subscribed to the Hub for event-driven scans.
+    async def _sentinel_restart(agent_name: str) -> RemediationResult:
+        try:
+            await agents.mark_state(agent_name, "ready")
+            return RemediationResult(
+                kind="restarted",
+                ok=True,
+                message=f"marked {agent_name} as ready",
+            )
+        except Exception as e:
+            return RemediationResult(
+                kind="restarted",
+                ok=False,
+                message=f"restart failed: {e}",
+            )
+
+    sentinel = Supervisor(
+        heartbeats=sentinel_heartbeats,
+        incidents=sentinel_incidents,
+        notifier=SentinelNotifier(),
+        restart_fn=_sentinel_restart,
+        logs_dir=settings.logs_dir,
+        llm_call=None,  # triage starts on heuristic fallback; wire
+                        # Haiku via the governor in a follow-up once
+                        # we've observed a day of real findings and
+                        # know the prompt is stable.
+    )
+    for t in make_sentinel_tools(
+        heartbeats=sentinel_heartbeats,
+        incidents=sentinel_incidents,
+        supervisor=sentinel,
+    ):
+        registry.register(t)
+    hub.subscribe(sentinel.on_event)
+    await sentinel.start()
+    log.info("sentinel_ready", rules=len(sentinel._rules))
+
     voice_state = VoiceStateMachine(broadcast=broadcast)
     stt: STTDriver = (
         OpenAISTT(settings.openai_api_key) if settings.openai_api_key else StubSTT()
@@ -461,6 +510,9 @@ async def lifespan(app: FastAPI):
     app.state.memory = memory
     app.state.integration_secrets = integration_secrets
     app.state.xauusd_settings = xauusd_settings
+    app.state.sentinel = sentinel
+    app.state.sentinel_heartbeats = sentinel_heartbeats
+    app.state.sentinel_incidents = sentinel_incidents
     app.state.coding_router = coding_router
     app.state.accounts = accounts
     app.state.grants = grants
@@ -482,6 +534,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Sentinel shuts down first so its scan task won't race teardown.
+        hub.unsubscribe(sentinel.on_event)
+        await sentinel.stop()
         if browser_sessions is not None:
             await browser_sessions.close_all()
         if client is not None:
