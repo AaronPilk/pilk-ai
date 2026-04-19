@@ -1,0 +1,65 @@
+# Offer A — sample playbook for the sales_ops_agent.
+#
+# Drop a new YAML file in this folder to define another offer; the agent
+# loads whichever one the operator names in the command ("send Offer A",
+# "send the rebuild offer", etc.). Keep this file as the reference.
+#
+# Template variables:
+#   {{first_name}}   — from Hunter.io / HubSpot best-guess
+#   {{company}}      — place display name
+#   {{website}}      — prospect domain (bare, no protocol)
+#   {{bad_score}}    — site_audit score 0–100 (higher = worse)
+#   {{operator}}     — the user running the campaign (defaults to "Aaron")
+
+id: offer_a
+name: Website Rebuild – $4,900 flat
+summary: |
+  Flat-fee website rebuild for small businesses with dated, slow, or
+  non-responsive sites. 2-week turnaround, mobile + speed + on-page SEO
+  baseline included. No retainer required.
+
+# Qualifying criteria the agent should enforce before outreach.
+qualify:
+  min_bad_site_score: 50
+
+# Email template (rendered by the agent before calling gmail_send_as_me).
+email:
+  subject: "{{company}} — website rebuild in 2 weeks, flat fee"
+  body: |
+    Hi {{first_name}},
+
+    Took a quick look at {{website}} — it's flagging {{bad_score}}/100
+    on Google's mobile performance scan, which usually translates to
+    lost calls from local search on phones.
+
+    Skyway Media does flat-fee website rebuilds for small businesses:
+    $4,900, 2 weeks, mobile + speed + on-page SEO handled end-to-end.
+    No retainer, no surprise fees.
+
+    If a 15-minute look at what a rebuild would change for {{company}}
+    is worth it, reply "yes" and I'll send a few times this week.
+
+    — {{operator}}
+    Skyway Media
+    [Physical address on file with the operator — rendered by the agent
+     before send so CAN-SPAM stays green.]
+
+    Unsubscribe: reply "stop" and I'll take you off the list.
+
+# Contact-form fill template — what goes into each field when the agent
+# hits a prospect's website contact form via browser_form_fill.
+form_fill:
+  fields:
+    name: "{{operator}} @ Skyway Media"
+    email: "aaron@skyway.media"
+    phone: ""
+    subject: "Quick note re: your website"
+    message: |
+      Hi — ran {{company}}'s site through Google's mobile scan and it's
+      flagging {{bad_score}}/100 on performance. Skyway Media does
+      flat-fee 2-week website rebuilds for $4,900, no retainer. If
+      that's useful, feel free to reply here or email aaron@skyway.media
+      and I'll share a quick rundown of what we'd change.
+
+      — {{operator}}
+  submit: true
