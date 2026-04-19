@@ -196,3 +196,148 @@ async def test_flatten_all_force_disables() -> None:
     )
     # Paper mode returns non-error (no live positions to close); state flips.
     assert out.data["state"] == "DISABLED"
+
+
+# ── execution_mode actions on the state tool ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_state_get_includes_execution_mode() -> None:
+    out = await xauusd_state_tool.handler({"action": "get"}, ToolContext())
+    assert "execution_mode" in out.data
+    # Default when store isn't wired in this test env.
+    assert out.data["execution_mode"] == "approve"
+
+
+@pytest.mark.asyncio
+async def test_state_set_mode_without_store_surfaces_unavailable() -> None:
+    # The tool test fixture doesn't wire a live store; set_mode should
+    # error loudly rather than silently succeeding.
+    from core.trading.xauusd.settings_store import set_xauusd_settings_store
+
+    set_xauusd_settings_store(None)
+    out = await xauusd_state_tool.handler(
+        {"action": "set_mode", "mode": "autonomous"}, ToolContext()
+    )
+    assert out.is_error
+    assert "unavailable" in out.content or "not initialized" in out.content
+
+
+@pytest.mark.asyncio
+async def test_state_set_mode_rejects_unknown(tmp_path) -> None:
+    from core.db.migrations import ensure_schema
+    from core.trading.xauusd.settings_store import (
+        XAUUSDSettingsStore,
+        set_xauusd_settings_store,
+    )
+
+    db = tmp_path / "pilk.db"
+    ensure_schema(db)
+    set_xauusd_settings_store(XAUUSDSettingsStore(db))
+    try:
+        out = await xauusd_state_tool.handler(
+            {"action": "set_mode", "mode": "YOLO"}, ToolContext()
+        )
+        assert out.is_error
+        assert "unknown" in out.content
+    finally:
+        set_xauusd_settings_store(None)
+
+
+@pytest.mark.asyncio
+async def test_state_set_mode_roundtrip(tmp_path) -> None:
+    from core.db.migrations import ensure_schema
+    from core.trading.xauusd.settings_store import (
+        XAUUSDSettingsStore,
+        set_xauusd_settings_store,
+    )
+
+    db = tmp_path / "pilk.db"
+    ensure_schema(db)
+    set_xauusd_settings_store(XAUUSDSettingsStore(db))
+    try:
+        setd = await xauusd_state_tool.handler(
+            {"action": "set_mode", "mode": "autonomous"}, ToolContext()
+        )
+        assert not setd.is_error
+        assert setd.data["execution_mode"] == "autonomous"
+
+        got = await xauusd_state_tool.handler(
+            {"action": "get_mode"}, ToolContext()
+        )
+        assert got.data["execution_mode"] == "autonomous"
+    finally:
+        set_xauusd_settings_store(None)
+
+
+# ── get_candles wiring ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_candles_without_key_errors(monkeypatch) -> None:
+    from core.config import get_settings
+    from core.secrets import set_integration_secrets_store
+    from core.tools.builtin.xauusd import xauusd_get_candles_tool
+
+    # Ensure nothing is configured.
+    set_integration_secrets_store(None)
+    monkeypatch.setattr(get_settings(), "twelvedata_api_key", None, raising=False)
+
+    out = await xauusd_get_candles_tool.handler(
+        {"timeframe": "5M", "count": 10}, ToolContext()
+    )
+    assert out.is_error
+    assert "Twelve Data" in out.content
+
+
+@pytest.mark.asyncio
+async def test_get_candles_happy_path(monkeypatch) -> None:
+    import json
+
+    import httpx
+
+    from core.tools.builtin.xauusd import xauusd_get_candles_tool
+
+    body = {
+        "values": [
+            {
+                "datetime": "2026-04-19 16:30:00",
+                "open": "2400.1",
+                "high": "2401.4",
+                "low": "2399.9",
+                "close": "2401.1",
+                "volume": "123",
+            }
+        ]
+    }
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.url.params["symbol"] == "XAU/USD"
+        assert req.url.params["interval"] == "5min"
+        return httpx.Response(200, content=json.dumps(body))
+
+    transport = httpx.MockTransport(handler)
+    real_init = httpx.AsyncClient.__init__
+
+    def patched(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["transport"] = transport
+        return real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "__init__", patched)
+
+    # Provide a key via env fallback.
+    from core.config import get_settings
+
+    monkeypatch.setattr(
+        get_settings(), "twelvedata_api_key", "key-abc", raising=False
+    )
+    from core.secrets import set_integration_secrets_store
+
+    set_integration_secrets_store(None)
+
+    out = await xauusd_get_candles_tool.handler(
+        {"timeframe": "5M", "count": 10}, ToolContext()
+    )
+    assert not out.is_error
+    assert out.data["count"] == 1
+    assert out.data["candles"][0]["close"] == pytest.approx(2401.1)

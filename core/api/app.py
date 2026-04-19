@@ -39,6 +39,7 @@ from core.api.routes.plans import router as plans_router
 from core.api.routes.sandboxes import router as sandboxes_router
 from core.api.routes.supabase import router as supabase_router
 from core.api.routes.voice import router as voice_router
+from core.api.routes.xauusd_settings import router as xauusd_settings_router
 from core.api.ws import router as ws_router
 from core.coding import (
     AgentSDKEngine,
@@ -102,6 +103,10 @@ from core.tools.builtin import (
     shell_exec_tool,
     trade_execute_tool,
 )
+from core.trading.xauusd.settings_store import (
+    XAUUSDSettingsStore,
+    set_xauusd_settings_store,
+)
 from core.voice import StubSTT, StubTTS, VoicePipeline, VoiceStateMachine
 from core.voice.drivers import STTDriver, TTSDriver
 from core.voice.elevenlabs_driver import ElevenLabsTTS
@@ -130,6 +135,11 @@ async def lifespan(app: FastAPI):
     # written via PUT /integration-secrets from Settings → API Keys.
     integration_secrets = IntegrationSecretsStore(settings.db_path)
     set_integration_secrets_store(integration_secrets)
+    # Runtime toggles for the XAUUSD execution agent (execution_mode
+    # etc.). Separate from integration_secrets because these aren't
+    # secrets — the UI renders them as switches.
+    xauusd_settings = XAUUSDSettingsStore(settings.db_path)
+    set_xauusd_settings_store(xauusd_settings)
 
     async def broadcast(event_type: str, payload: dict) -> None:
         await hub.broadcast(event_type, payload)
@@ -444,6 +454,7 @@ async def lifespan(app: FastAPI):
     app.state.governor = governor
     app.state.memory = memory
     app.state.integration_secrets = integration_secrets
+    app.state.xauusd_settings = xauusd_settings
     app.state.coding_router = coding_router
     app.state.accounts = accounts
     app.state.grants = grants
@@ -509,6 +520,7 @@ def create_app() -> FastAPI:
     app.include_router(apple_router)
     app.include_router(memory_router)
     app.include_router(integration_secrets_router)
+    app.include_router(xauusd_settings_router)
     app.include_router(logs_router)
     app.include_router(coding_http_router)
     app.include_router(supabase_router)

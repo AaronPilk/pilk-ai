@@ -62,6 +62,14 @@ KNOWN_SECRETS: dict[str, dict[str, str]] = {
         ),
         "env": "PAGESPEED_API_KEY",
     },
+    "twelvedata_api_key": {
+        "label": "Twelve Data (XAU/USD feed)",
+        "description": (
+            "Price feed for the XAU/USD execution agent. Free tier at "
+            "twelvedata.com → Dashboard → API Keys. 8 req/min limit."
+        ),
+        "env": "TWELVEDATA_API_KEY",
+    },
 }
 
 

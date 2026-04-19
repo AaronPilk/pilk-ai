@@ -3968,3 +3968,56 @@ body {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-faint);
 }
+
+/* ── Settings → XAU/USD Agent ────────────────────────────────── */
+.xauusd-mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.xauusd-mode-btn {
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.xauusd-mode-btn:hover:not(:disabled) {
+  border-color: var(--accent-dim);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.xauusd-mode-btn--active {
+  border-color: var(--accent);
+  background: rgba(101, 209, 155, 0.08);
+  cursor: default;
+}
+
+.xauusd-mode-btn:disabled {
+  opacity: 0.85;
+}
+
+.xauusd-mode-btn-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.xauusd-mode-btn-sub {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.settings-card-hint {
+  margin-top: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+}

@@ -120,6 +120,15 @@ class Settings(BaseSettings):
             "HUBSPOT_PRIVATE_TOKEN", "PILK_HUBSPOT_PRIVATE_TOKEN"
         ),
     )
+    # Twelve Data — XAU/USD price-feed for the xauusd_execution_agent.
+    # Free tier: 8 req/min, 800 req/day. Dashboard → API Keys ("Add
+    # new") at twelvedata.com. Dashboard-paste wins over this env var.
+    twelvedata_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "TWELVEDATA_API_KEY", "PILK_TWELVEDATA_API_KEY"
+        ),
+    )
 
     # ── Coding engines ────────────────────────────────────────────
     # Claude Code runs locally via a bridge when the user has one set

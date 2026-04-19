@@ -960,3 +960,32 @@ export async function clearIntegrationSecret(
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
+
+// ── XAU/USD runtime settings ────────────────────────────────────
+
+export type XAUUSDExecutionMode = "approve" | "autonomous";
+
+export interface XAUUSDSettings {
+  execution_mode: XAUUSDExecutionMode;
+  is_default: boolean;
+  updated_at: string | null;
+  allowed_modes: XAUUSDExecutionMode[];
+}
+
+export async function fetchXAUUSDSettings(): Promise<XAUUSDSettings> {
+  const r = await apiFetch(`/xauusd/settings`);
+  if (!r.ok) throw new Error(`GET /xauusd/settings failed: ${r.status}`);
+  return r.json();
+}
+
+export async function setXAUUSDExecutionMode(
+  mode: XAUUSDExecutionMode,
+): Promise<{ execution_mode: XAUUSDExecutionMode; updated_at: string | null }> {
+  const r = await apiFetch(`/xauusd/settings/execution_mode`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
