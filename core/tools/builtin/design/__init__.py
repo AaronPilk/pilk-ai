@@ -13,6 +13,14 @@ Future work lives in sibling modules:
 * Canva asset resolution (``canva_resolver.py``) lands in PR I.
 """
 
+from core.tools.builtin.design.elementor_schema import (
+    ElementorContainer,
+    ElementorDocument,
+    ElementorWidget,
+    ValidationResult,
+    validate_document,
+)
+from core.tools.builtin.design.elementor_validate import elementor_validate_tool
 from core.tools.builtin.design.html import CanvaUnresolvedError, ir_to_html
 from core.tools.builtin.design.html_export import html_export_tool
 from core.tools.builtin.design.ir import (
@@ -43,6 +51,9 @@ __all__ = [
     "Container",
     "ContainerSettings",
     "Divider",
+    "ElementorContainer",
+    "ElementorDocument",
+    "ElementorWidget",
     "Form",
     "FormField",
     "HTMLEmbed",
@@ -54,8 +65,11 @@ __all__ = [
     "Spacer",
     "Spacing",
     "Text",
+    "ValidationResult",
     "Video",
+    "elementor_validate_tool",
     "html_export_tool",
     "ir_to_html",
+    "validate_document",
     "wordpress_push_tool",
 ]

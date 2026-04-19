@@ -111,7 +111,11 @@ from core.tools.builtin import (
 )
 from core.tools.builtin.delivery import make_agent_email_deliver_tool
 from core.tools.builtin.delivery.email import recipients_in_allowlist
-from core.tools.builtin.design import html_export_tool, wordpress_push_tool
+from core.tools.builtin.design import (
+    elementor_validate_tool,
+    html_export_tool,
+    wordpress_push_tool,
+)
 from core.trading.xauusd.settings_store import (
     XAUUSDSettingsStore,
     set_xauusd_settings_store,
@@ -231,7 +235,11 @@ async def lifespan(app: FastAPI):
     # the per-site secret isn't set.
     registry.register(html_export_tool)
     registry.register(wordpress_push_tool)
-    log.info("design_registered", tools=["html_export", "wordpress_push"])
+    registry.register(elementor_validate_tool)
+    log.info(
+        "design_registered",
+        tools=["html_export", "wordpress_push", "elementor_validate"],
+    )
 
     # Connected accounts: one AccountsStore + one ProviderRegistry for
     # every OAuth-backed integration. Provider-specific tool factories
