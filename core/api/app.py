@@ -108,6 +108,7 @@ from core.tools.builtin import (
     shell_exec_tool,
     trade_execute_tool,
 )
+from core.tools.builtin.design import html_export_tool, wordpress_push_tool
 from core.trading.xauusd.settings_store import (
     XAUUSDSettingsStore,
     set_xauusd_settings_store,
@@ -219,6 +220,15 @@ async def lifespan(app: FastAPI):
     for t in XAUUSD_TOOLS:
         registry.register(t)
     log.info("xauusd_registered", tools=[t.name for t in XAUUSD_TOOLS])
+
+    # Web-design toolkit — html_export emits the static bundle; the
+    # wordpress_push tool ships it to a client's WP site as an Elementor
+    # draft. Both stay unconditional: html_export has no external deps
+    # and wordpress_push surfaces a clean "not configured" error when
+    # the per-site secret isn't set.
+    registry.register(html_export_tool)
+    registry.register(wordpress_push_tool)
+    log.info("design_registered", tools=["html_export", "wordpress_push"])
 
     # Connected accounts: one AccountsStore + one ProviderRegistry for
     # every OAuth-backed integration. Provider-specific tool factories
