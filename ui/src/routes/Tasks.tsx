@@ -73,6 +73,50 @@ function _aggregateStatus(plans: PlanSummary[]): PlanStatus {
   return "completed";
 }
 
+/** True when a plan is a pure chat turn — every step is an LLM call,
+ * no tool calls, agent hops, or approvals. Session view uses this to
+ * decide chat-bubble rendering vs task-step rendering. */
+function isChatPlan(detail: PlanDetail): boolean {
+  if (detail.steps.length === 0) return true;
+  return detail.steps.every((s) => s.kind === "llm");
+}
+
+/** Pull the final assistant text from a completed plan. Looks at the
+ * last LLM step's output; falls back to stringifying the plan's
+ * content field. Returns null if nothing readable is on record yet
+ * (e.g. the plan is still running). */
+function finalAssistantText(detail: PlanDetail): string | null {
+  for (let i = detail.steps.length - 1; i >= 0; i--) {
+    const s = detail.steps[i];
+    if (s.kind !== "llm") continue;
+    const o = s.output as unknown;
+    if (typeof o === "string") {
+      const trimmed = o.trim();
+      if (trimmed) return trimmed;
+    } else if (o && typeof o === "object") {
+      const content = (o as { content?: unknown }).content;
+      if (typeof content === "string" && content.trim()) {
+        return content.trim();
+      }
+      // Anthropic-shape: content = [{type:"text", text:"..."}]
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (
+            block &&
+            typeof block === "object" &&
+            (block as { type?: string }).type === "text" &&
+            typeof (block as { text?: unknown }).text === "string"
+          ) {
+            const t = ((block as { text: string }).text ?? "").trim();
+            if (t) return t;
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function groupIntoSessions(plans: PlanSummary[]): TaskSession[] {
   const sessions: TaskSession[] = [];
   let bucket: PlanSummary[] = [];
@@ -195,6 +239,43 @@ export default function Tasks() {
 
   const sessions = groupIntoSessions(plans);
 
+  // When the session-detail view is open, pre-fetch every plan's full
+  // detail in parallel so we can render the chat-log timeline without
+  // click-through-to-fetch latency. Cached by plan id so flipping
+  // between sessions only refetches what's new.
+  const [sessionPlanDetails, setSessionPlanDetails] = useState<
+    Record<string, PlanDetail>
+  >({});
+  useEffect(() => {
+    if (selectedSessionIdx === null) return;
+    const session = sessions[selectedSessionIdx];
+    if (!session) return;
+    const pending = session.plans.filter(
+      (p) => !sessionPlanDetails[p.id],
+    );
+    if (pending.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      pending.map((p) =>
+        fetchPlan(p.id)
+          .then((d) => [p.id, d] as const)
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      setSessionPlanDetails((prev) => {
+        const next = { ...prev };
+        for (const r of results) {
+          if (r) next[r[0]] = r[1];
+        }
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSessionIdx, sessions, sessionPlanDetails]);
+
   // Plan-detail pane (user drilled all the way in to one plan).
   if (selectedId !== null && detail) {
     const isLive =
@@ -252,10 +333,19 @@ export default function Tasks() {
     );
   }
 
-  // Session-detail pane: a multi-plan session. Renders every plan in
-  // the session as a sub-card so the operator can drill into any step.
+  // Session-detail pane: chat log if every fetched plan is a chat
+  // turn (no tool calls), otherwise a timeline of task sub-plans with
+  // an expandable step list per plan. Plans render oldest-first so
+  // the transcript reads top-down like a real chat.
   if (selectedSessionIdx !== null && sessions[selectedSessionIdx]) {
     const session = sessions[selectedSessionIdx];
+    const chronological = [...session.plans].reverse();
+    const fetched = chronological
+      .map((p) => sessionPlanDetails[p.id])
+      .filter((d): d is PlanDetail => Boolean(d));
+    const isAllChat =
+      fetched.length === chronological.length &&
+      fetched.every((d) => isChatPlan(d));
     return (
       <div className="agents-page">
         <button
@@ -271,12 +361,13 @@ export default function Tasks() {
               className={`agent-detail-avatar task-card-icon--${session.status}`}
               aria-hidden
             >
-              {STATUS_ICON[session.status] ?? "?"}
+              {isAllChat ? "💬" : STATUS_ICON[session.status] ?? "?"}
             </div>
             <div className="agent-detail-hero-body">
               <div className="agent-detail-name">
-                Session · {session.plans.length}{" "}
-                {session.plans.length === 1 ? "plan" : "plans"}
+                {isAllChat
+                  ? "Conversation"
+                  : `Session · ${session.plans.length} plans`}
               </div>
               <div className="tasks-detail-meta">
                 <span
@@ -290,37 +381,14 @@ export default function Tasks() {
               </div>
             </div>
           </div>
-          <div className="agents-gallery tasks-gallery">
-            {session.plans.map((p) => (
-              <button
+          <div className="session-log">
+            {chronological.map((p) => (
+              <SessionPlanEntry
                 key={p.id}
-                className={`agent-card task-card task-card--${p.status}`}
-                onClick={() => setSelectedId(p.id)}
-              >
-                <div className="task-card-head">
-                  <span
-                    className={`task-card-icon task-card-icon--${p.status}`}
-                    aria-hidden
-                  >
-                    {STATUS_ICON[p.status] ?? "?"}
-                  </span>
-                  <span className="task-card-time">
-                    {timeAgo(p.created_at)}
-                  </span>
-                </div>
-                <div className="task-card-goal">{p.goal}</div>
-                <div className="task-card-footer">
-                  <span
-                    className={`agent-card-status agent-card-status--${p.status}`}
-                  >
-                    <span className="agent-card-status-dot" />
-                    {humanize(p.status)}
-                  </span>
-                  <span className="task-card-cost">
-                    ${p.actual_usd.toFixed(4)}
-                  </span>
-                </div>
-              </button>
+                plan={p}
+                detail={sessionPlanDetails[p.id] ?? null}
+                onOpenFull={() => setSelectedId(p.id)}
+              />
             ))}
           </div>
         </div>
@@ -401,6 +469,73 @@ export default function Tasks() {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+/** One entry in the session-detail timeline. Renders a pair of chat
+ * bubbles (user goal → PILK reply) plus an optional "tool run" footer
+ * when the plan had real steps underneath it. Clicking the footer
+ * opens the full PlanCard. */
+function SessionPlanEntry({
+  plan,
+  detail,
+  onOpenFull,
+}: {
+  plan: PlanSummary;
+  detail: PlanDetail | null;
+  onOpenFull: () => void;
+}) {
+  const reply = detail ? finalAssistantText(detail) : null;
+  const isChat = detail ? isChatPlan(detail) : true;
+  const stepCount = detail?.steps.length ?? 0;
+
+  return (
+    <div className={`session-turn session-turn--${plan.status}`}>
+      <div className="session-bubble session-bubble--user">
+        <div className="session-bubble-who">You</div>
+        <div className="session-bubble-body">{plan.goal}</div>
+        <div className="session-bubble-time">{timeAgo(plan.created_at)}</div>
+      </div>
+      <div className="session-bubble session-bubble--pilk">
+        <div className="session-bubble-who">PILK</div>
+        <div className="session-bubble-body">
+          {detail === null ? (
+            <span className="session-bubble-loading">Loading…</span>
+          ) : reply ? (
+            reply
+          ) : plan.status === "running" ? (
+            <span className="session-bubble-loading">Thinking…</span>
+          ) : plan.status === "failed" ? (
+            <span className="session-bubble-err">
+              {(detail.steps.find((s) => s.error)?.error) ??
+                "(no response — plan failed)"}
+            </span>
+          ) : (
+            <span className="session-bubble-dim">(no text reply)</span>
+          )}
+        </div>
+        {!isChat && detail && (
+          <button
+            type="button"
+            className="session-bubble-tools"
+            onClick={onOpenFull}
+          >
+            {stepCount} step{stepCount === 1 ? "" : "s"} ·{" "}
+            {detail.steps
+              .filter((s) => s.kind !== "llm")
+              .map((s) => s.kind)
+              .slice(0, 3)
+              .join(" / ") || "tool run"}{" "}
+            · open full log →
+          </button>
+        )}
+        {isChat && detail && detail.actual_usd > 0 && (
+          <div className="session-bubble-cost">
+            ${detail.actual_usd.toFixed(4)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
