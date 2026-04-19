@@ -129,3 +129,55 @@ def journal_safety_interrupt(
         payload=payload or {},
         plan_id=plan_id,
     )
+
+
+def journal_broker_event(
+    *,
+    action: str,
+    session_id: str | None,
+    account_type: str | None = None,
+    details: dict[str, Any] | None = None,
+    plan_id: str | None = None,
+) -> None:
+    """Log broker-adapter lifecycle events: take_over, release, verify,
+    close_position, etc. Kept separate from ``order_attempt`` because an
+    attempt implies an intent to trade — these are session bookkeeping.
+
+    ``action`` rather than ``event`` to avoid shadowing structlog's
+    reserved ``event`` kwarg.
+    """
+    log.info(
+        "xauusd.broker",
+        kind="broker_event",
+        action=action,
+        session_id=session_id,
+        account_type=account_type,
+        details=details or {},
+        plan_id=plan_id,
+    )
+
+
+def journal_position_event(
+    *,
+    action: str,
+    position_id: str | None,
+    side: str | None = None,
+    lots: float | None = None,
+    entry: float | None = None,
+    exit_price: float | None = None,
+    pnl_usd: float | None = None,
+    plan_id: str | None = None,
+) -> None:
+    """Open / close / stop-out / take-profit events on one position."""
+    log.info(
+        "xauusd.position",
+        kind="position_event",
+        action=action,
+        position_id=position_id,
+        side=side,
+        lots=lots,
+        entry=entry,
+        exit_price=exit_price,
+        pnl_usd=pnl_usd,
+        plan_id=plan_id,
+    )
