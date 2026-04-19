@@ -294,8 +294,11 @@ a {
   color: #0a0b10;
   font-weight: 600;
   font-size: 14px;
+  font-family: inherit;
+  border: none;
   border-radius: var(--radius-sm, 10px);
   text-decoration: none;
+  cursor: pointer;
   transition: transform 120ms ease, background-color 120ms ease;
   align-self: flex-start;
 }
