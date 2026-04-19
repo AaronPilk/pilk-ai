@@ -76,7 +76,7 @@ async def test_supervisor_creates_incident_on_stale_heartbeat(env) -> None:
 async def test_supervisor_heuristic_skips_remediation(env) -> None:
     """Default heuristic triage is low-confidence; the remediation gate
     must refuse to auto-fix (operator review wanted instead)."""
-    heartbeats, incidents, supervisor = env
+    heartbeats, _incidents, supervisor = env
     heartbeats.upsert(agent_name="y", status="ok", interval_seconds=30)
     created = await _scan_with_future(supervisor, seconds=120)
     assert len(created) == 1
