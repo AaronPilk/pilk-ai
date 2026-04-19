@@ -1,0 +1,68 @@
+title: Footer
+slug: footer
+containers:
+  - id: ft-sec
+    settings:
+      flex_direction: {mobile: column}
+      gap: {mobile: 24, desktop: 32}
+      padding: {mobile: {top: 32, right: 20, bottom: 32, left: 20}}
+      margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+      align_items: {mobile: stretch, desktop: center}
+      justify_content: {mobile: start}
+      max_width: {mobile: null, desktop: 1200}
+      background_color: "#0f172a"
+    children:
+      - id: ft-columns
+        settings:
+          flex_direction: {mobile: column, desktop: row}
+          gap: {mobile: 16, desktop: 48}
+          padding: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          align_items: {mobile: start}
+          justify_content: {mobile: between}
+          max_width: {mobile: null}
+        children:
+          - id: ft-col-a
+            settings:
+              flex_direction: {mobile: column}
+              gap: {mobile: 8}
+              padding: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+              margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+              align_items: {mobile: start}
+              justify_content: {mobile: start}
+              max_width: {mobile: null}
+            children:
+              - widget_type: heading
+                text: Company
+                level: h5
+              - widget_type: button
+                label: About
+                link: "/about"
+                variant: ghost
+              - widget_type: button
+                label: Careers
+                link: "/careers"
+                variant: ghost
+          - id: ft-col-b
+            settings:
+              flex_direction: {mobile: column}
+              gap: {mobile: 8}
+              padding: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+              margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+              align_items: {mobile: start}
+              justify_content: {mobile: start}
+              max_width: {mobile: null}
+            children:
+              - widget_type: heading
+                text: Work
+                level: h5
+              - widget_type: button
+                label: Case studies
+                link: "/work"
+                variant: ghost
+      - widget_type: divider
+        color: "#1e293b"
+        thickness_px: 1
+      - widget_type: text
+        body: "© 2026 Skyway Media. All rights reserved."
+        align: {mobile: center}

@@ -1,0 +1,41 @@
+title: Two Column
+slug: two-column
+containers:
+  - id: tc-sec
+    settings:
+      flex_direction: {mobile: column, desktop: row}
+      gap: {mobile: 24, desktop: 48}
+      padding: {mobile: {top: 32, right: 20, bottom: 32, left: 20}}
+      margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+      align_items: {mobile: stretch, desktop: center}
+      justify_content: {mobile: start}
+      max_width: {mobile: null, desktop: 1200}
+    children:
+      - id: tc-left
+        settings:
+          flex_direction: {mobile: column}
+          gap: {mobile: 12}
+          padding: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          align_items: {mobile: start}
+          justify_content: {mobile: start}
+          max_width: {mobile: null}
+        children:
+          - widget_type: heading
+            text: Left side
+            level: h2
+          - widget_type: text
+            body: Content on the left of the row.
+      - id: tc-right
+        settings:
+          flex_direction: {mobile: column}
+          gap: {mobile: 12}
+          padding: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          align_items: {mobile: start}
+          justify_content: {mobile: start}
+          max_width: {mobile: null}
+        children:
+          - widget_type: image
+            src: "https://example.com/right.jpg"
+            alt: Illustration of the right side feature

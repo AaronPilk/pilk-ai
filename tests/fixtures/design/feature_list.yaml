@@ -1,0 +1,70 @@
+title: Features
+slug: features
+containers:
+  - id: feat-sec
+    settings:
+      flex_direction: {mobile: column, desktop: row}
+      gap: {mobile: 24, desktop: 32}
+      padding: {mobile: {top: 48, right: 20, bottom: 48, left: 20}}
+      margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+      align_items: {mobile: stretch, desktop: start}
+      justify_content: {mobile: start}
+      max_width: {mobile: null, desktop: 1200}
+    children:
+      - id: feat-a
+        settings:
+          flex_direction: {mobile: column}
+          gap: {mobile: 8}
+          padding: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          align_items: {mobile: start}
+          justify_content: {mobile: start}
+          max_width: {mobile: null}
+        children:
+          - widget_type: icon
+            name: zap
+            size_px: 32
+            color: "#1d4ed8"
+          - widget_type: heading
+            text: Fast
+            level: h3
+          - widget_type: text
+            body: Ship in a day instead of a sprint.
+      - id: feat-b
+        settings:
+          flex_direction: {mobile: column}
+          gap: {mobile: 8}
+          padding: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          align_items: {mobile: start}
+          justify_content: {mobile: start}
+          max_width: {mobile: null}
+        children:
+          - widget_type: icon
+            name: shield
+            size_px: 32
+            color: "#1d4ed8"
+          - widget_type: heading
+            text: Safe
+            level: h3
+          - widget_type: text
+            body: Every change goes through approval.
+      - id: feat-c
+        settings:
+          flex_direction: {mobile: column}
+          gap: {mobile: 8}
+          padding: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          align_items: {mobile: start}
+          justify_content: {mobile: start}
+          max_width: {mobile: null}
+        children:
+          - widget_type: icon
+            name: sparkles
+            size_px: 32
+            color: "#1d4ed8"
+          - widget_type: heading
+            text: Polished
+            level: h3
+          - widget_type: text
+            body: Canva-grade assets on every page.

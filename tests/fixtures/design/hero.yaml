@@ -1,0 +1,47 @@
+title: Acme Launch
+slug: acme-launch
+lang: en
+containers:
+  - id: hero-sec
+    settings:
+      flex_direction: {mobile: column}
+      gap: {mobile: 16, desktop: 24}
+      padding:
+        mobile: {top: 48, right: 20, bottom: 48, left: 20}
+        desktop: {top: 96, right: 32, bottom: 96, left: 32}
+      margin:
+        mobile: {top: 0, right: 0, bottom: 0, left: 0}
+      align_items: {mobile: center}
+      justify_content: {mobile: center}
+      max_width: {mobile: null, desktop: 1024}
+      background_color: "#f8fafc"
+    children:
+      - id: hero-h
+        widget_type: heading
+        text: Launch better, faster.
+        level: h1
+        align: {mobile: center}
+      - id: hero-sub
+        widget_type: text
+        body: Skyway builds landing pages that convert.
+        align: {mobile: center}
+      - id: hero-ctas
+        settings:
+          flex_direction: {mobile: column, desktop: row}
+          gap: {mobile: 12, desktop: 16}
+          padding: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          margin: {mobile: {top: 16, right: 0, bottom: 0, left: 0}}
+          align_items: {mobile: center}
+          justify_content: {mobile: center}
+          max_width: {mobile: null}
+        children:
+          - id: btn-primary
+            widget_type: button
+            label: Start now
+            link: "#start"
+            variant: primary
+          - id: btn-secondary
+            widget_type: button
+            label: See examples
+            link: "#examples"
+            variant: secondary

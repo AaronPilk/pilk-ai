@@ -1,0 +1,43 @@
+title: Nav Bar
+slug: nav
+containers:
+  - id: nav-sec
+    settings:
+      flex_direction: {mobile: row}
+      gap: {mobile: 16, desktop: 24}
+      padding: {mobile: {top: 12, right: 16, bottom: 12, left: 16}}
+      margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+      align_items: {mobile: center}
+      justify_content: {mobile: between}
+      max_width: {mobile: null, desktop: 1200}
+      background_color: "#ffffff"
+    children:
+      - widget_type: heading
+        text: Skyway
+        level: h4
+      - id: nav-links
+        settings:
+          flex_direction: {mobile: row}
+          gap: {mobile: 12, desktop: 20}
+          padding: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          align_items: {mobile: center}
+          justify_content: {mobile: end}
+          max_width: {mobile: null}
+        children:
+          - widget_type: button
+            label: Home
+            link: "/"
+            variant: ghost
+          - widget_type: button
+            label: Work
+            link: "/work"
+            variant: ghost
+          - widget_type: button
+            label: About
+            link: "/about"
+            variant: ghost
+          - widget_type: button
+            label: Contact
+            link: "/contact"
+            variant: primary

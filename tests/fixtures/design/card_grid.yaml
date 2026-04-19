@@ -1,0 +1,61 @@
+title: Card Grid
+slug: card-grid
+containers:
+  - id: cg-sec
+    settings:
+      flex_direction: {mobile: column, desktop: row}
+      gap: {mobile: 16, desktop: 24}
+      padding: {mobile: {top: 40, right: 16, bottom: 40, left: 16}}
+      margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+      align_items: {mobile: stretch}
+      justify_content: {mobile: start, desktop: center}
+      max_width: {mobile: null, desktop: 1200}
+    children:
+      - id: cg-a
+        settings:
+          flex_direction: {mobile: column}
+          gap: {mobile: 8}
+          padding: {mobile: {top: 24, right: 16, bottom: 24, left: 16}}
+          margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          align_items: {mobile: start}
+          justify_content: {mobile: start}
+          max_width: {mobile: null}
+          background_color: "#ffffff"
+        children:
+          - widget_type: heading
+            text: Card A
+            level: h3
+          - widget_type: text
+            body: First card blurb.
+      - id: cg-b
+        settings:
+          flex_direction: {mobile: column}
+          gap: {mobile: 8}
+          padding: {mobile: {top: 24, right: 16, bottom: 24, left: 16}}
+          margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          align_items: {mobile: start}
+          justify_content: {mobile: start}
+          max_width: {mobile: null}
+          background_color: "#ffffff"
+        children:
+          - widget_type: heading
+            text: Card B
+            level: h3
+          - widget_type: text
+            body: Second card blurb.
+      - id: cg-c
+        settings:
+          flex_direction: {mobile: column}
+          gap: {mobile: 8}
+          padding: {mobile: {top: 24, right: 16, bottom: 24, left: 16}}
+          margin: {mobile: {top: 0, right: 0, bottom: 0, left: 0}}
+          align_items: {mobile: start}
+          justify_content: {mobile: start}
+          max_width: {mobile: null}
+          background_color: "#ffffff"
+        children:
+          - widget_type: heading
+            text: Card C
+            level: h3
+          - widget_type: text
+            body: Third card blurb.
