@@ -98,6 +98,7 @@ from core.supabase import SupabaseClient
 from core.tools import Gateway, ToolRegistry
 from core.tools.builtin import (
     CREATIVE_TOOLS,
+    META_ADS_TOOLS,
     SALES_OPS_TOOLS,
     XAUUSD_TOOLS,
     BrowserSessionManager,
@@ -309,6 +310,14 @@ async def lifespan(app: FastAPI):
     for t in CREATIVE_TOOLS:
         registry.register(t)
     log.info("creative_registered", tools=[t.name for t in CREATIVE_TOOLS])
+
+    # Meta Ads operator toolkit — full campaign/adset/ad/creative/
+    # insights coverage. Handlers surface a clean "not configured"
+    # outcome when meta_access_token / meta_ad_account_id are missing,
+    # so registration stays unconditional.
+    for t in META_ADS_TOOLS:
+        registry.register(t)
+    log.info("meta_ads_registered", tools=[t.name for t in META_ADS_TOOLS])
 
     # Web-design toolkit — html_export emits the static bundle; the
     # wordpress_push tool ships it to a client's WP site as an Elementor

@@ -162,6 +162,54 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Meta Marketing API (meta_ads_agent) ───────────────────────
+    # Long-lived user access token for the operator's Meta app — paste
+    # it in Settings → API Keys. Meta rotates these ~every 60 days;
+    # the agent surfaces 401s as a "refresh token" prompt instead of
+    # crashing a plan.
+    meta_access_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "META_ACCESS_TOKEN", "PILK_META_ACCESS_TOKEN",
+            "FB_ACCESS_TOKEN", "FACEBOOK_ACCESS_TOKEN",
+        ),
+    )
+    # Ad account id (digits only or with `act_` prefix — the client
+    # normalises). Required for every call that touches a campaign /
+    # ad set / ad / creative / insight.
+    meta_ad_account_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "META_AD_ACCOUNT_ID", "PILK_META_AD_ACCOUNT_ID",
+            "FB_AD_ACCOUNT_ID",
+        ),
+    )
+    # Owning Facebook Page id — Meta requires one on every ad creative
+    # because ads render as posts "by" a page. Can be overridden per
+    # creative via the tool's `page_id` arg.
+    meta_page_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "META_PAGE_ID", "PILK_META_PAGE_ID", "FB_PAGE_ID",
+        ),
+    )
+    # App id + secret for the Meta app backing the long-lived token.
+    # Not used by the current client (we rely on the pre-minted user
+    # token), but stored so a future token-refresh helper or OAuth
+    # flow doesn't need schema changes.
+    meta_app_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "META_APP_ID", "PILK_META_APP_ID", "FB_APP_ID",
+        ),
+    )
+    meta_app_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "META_APP_SECRET", "PILK_META_APP_SECRET", "FB_APP_SECRET",
+        ),
+    )
+
     # ── Coding engines ────────────────────────────────────────────
     # Path (or bare command name on PATH) for the local Claude Code
     # binary. When resolvable and responsive, the ClaudeCodeBridge
