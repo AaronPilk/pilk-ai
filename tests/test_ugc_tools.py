@@ -24,11 +24,16 @@ from core.config import get_settings
 from core.policy.risk import RiskClass
 from core.tools.builtin.ugc import (
     UGC_CSV_COLUMNS,
+    UGC_OUTREACH_LOG_COLUMNS,
+    UGC_OUTREACH_LOG_DEFAULT,
     UGC_TOOLS,
     ugc_export_csv_tool,
     ugc_find_email_tool,
     ugc_instagram_hashtag_search_tool,
     ugc_instagram_profile_tool,
+    ugc_outreach_log_append_tool,
+    ugc_outreach_log_read_tool,
+    ugc_read_shortlist_tool,
     ugc_tiktok_hashtag_search_tool,
     ugc_tiktok_profile_tool,
 )
@@ -79,8 +84,9 @@ def ctx(tmp_path: Path) -> ToolContext:
 # ── tool registry shape ─────────────────────────────────────────
 
 
-def test_tool_count_is_six() -> None:
-    assert len(UGC_TOOLS) == 6
+def test_tool_count_is_nine() -> None:
+    # Six scout tools + three outreach helpers.
+    assert len(UGC_TOOLS) == 9
 
 
 def test_tool_names_unique_and_prefixed() -> None:
@@ -105,6 +111,152 @@ def test_search_and_profile_tools_are_net_read() -> None:
 
 def test_export_csv_is_write_local() -> None:
     assert ugc_export_csv_tool.risk == RiskClass.WRITE_LOCAL
+
+
+def test_outreach_read_tools_are_read() -> None:
+    """Read-only workspace access — no network, no mutations. Should
+    sit below WRITE_LOCAL so the policy layer never gates a shortlist
+    read on approval."""
+    assert ugc_read_shortlist_tool.risk == RiskClass.READ
+    assert ugc_outreach_log_read_tool.risk == RiskClass.READ
+
+
+def test_outreach_log_append_is_write_local() -> None:
+    assert ugc_outreach_log_append_tool.risk == RiskClass.WRITE_LOCAL
+
+
+# ── outreach: read_shortlist ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_read_shortlist_filters_to_reachable_rows(
+    ctx: ToolContext, tmp_path: Path
+) -> None:
+    """The scout writes every scored creator; outreach only sees the
+    subset with an email on file. Rows without email stay in the CSV
+    for the operator but don't waste outreach budget."""
+    ugc_dir = tmp_path / "ugc"
+    ugc_dir.mkdir()
+    target = ugc_dir / "skincare-shortlist.csv"
+    with target.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(UGC_CSV_COLUMNS))
+        w.writeheader()
+        w.writerow({"handle": "anna", "email": "anna@x.co", "platform": "instagram"})
+        w.writerow({"handle": "sam", "email": "", "platform": "tiktok"})
+        w.writerow({"handle": "kai", "email": "kai@y.co", "platform": "instagram"})
+    out = await ugc_read_shortlist_tool.handler(
+        {"path": "ugc/skincare-shortlist"}, ctx,  # no .csv suffix
+    )
+    assert not out.is_error
+    assert out.data["total_rows"] == 3
+    assert out.data["reachable_rows"] == 2
+    handles = {c["handle"] for c in out.data["creators"]}
+    assert handles == {"anna", "kai"}
+
+
+@pytest.mark.asyncio
+async def test_read_shortlist_missing_path_surfaces_hint(
+    ctx: ToolContext,
+) -> None:
+    out = await ugc_read_shortlist_tool.handler(
+        {"path": "ugc/does-not-exist.csv"}, ctx,
+    )
+    assert out.is_error
+    assert "Run ugc_export_csv first" in out.content
+
+
+@pytest.mark.asyncio
+async def test_read_shortlist_rejects_workspace_escape(
+    ctx: ToolContext,
+) -> None:
+    out = await ugc_read_shortlist_tool.handler(
+        {"path": "../../../etc/passwd.csv"}, ctx,
+    )
+    assert out.is_error
+    assert "escapes workspace" in out.content
+
+
+# ── outreach: log read / append ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_outreach_log_read_empty_is_ok_on_first_run(
+    ctx: ToolContext,
+) -> None:
+    """No log on disk isn't an error; it's the first-run signal."""
+    out = await ugc_outreach_log_read_tool.handler({}, ctx)
+    assert not out.is_error
+    assert out.data["total"] == 0
+    assert out.data["rows"] == []
+    assert out.data["path"].endswith(UGC_OUTREACH_LOG_DEFAULT)
+
+
+@pytest.mark.asyncio
+async def test_outreach_log_append_creates_header_on_first_write(
+    ctx: ToolContext, tmp_path: Path
+) -> None:
+    out = await ugc_outreach_log_append_tool.handler(
+        {
+            "handle": "anna",
+            "platform": "instagram",
+            "email": "anna@x.co",
+            "subject": "collab for glowbrand",
+            "status": "queued",
+            "shortlist_path": "ugc/skincare-shortlist.csv",
+            "template_version": "v1",
+        },
+        ctx,
+    )
+    assert not out.is_error
+    log_path = tmp_path / UGC_OUTREACH_LOG_DEFAULT
+    assert log_path.is_file()
+    with log_path.open(encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    assert list(rows[0].keys()) == list(UGC_OUTREACH_LOG_COLUMNS)
+    assert rows[0]["handle"] == "anna"
+    assert rows[0]["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_outreach_log_append_requires_handle_and_email(
+    ctx: ToolContext,
+) -> None:
+    out = await ugc_outreach_log_append_tool.handler(
+        {"handle": "anna"}, ctx,
+    )
+    assert out.is_error
+
+
+@pytest.mark.asyncio
+async def test_outreach_log_read_after_write_dedupes(
+    ctx: ToolContext, tmp_path: Path
+) -> None:
+    """The round-trip the agent actually runs: append two entries,
+    then read to decide who hasn't been contacted yet."""
+    for h in ("anna", "kai"):
+        await ugc_outreach_log_append_tool.handler(
+            {"handle": h, "email": f"{h}@x.co", "status": "sent"},
+            ctx,
+        )
+    out = await ugc_outreach_log_read_tool.handler({}, ctx)
+    assert not out.is_error
+    assert out.data["total"] == 2
+    assert set(out.data["handles_contacted"]) == {"anna", "kai"}
+
+
+@pytest.mark.asyncio
+async def test_outreach_log_append_rejects_workspace_escape(
+    ctx: ToolContext,
+) -> None:
+    out = await ugc_outreach_log_append_tool.handler(
+        {
+            "handle": "anna",
+            "email": "anna@x.co",
+            "path": "../../../etc/outreach.csv",
+        },
+        ctx,
+    )
+    assert out.is_error
 
 
 # ── not configured ───────────────────────────────────────────────

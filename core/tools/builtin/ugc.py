@@ -1,13 +1,23 @@
-"""UGC scout tools — creator discovery + email enrichment + CSV export.
+"""UGC tools — creator discovery (scout) + outreach workspace helpers.
 
-Six tools the ugc_scout_agent drives:
+Nine tools total. Scout half (6) powers discovery + scoring + shortlist
+export. Outreach half (3) lets the outreach agent read a shortlist,
+log what it sent, and avoid duplicate sends on reruns. The actual
+email send flows through the existing ``agent_email_deliver`` tool —
+no new SMTP / Gmail surface here.
 
-    ugc_instagram_hashtag_search   NET_READ   hashtag → posts (via Apify)
-    ugc_instagram_profile          NET_READ   username → profile + posts
-    ugc_tiktok_hashtag_search      NET_READ   hashtag → videos (via Apify)
-    ugc_tiktok_profile             NET_READ   username → profile + videos
-    ugc_find_email                 NET_READ   bio regex + Hunter.io fallback
-    ugc_export_csv                 WRITE_LOCAL workspace/ugc/<brief>.csv
+    Scout:
+      ugc_instagram_hashtag_search   NET_READ   hashtag → posts (via Apify)
+      ugc_instagram_profile          NET_READ   username → profile + posts
+      ugc_tiktok_hashtag_search      NET_READ   hashtag → videos (via Apify)
+      ugc_tiktok_profile             NET_READ   username → profile + videos
+      ugc_find_email                 NET_READ   bio regex + Hunter.io fallback
+      ugc_export_csv                 WRITE_LOCAL workspace/ugc/<brief>.csv
+
+    Outreach:
+      ugc_read_shortlist             READ        ← the scout's CSV (composability)
+      ugc_outreach_log_append        WRITE_LOCAL → workspace/ugc/outreach-log.csv
+      ugc_outreach_log_read          READ        ← the same log for dedupe
 
 The scoring / rubric live in the agent's system prompt — we deliberately
 keep these tools as pure data-fetch + export surfaces, no LLM inside a
@@ -642,6 +652,266 @@ ugc_export_csv_tool = Tool(
 )
 
 
+# ── Outreach workspace helpers ───────────────────────────────────
+#
+# These let the outreach agent consume the scout's CSV shortlist
+# (composability-through-workspace) and keep a running send-log so
+# subsequent runs don't double-send. The actual email send uses the
+# existing ``agent_email_deliver`` tool — we deliberately don't wrap
+# it again here. One email surface, one approval story.
+
+
+UGC_OUTREACH_LOG_DEFAULT = "ugc/outreach-log.csv"
+UGC_OUTREACH_LOG_COLUMNS = (
+    "handle",
+    "platform",
+    "email",
+    "shortlist_path",
+    "template_version",
+    "subject",
+    "status",       # queued | sent | skipped | reply_received | meeting_booked
+    "sent_at",      # ISO-8601; blank until approved + sent
+    "thread_id",    # Gmail thread for reply-tracking
+    "notes",
+)
+
+
+async def _read_shortlist(args: dict, ctx: ToolContext) -> ToolOutcome:
+    rel = str(args.get("path") or "").strip()
+    if not rel:
+        return ToolOutcome(
+            content="ugc_read_shortlist requires 'path' (workspace-"
+                    "relative, e.g. 'ugc/skincare-shortlist.csv').",
+            is_error=True,
+        )
+    if not rel.endswith(".csv"):
+        rel = rel + ".csv"
+    root = _workspace_root(ctx)
+    candidate = (root / rel).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return ToolOutcome(
+            content=f"path escapes workspace: {rel}", is_error=True,
+        )
+    if not candidate.exists() or not candidate.is_file():
+        return ToolOutcome(
+            content=(
+                f"not found: {rel}. Run ugc_export_csv first (scout "
+                "agent) to produce a shortlist."
+            ),
+            is_error=True,
+        )
+    with candidate.open(encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh)
+        rows = [dict(r) for r in reader]
+    # Only expose creators who actually have an email; the agent's job
+    # is email outreach, so unreachable rows are noise.
+    reachable = [r for r in rows if (r.get("email") or "").strip()]
+    return ToolOutcome(
+        content=(
+            f"{rel}: {len(rows)} shortlist row(s), {len(reachable)} "
+            "with an email on file."
+        ),
+        data={
+            "path": rel,
+            "total_rows": len(rows),
+            "reachable_rows": len(reachable),
+            "creators": reachable,
+            "all_creators": rows,
+        },
+    )
+
+
+ugc_read_shortlist_tool = Tool(
+    name="ugc_read_shortlist",
+    description=(
+        "Read a shortlist CSV written by the scout (ugc_export_csv). "
+        "Returns the full list plus a 'reachable' subset filtered to "
+        "rows with a non-empty email — the outreach agent iterates "
+        "that subset. Use this to drive personalised outreach: you "
+        "get the handle, platform, rubric scores, email, and notes "
+        "the scout left per creator."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": (
+                    "Workspace-relative path to the shortlist CSV, "
+                    "e.g. 'ugc/skincare-shortlist.csv'."
+                ),
+            },
+        },
+        "required": ["path"],
+    },
+    risk=RiskClass.READ,
+    handler=_read_shortlist,
+)
+
+
+async def _outreach_log_read(args: dict, ctx: ToolContext) -> ToolOutcome:
+    rel = str(args.get("path") or UGC_OUTREACH_LOG_DEFAULT).strip()
+    if not rel.endswith(".csv"):
+        rel = rel + ".csv"
+    root = _workspace_root(ctx)
+    candidate = (root / rel).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return ToolOutcome(
+            content=f"path escapes workspace: {rel}", is_error=True,
+        )
+    if not candidate.exists():
+        # First-run case: no log yet means nothing's been sent. Empty
+        # list is the correct answer, not an error.
+        return ToolOutcome(
+            content=f"{rel}: no log yet — nothing sent.",
+            data={"path": rel, "rows": [], "total": 0},
+        )
+    with candidate.open(encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh)
+        rows = [dict(r) for r in reader]
+    # Compose a tight handle+email dedupe set so callers can check
+    # membership without re-iterating the list.
+    already_contacted = {
+        (r.get("handle") or "").lower() for r in rows if r.get("handle")
+    }
+    return ToolOutcome(
+        content=f"{rel}: {len(rows)} outreach record(s) on file.",
+        data={
+            "path": rel,
+            "rows": rows,
+            "total": len(rows),
+            "handles_contacted": sorted(already_contacted),
+        },
+    )
+
+
+ugc_outreach_log_read_tool = Tool(
+    name="ugc_outreach_log_read",
+    description=(
+        "Read the cumulative outreach log. Use this BEFORE iterating "
+        "a shortlist to skip creators who've already been contacted. "
+        "Returns the full row list + a deduplicated 'handles_contacted' "
+        "set for quick membership checks. If the log doesn't exist "
+        "yet, returns an empty list — that's the first-run signal."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": (
+                    f"Workspace-relative log path. Defaults to "
+                    f"'{UGC_OUTREACH_LOG_DEFAULT}'."
+                ),
+            },
+        },
+    },
+    risk=RiskClass.READ,
+    handler=_outreach_log_read,
+)
+
+
+async def _outreach_log_append(
+    args: dict, ctx: ToolContext
+) -> ToolOutcome:
+    handle = str(args.get("handle") or "").strip()
+    email = str(args.get("email") or "").strip()
+    if not handle or not email:
+        return ToolOutcome(
+            content="ugc_outreach_log_append requires 'handle' and 'email'.",
+            is_error=True,
+        )
+    rel = str(args.get("path") or UGC_OUTREACH_LOG_DEFAULT).strip()
+    if not rel.endswith(".csv"):
+        rel = rel + ".csv"
+    root = _workspace_root(ctx)
+    candidate = (root / rel).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return ToolOutcome(
+            content=f"path escapes workspace: {rel}", is_error=True,
+        )
+    row: dict[str, str] = {
+        "handle": handle,
+        "platform": str(args.get("platform") or "").strip(),
+        "email": email,
+        "shortlist_path": str(args.get("shortlist_path") or "").strip(),
+        "template_version": str(args.get("template_version") or "").strip(),
+        "subject": str(args.get("subject") or "").strip(),
+        "status": str(args.get("status") or "queued").strip(),
+        "sent_at": str(args.get("sent_at") or "").strip(),
+        "thread_id": str(args.get("thread_id") or "").strip(),
+        "notes": str(args.get("notes") or "").strip(),
+    }
+    # Appends with a header-on-first-write pattern so the log grows
+    # forever across runs while staying valid CSV.
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    file_exists = candidate.exists() and candidate.stat().st_size > 0
+    with candidate.open("a", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(UGC_OUTREACH_LOG_COLUMNS))
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow({k: row.get(k, "") for k in UGC_OUTREACH_LOG_COLUMNS})
+    return ToolOutcome(
+        content=(
+            f"Logged {row['status']} outreach to @{handle} "
+            f"({email}) in {rel}."
+        ),
+        data={"path": rel, "row": row},
+    )
+
+
+ugc_outreach_log_append_tool = Tool(
+    name="ugc_outreach_log_append",
+    description=(
+        "Append one row to the outreach log. Call this for every "
+        "creator you email — AFTER agent_email_deliver returns "
+        "successfully (status='sent', include thread_id) and also "
+        "BEFORE the first approval round for visibility "
+        "(status='queued' with sent_at=''). Columns: handle, "
+        "platform, email, shortlist_path, template_version, subject, "
+        "status, sent_at, thread_id, notes. Missing fields persist as "
+        "blank."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "handle": {"type": "string"},
+            "platform": {"type": "string"},
+            "email": {"type": "string"},
+            "shortlist_path": {"type": "string"},
+            "template_version": {"type": "string"},
+            "subject": {"type": "string"},
+            "status": {
+                "type": "string",
+                "description": (
+                    "queued | sent | skipped | reply_received | "
+                    "meeting_booked."
+                ),
+            },
+            "sent_at": {"type": "string"},
+            "thread_id": {"type": "string"},
+            "notes": {"type": "string"},
+            "path": {
+                "type": "string",
+                "description": (
+                    f"Workspace-relative log path. Defaults to "
+                    f"'{UGC_OUTREACH_LOG_DEFAULT}'."
+                ),
+            },
+        },
+        "required": ["handle", "email"],
+    },
+    risk=RiskClass.WRITE_LOCAL,
+    handler=_outreach_log_append,
+)
+
+
 # ── Bundle ───────────────────────────────────────────────────────
 
 
@@ -652,4 +922,7 @@ UGC_TOOLS: list[Tool] = [
     ugc_tiktok_profile_tool,
     ugc_find_email_tool,
     ugc_export_csv_tool,
+    ugc_read_shortlist_tool,
+    ugc_outreach_log_read_tool,
+    ugc_outreach_log_append_tool,
 ]

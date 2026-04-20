@@ -38,6 +38,7 @@ const AGENT_AVATAR: Record<string, string> = {
   pitch_deck_agent: "📊",
   sales_ops_agent: "💼",
   sentinel: "🛡️",
+  ugc_outreach_agent: "📧",
   ugc_scout_agent: "🎥",
   web_design_agent: "🖌️",
   xauusd_execution_agent: "🪙",
@@ -64,6 +65,8 @@ const AGENT_BLURB: Record<string, string> = {
     "Finds leads, enriches contacts, and runs outbound campaigns.",
   sentinel:
     "Watches every agent and flags problems to PILK.",
+  ugc_outreach_agent:
+    "Emails UGC shortlists with personalised outreach, one approval at a time.",
   ugc_scout_agent:
     "Finds UGC creators, scores their content, and shortlists them with emails.",
   web_design_agent:
