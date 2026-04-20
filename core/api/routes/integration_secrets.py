@@ -199,6 +199,19 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         ),
         "env": "TELEGRAM_CHAT_ID",
     },
+    "computer_control_enabled": {
+        "label": "Computer control — kill switch (DANGEROUS)",
+        "description": (
+            "Set to 'true' to enable the IRREVERSIBLE computer_* "
+            "tools: unscoped fs read + write anywhere under $HOME, "
+            "unscoped shell, macOS AppleScript. Every call still "
+            "needs a per-call confirmation token + normal approval + "
+            "a daily-limit check, but you are authorising PILK to "
+            "touch your real machine. Leave UNSET unless you "
+            "explicitly want this."
+        ),
+        "env": "COMPUTER_CONTROL_ENABLED",
+    },
     "google_ads_developer_token": {
         "label": "Google Ads — developer token",
         "description": (
