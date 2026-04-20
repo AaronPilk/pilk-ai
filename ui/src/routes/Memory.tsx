@@ -41,6 +41,7 @@ export default function Memory() {
   const [composerBody, setComposerBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -94,6 +95,7 @@ export default function Memory() {
       });
       setComposerTitle("");
       setComposerBody("");
+      setComposerOpen(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -124,15 +126,14 @@ export default function Memory() {
   };
 
   return (
-    <div className="memory">
-      <header className="memory-head">
-        <div>
-          <div className="memory-eyebrow">Memory</div>
-          <h1 className="memory-title">What PILK is currently retaining</h1>
-          <p className="memory-sub">
-            This is the structured memory you've curated for PILK. Add or
-            remove entries any time. PILK will not reference anything you
-            haven't put here.
+    <div className="agents-page">
+      <div className="memory-page-head">
+        <div className="agents-page-head">
+          <h1>Memory</h1>
+          <p>
+            The structured memory PILK references. Add or remove entries
+            any time. PILK will not reference anything you haven't put
+            here.
           </p>
         </div>
         <div className="memory-head-actions">
@@ -150,7 +151,7 @@ export default function Memory() {
             </button>
           )}
         </div>
-      </header>
+      </div>
 
       <div className="memory-learn-row">
         <Link
@@ -178,86 +179,107 @@ export default function Memory() {
         <DistillPanel onSaved={load} />
       </div>
 
-      <section className="memory-composer">
-        <div className="memory-composer-row">
+      {composerOpen ? (
+        <section className="memory-composer">
+          <div className="memory-composer-row">
+            <label className="memory-field">
+              <span className="memory-field-label">Kind</span>
+              <select
+                value={composerKind}
+                onChange={(e) => setComposerKind(e.target.value as MemoryKind)}
+                disabled={submitting}
+              >
+                {KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {humanizeMemoryKind(k)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="memory-field memory-field--wide">
+              <span className="memory-field-label">Title</span>
+              <input
+                type="text"
+                value={composerTitle}
+                onChange={(e) => setComposerTitle(e.target.value)}
+                placeholder="A short, human-readable label"
+                maxLength={200}
+                disabled={submitting}
+              />
+            </label>
+          </div>
           <label className="memory-field">
-            <span className="memory-field-label">Kind</span>
-            <select
-              value={composerKind}
-              onChange={(e) => setComposerKind(e.target.value as MemoryKind)}
-              disabled={submitting}
-            >
-              {KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {humanizeMemoryKind(k)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="memory-field memory-field--wide">
-            <span className="memory-field-label">Title</span>
-            <input
-              type="text"
-              value={composerTitle}
-              onChange={(e) => setComposerTitle(e.target.value)}
-              placeholder="A short, human-readable label"
-              maxLength={200}
+            <span className="memory-field-label">Detail (optional)</span>
+            <textarea
+              value={composerBody}
+              onChange={(e) => setComposerBody(e.target.value)}
+              rows={2}
+              placeholder="Add any nuance that would help PILK use this well."
               disabled={submitting}
             />
           </label>
-        </div>
-        <label className="memory-field">
-          <span className="memory-field-label">Detail (optional)</span>
-          <textarea
-            value={composerBody}
-            onChange={(e) => setComposerBody(e.target.value)}
-            rows={2}
-            placeholder="Add any nuance that would help PILK use this well."
-            disabled={submitting}
-          />
-        </label>
-        <div className="memory-composer-actions">
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={submit}
-            disabled={submitting || !composerTitle.trim()}
-          >
-            {submitting ? "Saving…" : "Remember this"}
-          </button>
-        </div>
-      </section>
+          <div className="memory-composer-actions">
+            <button
+              type="button"
+              className="memory-distill-skip"
+              onClick={() => {
+                setComposerOpen(false);
+                setComposerTitle("");
+                setComposerBody("");
+              }}
+              disabled={submitting}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={submit}
+              disabled={submitting || !composerTitle.trim()}
+            >
+              {submitting ? "Saving…" : "Remember this"}
+            </button>
+          </div>
+        </section>
+      ) : (
+        <button
+          type="button"
+          className="memory-add-btn"
+          onClick={() => setComposerOpen(true)}
+        >
+          <span className="memory-add-btn-icon" aria-hidden>
+            +
+          </span>
+          Add a memory entry manually
+        </button>
+      )}
 
       {err && <div className="memory-error">{err}</div>}
 
-      <div className="memory-sections">
-        {KINDS.map((k) => {
-          const rows = grouped[k];
-          return (
-            <section key={k} className="memory-section">
-              <div className="memory-section-head">
-                <div className="memory-section-title">
-                  {memorySectionLabel(k)}
-                </div>
-                <div className="memory-section-count">
-                  {rows.length} {rows.length === 1 ? "entry" : "entries"}
-                </div>
-              </div>
-              {loading ? (
-                <div className="memory-section-empty">Reading memory…</div>
-              ) : rows.length === 0 ? (
-                <div className="memory-section-empty">{EMPTY_COPY[k]}</div>
-              ) : (
-                <div className="memory-section-list">
-                  {rows.map((e) => (
-                    <MemoryRow key={e.id} entry={e} onDelete={onDelete} />
-                  ))}
-                </div>
+      {KINDS.map((k) => {
+        const rows = grouped[k];
+        return (
+          <div key={k} className="memory-category">
+            <div className="approvals-section-head">
+              <h2>{memorySectionLabel(k)}</h2>
+              {rows.length > 0 && (
+                <span className="approvals-count">{rows.length}</span>
               )}
-            </section>
-          );
-        })}
-      </div>
+            </div>
+            {loading ? (
+              <div className="agents-empty">Reading memory…</div>
+            ) : rows.length === 0 ? (
+              <div className="agents-empty">{EMPTY_COPY[k]}</div>
+            ) : (
+              <div className="memory-grid">
+                {rows.map((e) => (
+                  <MemoryRow key={e.id} entry={e} onDelete={onDelete} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

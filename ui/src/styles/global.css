@@ -5727,3 +5727,75 @@ body {
   color: var(--ok);
   font-weight: 500;
 }
+
+/* ── Memory page — gallery layout ─────────────────────────────
+   Re-skins the memory page onto the .agents-page shell so it reads
+   consistently with /agents, /tasks, /approvals, /sentinel. */
+.memory-page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.memory-page-head .agents-page-head {
+  flex: 1;
+  min-width: 240px;
+}
+
+.memory-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  width: fit-content;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+
+.memory-add-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.memory-add-btn-icon {
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 500;
+}
+
+.memory-category {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memory-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+}
+
+/* Restyle .memory-row as a card so the grid packs nicely */
+.memory-grid .memory-row {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.memory-grid .memory-row:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-strong);
+}
