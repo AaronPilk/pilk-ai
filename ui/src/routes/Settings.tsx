@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ambient,
+  resolveTiming,
+  TUNING_BOUNDS,
   type AckKind,
   type AmbientConfig,
   type Patience,
   type WakePhrase,
 } from "../voice/ambient";
+
+/** The two timing fields show the *effective* value (preset +
+ * override) on the slider, so the operator always sees what's
+ * actually in effect. These helpers compute it from the config. */
+function resolveSilenceMs(cfg: AmbientConfig): number {
+  return resolveTiming(cfg).silenceMs;
+}
+function resolveWakeGraceMs(cfg: AmbientConfig): number {
+  return resolveTiming(cfg).wakeGraceMs;
+}
 import {
   clearIntegrationSecret,
   deleteConnectedAccount,
@@ -451,6 +463,76 @@ export default function Settings() {
         </div>
         <div className="settings-note">
           Applies to both the acknowledgement and PILK's reply.
+        </div>
+
+        <div className="voice-tuning">
+          <div className="voice-tuning-title">
+            Fine-tuning (advanced)
+          </div>
+          <div className="voice-tuning-hint">
+            Start with the patience preset above. Only drop into these
+            sliders if PILK still cuts you off, hangs on ambient noise,
+            or triggers on stray speech. Changes save automatically
+            and apply on the next utterance.
+          </div>
+
+          <TuningSlider
+            label="Silence before finalize"
+            unit="ms"
+            value={resolveSilenceMs(cfg)}
+            override={cfg.silenceMsOverride ?? null}
+            bounds={TUNING_BOUNDS.silenceMs}
+            onChange={(v) =>
+              ambient.setConfig({ silenceMsOverride: v })
+            }
+            help={
+              "How long PILK waits after you stop talking before calling your turn done. " +
+              "Too low → gets cut off mid-sentence. Too high → hangs waiting for more words."
+            }
+          />
+
+          <TuningSlider
+            label="Wake grace window"
+            unit="ms"
+            value={resolveWakeGraceMs(cfg)}
+            override={cfg.wakeGraceMsOverride ?? null}
+            bounds={TUNING_BOUNDS.wakeGraceMs}
+            onChange={(v) =>
+              ambient.setConfig({ wakeGraceMsOverride: v })
+            }
+            help={
+              'After you say "hey pilk", how long to hold the mic open if ' +
+              "you haven't started the actual question yet."
+            }
+          />
+
+          <TuningSlider
+            label="Minimum utterance length"
+            unit="chars"
+            value={cfg.minUtteranceChars ?? 0}
+            override={cfg.minUtteranceChars ?? null}
+            bounds={TUNING_BOUNDS.minUtteranceChars}
+            onChange={(v) => ambient.setConfig({ minUtteranceChars: v })}
+            help={
+              'Drops captures shorter than this. Kills stray "hi", "um", ' +
+              "single-word false starts from ambient speech. 0 disables."
+            }
+          />
+
+          <TuningSlider
+            label="Minimum confidence"
+            unit=""
+            value={cfg.minConfidence ?? 0}
+            override={cfg.minConfidence ?? null}
+            bounds={TUNING_BOUNDS.minConfidence}
+            format={(v) => v.toFixed(2)}
+            onChange={(v) => ambient.setConfig({ minConfidence: v })}
+            help={
+              "Rejects low-confidence transcriptions (0 = off, 0.9 = very strict). " +
+              "Raise this if PILK keeps triggering on TV audio or nearby conversations. " +
+              "Most browsers report low numbers so keep this below 0.5."
+            }
+          />
         </div>
       </section>
       )}
@@ -1669,5 +1751,63 @@ function XAUUSDSettingsSection() {
         </div>
       )}
     </section>
+  );
+}
+
+/** One tuning knob in the Voice panel. Shows the effective current
+ * value, a range slider, and a "Reset to preset" button when an
+ * override is active. Debounced only by React's own rendering —
+ * `ambient.setConfig` writes are cheap (localStorage + Set<Listener>
+ * walk). */
+function TuningSlider({
+  label,
+  unit,
+  value,
+  override,
+  bounds,
+  onChange,
+  help,
+  format,
+}: {
+  label: string;
+  unit: string;
+  value: number;
+  override: number | null;
+  bounds: { min: number; max: number; step: number };
+  onChange: (v: number | null) => void;
+  help: string;
+  format?: (v: number) => string;
+}) {
+  const display = format ? format(value) : String(Math.round(value));
+  return (
+    <div className="voice-tuning-row">
+      <div className="voice-tuning-row-head">
+        <label className="voice-tuning-label">{label}</label>
+        <div className="voice-tuning-value">
+          {display}
+          {unit && <span className="voice-tuning-unit"> {unit}</span>}
+          {override !== null && (
+            <button
+              type="button"
+              className="voice-tuning-reset"
+              onClick={() => onChange(null)}
+              title="Reset to the patience preset default"
+            >
+              reset
+            </button>
+          )}
+        </div>
+      </div>
+      <input
+        type="range"
+        className="voice-tuning-slider"
+        min={bounds.min}
+        max={bounds.max}
+        step={bounds.step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+      <div className="voice-tuning-help">{help}</div>
+    </div>
   );
 }

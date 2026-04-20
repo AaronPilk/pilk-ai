@@ -5452,3 +5452,90 @@ body {
   font-size: 20px;
   flex-shrink: 0;
 }
+
+/* ── Voice tuning sliders ──────────────────────────────────────
+   Advanced panel under the existing voice card. Only the operator
+   who needs finer control than the patience preset dips into these. */
+.voice-tuning {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.voice-tuning-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.voice-tuning-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.voice-tuning-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.voice-tuning-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.voice-tuning-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.voice-tuning-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-tuning-unit {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.voice-tuning-reset {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: var(--radius-pill);
+  padding: 1px 8px;
+  font-size: 10px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.voice-tuning-reset:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.voice-tuning-slider {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.voice-tuning-help {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.45;
+}

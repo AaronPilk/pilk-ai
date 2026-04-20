@@ -29,6 +29,37 @@ export interface AmbientConfig {
   useElevenLabsAck: boolean;
   patience: Patience;
   voiceRate: number; // playback rate multiplier: 1.0, 1.15, 1.25, 1.5
+
+  // ── Fine-grained tuning (all optional overrides over the patience
+  // preset). The Settings → Voice panel surfaces these as sliders.
+  // Leave any of them null to use the preset default — that's the
+  // common case.
+  //
+  // silenceMsOverride
+  //     Milliseconds of silence after the last speech activity before
+  //     PILK calls your turn done and ships the transcript. Too low
+  //     and it cuts you off mid-sentence; too high and it hangs on
+  //     ambient noise waiting for more words.
+  //
+  // wakeGraceMsOverride
+  //     After you say "hey pilk", how long to hold the mic open if
+  //     you haven't started saying what you actually want yet.
+  //
+  // minUtteranceChars
+  //     Ignore captured transcripts shorter than this. Kills stray
+  //     "um", "hmm", single-word false positives when ambient speech
+  //     grazes the recognizer.
+  //
+  // minConfidence
+  //     0–1 float. Drop results where the recognizer's own confidence
+  //     score is below this. Cuts down false captures from TV audio,
+  //     distant conversations, etc. The Web Speech API score is
+  //     imperfect, so keep this low (~0.4) unless you have a noisy
+  //     room.
+  silenceMsOverride?: number | null;
+  wakeGraceMsOverride?: number | null;
+  minUtteranceChars?: number | null;
+  minConfidence?: number | null;
 }
 
 export type WakePhrase = "hey pilk" | "pilk";
@@ -44,7 +75,20 @@ const DEFAULT_CONFIG: AmbientConfig = {
   useElevenLabsAck: false,
   patience: "patient",
   voiceRate: 1.25,
+  silenceMsOverride: null,
+  wakeGraceMsOverride: null,
+  minUtteranceChars: 2,     // drop "ok", "hi", "uh" false starts
+  minConfidence: 0.35,      // keep generous; Web Speech scores skew low
 };
+
+// Absolute bounds the UI sliders clamp to. Anything outside these is
+// almost certainly a typo, not a tuning choice.
+export const TUNING_BOUNDS = {
+  silenceMs: { min: 500, max: 8000, step: 100 },
+  wakeGraceMs: { min: 1500, max: 15_000, step: 500 },
+  minUtteranceChars: { min: 0, max: 40, step: 1 },
+  minConfidence: { min: 0, max: 0.9, step: 0.05 },
+} as const;
 
 // How long to wait before auto-finalizing the utterance.
 //   wakeGraceMs          — after the wake phrase if user hasn't started yet
@@ -66,6 +110,26 @@ const PATIENCE: Record<Patience, PatiencePreset> = {
     followupWindowMs: 45_000,
   },
 };
+
+/** Resolve the patience preset, overlaying any per-field override the
+ * operator set via the tuning sliders. Returned object is the single
+ * source of truth the recognizer loop reads from — `silenceMs` /
+ * `wakeGraceMs` / etc. should never be read off the preset directly
+ * once overrides exist. */
+export function resolveTiming(config: AmbientConfig): PatiencePreset {
+  const preset = PATIENCE[config.patience];
+  return {
+    wakeGraceMs:
+      typeof config.wakeGraceMsOverride === "number"
+        ? config.wakeGraceMsOverride
+        : preset.wakeGraceMs,
+    silenceMs:
+      typeof config.silenceMsOverride === "number"
+        ? config.silenceMsOverride
+        : preset.silenceMs,
+    followupWindowMs: preset.followupWindowMs,
+  };
+}
 
 const ACK_TEXT: Record<Exclude<AckKind, "tone" | "none">, string> = {
   yes: "Yes?",
@@ -180,7 +244,20 @@ class AmbientController {
     recog.onresult = (ev) => {
       const r = ev.results[ev.results.length - 1];
       if (!r) return;
-      const transcript = String(r[0].transcript).toLowerCase().trim();
+      const alt = r[0];
+      const transcript = String(alt.transcript).toLowerCase().trim();
+      // Confidence filter — only gate FINAL results. Interim confidence
+      // is usually 0 / undefined on Chrome's engine, so filtering there
+      // would mute live captions and break the feel of the UI.
+      const minConf = this.config.minConfidence ?? 0;
+      if (
+        r.isFinal &&
+        minConf > 0 &&
+        typeof alt.confidence === "number" &&
+        alt.confidence < minConf
+      ) {
+        return;
+      }
       this.handleTranscript(transcript, r.isFinal);
     };
     recog.onerror = (ev) => {
@@ -305,7 +382,7 @@ class AmbientController {
       this.activeBuffer = text;
       this.setState("active", this.activeBuffer || "Listening…");
       if (this.activeTimer) clearTimeout(this.activeTimer);
-      const { silenceMs } = PATIENCE[this.config.patience];
+      const { silenceMs } = resolveTiming(this.config);
       this.activeTimer = window.setTimeout(() => this.finalizeActive(), silenceMs);
       return;
     }
@@ -314,7 +391,7 @@ class AmbientController {
       this.activeBuffer = stripWake(text, this.config.wakePhrase);
       this.setState("active", this.activeBuffer || "Listening…");
       if (this.activeTimer) clearTimeout(this.activeTimer);
-      const { silenceMs } = PATIENCE[this.config.patience];
+      const { silenceMs } = resolveTiming(this.config);
       this.activeTimer = window.setTimeout(() => this.finalizeActive(), silenceMs);
     }
   }
@@ -343,7 +420,7 @@ class AmbientController {
     // Initial grace after wake: how long to wait for the user to start
     // speaking (or continue after a trailing sentence). Every new
     // transcript resets this via handleTranscript.
-    const preset = PATIENCE[this.config.patience];
+    const preset = resolveTiming(this.config);
     const grace = tail ? preset.silenceMs : preset.wakeGraceMs;
     this.activeTimer = window.setTimeout(() => this.finalizeActive(), grace);
   }
@@ -382,6 +459,16 @@ class AmbientController {
     }
     if (!text) {
       this.setState("passive", "Didn't catch that");
+      return;
+    }
+    // Minimum-utterance filter — drops "hi", "um", etc. that crept in
+    // from ambient speech. Zero disables; default is 2 chars.
+    const minChars = this.config.minUtteranceChars ?? 0;
+    if (minChars > 0 && text.length < minChars) {
+      this.setState(
+        "passive",
+        `Too short (${text.length} < ${minChars} chars) — ignored`,
+      );
       return;
     }
     this.dispatchUtterance(text);
@@ -459,7 +546,7 @@ class AmbientController {
     // Need the recognizer live — start() is a no-op if it's already running.
     this.start();
     this.setState("followup", "Still listening — keep going");
-    const { followupWindowMs } = PATIENCE[this.config.patience];
+    const { followupWindowMs } = resolveTiming(this.config);
     this.followupTimer = window.setTimeout(() => {
       this.followupTimer = null;
       // Only fall back to passive if nobody jumped in.
@@ -628,7 +715,7 @@ interface SpeechRecognitionLike {
 }
 interface SpeechRecognitionResult {
   isFinal: boolean;
-  [index: number]: { transcript: string };
+  [index: number]: { transcript: string; confidence?: number };
 }
 interface SpeechRecognitionResultList {
   length: number;
