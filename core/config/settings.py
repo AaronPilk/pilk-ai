@@ -210,6 +210,19 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Apify (ugc_scout_agent — IG / TikTok / Facebook scraper) ─
+    # Apify personal API token from console.apify.com → Settings →
+    # Integrations. The UGC scout agent drives actors like
+    # apify/instagram-scraper and clockworks/tiktok-scraper through
+    # this key. Single-tenant; per-user keys can land later alongside
+    # the rest of the BYOK story.
+    apify_api_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "APIFY_API_TOKEN", "PILK_APIFY_API_TOKEN",
+        ),
+    )
+
     # ── Coding engines ────────────────────────────────────────────
     # Path (or bare command name on PATH) for the local Claude Code
     # binary. When resolvable and responsive, the ClaudeCodeBridge

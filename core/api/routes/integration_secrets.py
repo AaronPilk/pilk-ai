@@ -168,6 +168,16 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         ),
         "env": "META_APP_SECRET",
     },
+    "apify_api_token": {
+        "label": "Apify API token",
+        "description": (
+            "Personal API token from console.apify.com → Settings → "
+            "Integrations. Powers the ugc_scout_agent's IG / TikTok / "
+            "Facebook creator discovery via Apify actors. Pay-per-run; "
+            "starter plan ~$49/mo is plenty for weekly scouts."
+        ),
+        "env": "APIFY_API_TOKEN",
+    },
 }
 
 
