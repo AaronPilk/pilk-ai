@@ -100,6 +100,7 @@ from core.tools.builtin import (
     CREATIVE_TOOLS,
     META_ADS_TOOLS,
     SALES_OPS_TOOLS,
+    UGC_TOOLS,
     XAUUSD_TOOLS,
     BrowserSessionManager,
     finance_deposit_tool,
@@ -318,6 +319,14 @@ async def lifespan(app: FastAPI):
     for t in META_ADS_TOOLS:
         registry.register(t)
     log.info("meta_ads_registered", tools=[t.name for t in META_ADS_TOOLS])
+
+    # UGC scout toolkit — Apify-backed IG/TikTok discovery + Hunter.io
+    # email enrichment + CSV export. Registration is unconditional;
+    # each handler surfaces a clean "not configured" outcome when
+    # apify_api_token / hunter_io_api_key are missing.
+    for t in UGC_TOOLS:
+        registry.register(t)
+    log.info("ugc_registered", tools=[t.name for t in UGC_TOOLS])
 
     # Web-design toolkit — html_export emits the static bundle; the
     # wordpress_push tool ships it to a client's WP site as an Elementor

@@ -34,6 +34,7 @@ from core.tools.builtin.sentinel import (
     make_sentinel_tools,
 )
 from core.tools.builtin.shell import shell_exec_tool
+from core.tools.builtin.ugc import UGC_TOOLS
 from core.tools.builtin.xauusd import (
     XAUUSD_TOOLS,
     make_xauusd_take_over_tool,
@@ -52,6 +53,7 @@ __all__ = [
     "CREATIVE_TOOLS",
     "META_ADS_TOOLS",
     "SALES_OPS_TOOLS",
+    "UGC_TOOLS",
     "XAUUSD_TOOLS",
     "BrowserSessionManager",
     "finance_deposit_tool",
