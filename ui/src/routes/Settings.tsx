@@ -21,6 +21,7 @@ function resolveWakeGraceMs(cfg: AmbientConfig): number {
 import {
   clearIntegrationSecret,
   deleteConnectedAccount,
+  detectTelegramChat,
   fetchAgents,
   fetchCodingEngines,
   fetchInstalledSkills,
@@ -29,10 +30,12 @@ import {
   fetchGrants,
   fetchIntegrationSecrets,
   fetchProviders,
+  fetchTelegramBotInfo,
   fetchXAUUSDSettings,
   grantAgentAccess,
   pilk,
   revokeAgentAccess,
+  sendTelegramTest,
   setDefaultConnectedAccount,
   setGovernorConfig,
   setGovernorOverride,
@@ -105,6 +108,7 @@ const CAP_OPTIONS: Array<{ value: number; label: string }> = [
 type SettingsCategory =
   | "api-keys"
   | "accounts"
+  | "telegram"
   | "voice"
   | "budget"
   | "xauusd"
@@ -132,6 +136,13 @@ const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
     label: "Connected Accounts",
     blurb:
       "Sign in to Google, LinkedIn, and friends with OAuth so agents can send email, post, and read on your behalf.",
+  },
+  {
+    id: "telegram",
+    avatar: "📲",
+    label: "Telegram",
+    blurb:
+      "How PILK pings you when you're away from the dashboard. Step-through setup with token verify + chat auto-detect.",
   },
   {
     id: "voice",
@@ -1027,6 +1038,8 @@ export default function Settings() {
       )}
 
       {selectedCategory === "api-keys" && <IntegrationSecretsSection />}
+
+      {selectedCategory === "telegram" && <TelegramConnectSection />}
 
       {selectedCategory === "xauusd" && <XAUUSDSettingsSection />}
 
@@ -1928,5 +1941,372 @@ function SkillList({
         </ul>
       )}
     </div>
+  );
+}
+
+/** Settings → Telegram.
+ *
+ * Step-through connect flow so the operator doesn't have to hunt
+ * through Telegram's docs. Each step is verified against the bot
+ * API before the next one unlocks; the final "send test" is a real
+ * end-to-end proof that PILK can reach the operator's phone.
+ *
+ * This card deliberately doesn't store anything in local state that
+ * isn't reflected in settings — the auth pipeline goes through
+ * setIntegrationSecret like every other key, so the "API Keys"
+ * view stays the source of truth. */
+function TelegramConnectSection(): JSX.Element {
+  // Token input state — mirrors the other secret-entry UX so muscle
+  // memory carries across Settings sections.
+  const [tokenDraft, setTokenDraft] = useState("");
+  const [tokenSaving, setTokenSaving] = useState(false);
+  const [tokenError, setTokenError] = useState<string | null>(null);
+
+  // chat_id input state + auto-detect state.
+  const [chatDraft, setChatDraft] = useState("");
+  const [chatSaving, setChatSaving] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [detectBusy, setDetectBusy] = useState(false);
+  const [detectHint, setDetectHint] = useState<string | null>(null);
+
+  // Bot info from the backend (drives verify + open-bot link).
+  const [botInfo, setBotInfo] = useState<{
+    configured: boolean;
+    valid?: boolean;
+    username?: string;
+    first_name?: string;
+    t_me_url?: string | null;
+    error?: string;
+  } | null>(null);
+  const [botBusy, setBotBusy] = useState(false);
+
+  // Test-send state.
+  const [testBusy, setTestBusy] = useState(false);
+  const [testResult, setTestResult] = useState<
+    { ok: true; message_id?: number }
+    | { ok: false; error: string }
+    | null
+  >(null);
+
+  const refreshBotInfo = useCallback(async () => {
+    setBotBusy(true);
+    try {
+      const info = await fetchTelegramBotInfo();
+      setBotInfo(info);
+    } catch (e) {
+      setBotInfo({
+        configured: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBotBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshBotInfo();
+  }, [refreshBotInfo]);
+
+  const saveToken = async () => {
+    const trimmed = tokenDraft.trim();
+    if (!trimmed) {
+      setTokenError("Paste the token from @BotFather first.");
+      return;
+    }
+    setTokenSaving(true);
+    setTokenError(null);
+    try {
+      await setIntegrationSecret("telegram_bot_token", trimmed);
+      setTokenDraft("");
+      await refreshBotInfo();
+    } catch (e) {
+      setTokenError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTokenSaving(false);
+    }
+  };
+
+  const saveChatId = async () => {
+    const trimmed = chatDraft.trim();
+    if (!trimmed) {
+      setChatError("Paste or detect a chat_id first.");
+      return;
+    }
+    setChatSaving(true);
+    setChatError(null);
+    try {
+      await setIntegrationSecret("telegram_chat_id", trimmed);
+      setChatDraft("");
+      setDetectHint(null);
+    } catch (e) {
+      setChatError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setChatSaving(false);
+    }
+  };
+
+  const detect = async () => {
+    setDetectBusy(true);
+    setChatError(null);
+    setDetectHint(null);
+    try {
+      const r = await detectTelegramChat();
+      if (r.detected && r.chat_id) {
+        setChatDraft(r.chat_id);
+        setDetectHint(
+          `Found: ${r.chat_title ?? r.chat_id} (${r.chat_type ?? "chat"}). ` +
+            "Click Save to keep it.",
+        );
+      } else {
+        setChatError(r.error ?? "No chat detected yet.");
+      }
+    } catch (e) {
+      setChatError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDetectBusy(false);
+    }
+  };
+
+  const sendTest = async () => {
+    setTestBusy(true);
+    setTestResult(null);
+    try {
+      const r = await sendTelegramTest();
+      if (r.sent) {
+        setTestResult({ ok: true, message_id: r.message_id });
+      } else {
+        setTestResult({ ok: false, error: r.error ?? "Unknown error" });
+      }
+    } catch (e) {
+      setTestResult({
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setTestBusy(false);
+    }
+  };
+
+  const tokenValid = !!botInfo?.valid;
+  const botLink = botInfo?.t_me_url ?? null;
+
+  return (
+    <section className="telegram-connect">
+      <div className="settings-card-title">Connect Telegram</div>
+      <p className="settings-card-body">
+        Telegram uses a bot token from @BotFather — there's no
+        one-click OAuth for bots. This card walks you through each
+        step with a verify button so you know it works before moving
+        on. Takes under a minute.
+      </p>
+
+      <ol className="telegram-steps">
+        <li
+          className={`telegram-step${
+            tokenValid ? " telegram-step--done" : ""
+          }`}
+        >
+          <div className="telegram-step-head">
+            <span className="telegram-step-num">1</span>
+            <span className="telegram-step-title">Create a bot</span>
+            {tokenValid && (
+              <span className="telegram-step-check">✓</span>
+            )}
+          </div>
+          <div className="telegram-step-body">
+            Open BotFather in Telegram and send it <code>/newbot</code>.
+            Follow the prompts and copy the token it hands back.
+          </div>
+          <div className="telegram-step-actions">
+            <a
+              className="btn btn--ghost"
+              href="https://t.me/BotFather"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open @BotFather
+            </a>
+          </div>
+        </li>
+
+        <li
+          className={`telegram-step${
+            tokenValid ? " telegram-step--done" : ""
+          }`}
+        >
+          <div className="telegram-step-head">
+            <span className="telegram-step-num">2</span>
+            <span className="telegram-step-title">Paste + verify the token</span>
+            {tokenValid && (
+              <span className="telegram-step-check">✓</span>
+            )}
+          </div>
+          {botInfo?.configured && botInfo?.valid && (
+            <div className="telegram-step-ok">
+              Connected to{" "}
+              <strong>@{botInfo.username}</strong>
+              {botInfo.first_name ? ` — "${botInfo.first_name}"` : ""}
+              . To rotate, paste a new token below and save.
+            </div>
+          )}
+          {botInfo?.configured && botInfo?.valid === false && (
+            <div className="telegram-step-err">
+              Token saved but Telegram rejected it: {botInfo.error}
+            </div>
+          )}
+          <div className="telegram-step-row">
+            <input
+              type="password"
+              className="telegram-input"
+              placeholder="Paste bot token (e.g. 123456:ABC-...)"
+              value={tokenDraft}
+              onChange={(e) => setTokenDraft(e.target.value)}
+              disabled={tokenSaving}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => void saveToken()}
+              disabled={tokenSaving || !tokenDraft.trim()}
+            >
+              {tokenSaving ? "Saving…" : "Save + verify"}
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => void refreshBotInfo()}
+              disabled={botBusy}
+            >
+              {botBusy ? "…" : "Re-verify"}
+            </button>
+          </div>
+          {tokenError && (
+            <div className="telegram-step-err">{tokenError}</div>
+          )}
+        </li>
+
+        <li
+          className={`telegram-step${
+            tokenValid ? "" : " telegram-step--locked"
+          }`}
+        >
+          <div className="telegram-step-head">
+            <span className="telegram-step-num">3</span>
+            <span className="telegram-step-title">Message your bot once</span>
+          </div>
+          <div className="telegram-step-body">
+            Open your bot in Telegram and send it any message
+            (e.g. <code>/start</code>). Telegram won't show the bot
+            in your chat list until you've talked to it at least
+            once — that first message is also what makes the chat
+            ID visible to us.
+          </div>
+          <div className="telegram-step-actions">
+            {botLink ? (
+              <a
+                className="btn btn--primary"
+                href={botLink}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open @{botInfo?.username}
+              </a>
+            ) : (
+              <span className="telegram-step-locked-note">
+                Verify the bot token above first.
+              </span>
+            )}
+          </div>
+        </li>
+
+        <li
+          className={`telegram-step${
+            tokenValid ? "" : " telegram-step--locked"
+          }`}
+        >
+          <div className="telegram-step-head">
+            <span className="telegram-step-num">4</span>
+            <span className="telegram-step-title">Detect + save chat_id</span>
+          </div>
+          <div className="telegram-step-body">
+            After you've messaged the bot, hit <strong>Detect</strong>.
+            We'll ask Telegram for the latest message and auto-fill
+            your chat ID — no poking around in raw JSON.
+          </div>
+          <div className="telegram-step-row">
+            <input
+              type="text"
+              className="telegram-input"
+              placeholder="chat_id (numeric)"
+              value={chatDraft}
+              onChange={(e) => setChatDraft(e.target.value)}
+              disabled={chatSaving || !tokenValid}
+              inputMode="numeric"
+            />
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => void detect()}
+              disabled={!tokenValid || detectBusy}
+              title="Call Telegram getUpdates and auto-fill chat_id"
+            >
+              {detectBusy ? "Detecting…" : "Detect"}
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => void saveChatId()}
+              disabled={!tokenValid || chatSaving || !chatDraft.trim()}
+            >
+              {chatSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+          {detectHint && (
+            <div className="telegram-step-hint">{detectHint}</div>
+          )}
+          {chatError && (
+            <div className="telegram-step-err">{chatError}</div>
+          )}
+        </li>
+
+        <li
+          className={`telegram-step${
+            tokenValid ? "" : " telegram-step--locked"
+          }`}
+        >
+          <div className="telegram-step-head">
+            <span className="telegram-step-num">5</span>
+            <span className="telegram-step-title">Send yourself a test</span>
+          </div>
+          <div className="telegram-step-body">
+            Hits <code>sendMessage</code> with the saved credentials.
+            If it lands on your phone, you're done.
+          </div>
+          <div className="telegram-step-actions">
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => void sendTest()}
+              disabled={!tokenValid || testBusy}
+            >
+              {testBusy ? "Sending…" : "Send test message"}
+            </button>
+          </div>
+          {testResult?.ok && (
+            <div className="telegram-step-ok">
+              ✓ Delivered — message_id {testResult.message_id}.
+              Setup is done.
+            </div>
+          )}
+          {testResult && !testResult.ok && (
+            <div className="telegram-step-err">
+              Send failed: {testResult.error}
+            </div>
+          )}
+        </li>
+      </ol>
+    </section>
   );
 }
