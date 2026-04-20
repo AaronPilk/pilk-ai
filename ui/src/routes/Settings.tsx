@@ -23,6 +23,7 @@ import {
   deleteConnectedAccount,
   fetchAgents,
   fetchCodingEngines,
+  fetchInstalledSkills,
   fetchConnectedAccounts,
   fetchGovernorStatus,
   fetchGrants,
@@ -40,6 +41,7 @@ import {
   startOAuthConnection,
   type AgentRow,
   type CodingEngineHealth,
+  type InstalledPack,
   type ConnectedAccount,
   type GovernorStatus,
   type IntegrationSecretEntry,
@@ -1020,6 +1022,7 @@ export default function Settings() {
             ))}
           </div>
         )}
+        <InstalledSkillsPanel />
       </section>
       )}
 
@@ -1808,6 +1811,122 @@ function TuningSlider({
         onChange={(e) => onChange(Number(e.target.value))}
       />
       <div className="voice-tuning-help">{help}</div>
+    </div>
+  );
+}
+
+/** Read-only inventory of what Claude Code will load on next
+ * invocation. Scans ~/.claude/skills and ~/.claude/plugins on the
+ * pilkd host (which is your Mac in local mode). Not configurable
+ * from here — these are managed via `git clone` on disk. */
+function InstalledSkillsPanel() {
+  const [inv, setInv] = useState<{
+    skills: InstalledPack[];
+    plugins: InstalledPack[];
+  } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    setBusy(true);
+    fetchInstalledSkills()
+      .then((r) => {
+        setInv(r);
+        setErr(null);
+      })
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => setBusy(false));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="skills-panel">
+      <div className="skills-panel-head">
+        <div className="skills-panel-title">Skills &amp; plugins</div>
+        <button
+          type="button"
+          className="skills-panel-refresh"
+          onClick={load}
+          disabled={busy}
+        >
+          {busy ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+      <p className="settings-card-body">
+        Everything Claude Code will load the next time PILK invokes it.
+        Managed on disk — clone a repo into{" "}
+        <code>~/.claude/skills/</code> or <code>~/.claude/plugins/</code>
+        {" "}to add a new one, then click Refresh.
+      </p>
+      {err && <div className="settings-error">Could not load: {err}</div>}
+      {inv === null && !err && (
+        <div className="settings-card-body">Loading…</div>
+      )}
+      {inv && (
+        <>
+          <SkillList
+            label="Skills"
+            items={inv.skills}
+            emptyCopy={
+              <>
+                No skills installed. Try{" "}
+                <code>git clone https://github.com/anthropics/skills.git ~/.claude/skills/anthropic</code>
+                .
+              </>
+            }
+          />
+          <SkillList
+            label="Plugins"
+            items={inv.plugins}
+            emptyCopy={
+              <>
+                No plugins installed. Try{" "}
+                <code>git clone https://github.com/thedotmack/claude-mem.git ~/.claude/plugins/claude-mem</code>
+                .
+              </>
+            }
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+function SkillList({
+  label,
+  items,
+  emptyCopy,
+}: {
+  label: string;
+  items: InstalledPack[];
+  emptyCopy: React.ReactNode;
+}) {
+  return (
+    <div className="skills-panel-section">
+      <div className="skills-panel-section-head">
+        <span className="skills-panel-section-label">{label}</span>
+        <span className="skills-panel-section-count">{items.length}</span>
+      </div>
+      {items.length === 0 ? (
+        <div className="skills-panel-empty">{emptyCopy}</div>
+      ) : (
+        <ul className="skills-panel-list">
+          {items.map((p) => (
+            <li key={p.path} className="skills-panel-item">
+              <div className="skills-panel-item-name">{p.name}</div>
+              {p.description && (
+                <div className="skills-panel-item-desc">{p.description}</div>
+              )}
+              <div className="skills-panel-item-path" title={p.path}>
+                {p.path}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
