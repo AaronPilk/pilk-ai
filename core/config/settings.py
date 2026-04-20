@@ -434,13 +434,30 @@ class Settings(BaseSettings):
     # accepted and logged as a fallback until the OpenAI execution path
     # lands in Batch D. Defaults intentionally map every tier to a
     # concrete Claude model so a fresh install routes sanely.
+    # LIGHT tier defaults to the Claude Code CLI provider — the
+    # operator's Max/Pro subscription covers those calls at $0
+    # marginal cost. The provider only registers when the `claude`
+    # binary is on PATH; when it's missing, build_providers skips it
+    # and the orchestrator transparently falls back to the Anthropic
+    # API path (using tier_light_model). Set the provider back to
+    # "anthropic" explicitly to opt out of subscription-first chat.
     tier_light_provider: str = Field(
-        default="anthropic",
+        default="claude_code",
         validation_alias=AliasChoices("PILK_TIER_LIGHT_PROVIDER", "TIER_LIGHT_PROVIDER"),
     )
     tier_light_model: str = Field(
         default="claude-haiku-4-5",
         validation_alias=AliasChoices("PILK_TIER_LIGHT_MODEL", "TIER_LIGHT_MODEL"),
+    )
+    # Master switch for the whole subscription-backed chat path. Off
+    # means build_providers doesn't register the claude_code provider
+    # at all, even if the binary is available — every turn lands on
+    # the API.
+    enable_claude_code_chat: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "PILK_ENABLE_CLAUDE_CODE_CHAT", "ENABLE_CLAUDE_CODE_CHAT",
+        ),
     )
     tier_standard_provider: str = Field(
         default="anthropic",

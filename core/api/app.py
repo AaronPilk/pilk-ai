@@ -619,6 +619,8 @@ async def lifespan(app: FastAPI):
         providers = build_providers(
             anthropic_client=client,
             openai_api_key=settings.openai_api_key,
+            claude_code_binary=settings.claude_code_binary,
+            enable_claude_code_chat=settings.enable_claude_code_chat,
         )
         # Sentinel → orchestrator handoff. Before the first planner
         # turn of any run, the orchestrator asks us "anything on fire?"
