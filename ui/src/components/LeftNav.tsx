@@ -8,6 +8,7 @@ const groups: Group[] = [
     heading: "Command",
     items: [
       { to: "/", label: "Home" },
+      { to: "/brain", label: "Brain" },
       { to: "/chat", label: "Chat" },
     ],
   },

@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router-dom";
 import LeftNav from "./components/LeftNav";
 import TopBar from "./components/TopBar";
 import Home from "./routes/Home";
+import Brain from "./routes/Brain";
 import Chat from "./routes/Chat";
 import Tasks from "./routes/Tasks";
 import Agents from "./routes/Agents";
@@ -24,6 +25,7 @@ export default function App() {
           <div className="content">
             <Routes>
               <Route path="/" element={<Home />} />
+              <Route path="/brain" element={<Brain />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/agents" element={<Agents />} />
