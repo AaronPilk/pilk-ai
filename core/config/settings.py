@@ -259,6 +259,18 @@ class Settings(BaseSettings):
             "PILK_CODEX_MODEL", "CODEX_MODEL"
         ),
     )
+
+    # ── Brain vault (Obsidian-compatible) ─────────────────────────
+    # Directory of markdown notes that serves as PILK's long-term
+    # knowledge store. The operator can open the same directory as an
+    # Obsidian vault for graph + backlink navigation. Auto-created on
+    # boot if missing; seeded with a starter README.
+    brain_vault_path: Path = Field(
+        default_factory=lambda: Path.home() / "PILK-brain",
+        validation_alias=AliasChoices(
+            "PILK_BRAIN_VAULT_PATH", "BRAIN_VAULT_PATH"
+        ),
+    )
     # Dedicated model for the draft-only APIEngine. Defaults to the
     # standard tier so the governor can re-route via its normal rules
     # later without a settings change.

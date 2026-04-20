@@ -100,6 +100,19 @@ Continuous learning:
   sensitive (health, financials, relationship details).
 - Never save speculative inferences. If you're not sure the user
   meant it as a durable fact about themselves, skip it.
+
+Long-form brain (Obsidian vault):
+- memory_remember is for short tagged entries. For anything too long
+  to fit as a one-liner — research findings, client briefs, meeting
+  notes, decision rationale, playbooks, reference material — use the
+  brain_* tools to write a full markdown note in the vault. Search
+  first (brain_search) to avoid duplicating what you already know.
+- One topic per note. Use [[Wiki Link]] syntax to cross-reference
+  other notes; Obsidian picks them up for the graph view. Titles
+  should be human-scannable.
+- When an answer depends on something that might already be in the
+  brain, call brain_search before answering blind. Falling back to
+  brain_note_list can also help when you're unsure of exact phrasing.
 """
 
 

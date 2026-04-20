@@ -508,6 +508,25 @@ async def lifespan(app: FastAPI):
     # is advertised in the schema regardless of API-key state.
     registry.register(make_memory_remember_tool(memory))
 
+    # Long-term brain vault — Obsidian-compatible markdown folder the
+    # operator can also open visually. Auto-create + seed if missing,
+    # then advertise four brain_* tools (read, write, search, list).
+    from core.brain import Vault
+    from core.tools.builtin.brain import make_brain_tools
+
+    brain = Vault(settings.brain_vault_path)
+    try:
+        brain.ensure_initialized()
+    except OSError as e:
+        log.warning("brain_vault_init_failed", path=str(brain.root), error=str(e))
+    for t in make_brain_tools(brain):
+        registry.register(t)
+    log.info(
+        "brain_ready",
+        vault=str(brain.root),
+        tools=["brain_note_read", "brain_note_write", "brain_search", "brain_note_list"],
+    )
+
     if settings.anthropic_api_key:
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         registry.register(make_llm_ask_tool(client, ledger, settings.llm_ask_model))
@@ -682,6 +701,7 @@ async def lifespan(app: FastAPI):
     app.state.browser_sessions = browser_sessions
     app.state.governor = governor
     app.state.memory = memory
+    app.state.brain = brain
     app.state.integration_secrets = integration_secrets
     app.state.xauusd_settings = xauusd_settings
     app.state.clients = clients
