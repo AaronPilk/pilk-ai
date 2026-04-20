@@ -30,6 +30,7 @@ import {
  * avatar can't. Keep the list in sync with each agent's manifest;
  * unmapped agents fall back to a generic robot. */
 const AGENT_AVATAR: Record<string, string> = {
+  ads_audit_agent: "🕵️",
   creative_content_agent: "🎬",
   elementor_converter_agent: "🧩",
   file_organization_agent: "🗂️",
@@ -49,6 +50,8 @@ const AGENT_AVATAR: Record<string, string> = {
  * 300-word manifest. Falls back to the manifest description when a
  * blurb isn't supplied here. */
 const AGENT_BLURB: Record<string, string> = {
+  ads_audit_agent:
+    "Audits your paid-ads accounts and returns a scored fix list.",
   creative_content_agent:
     "Makes images and short videos from a text brief.",
   elementor_converter_agent:
