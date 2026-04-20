@@ -242,6 +242,27 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Computer control (IRREVERSIBLE) ──────────────────────────
+    # Kill switch for the computer_* tool family: unscoped fs_read /
+    # fs_write / shell / osascript. Must be explicitly set to "true"
+    # for the tools to run; any other value (including unset) leaves
+    # them inert. Paired with a daily-call limit so even when
+    # enabled, PILK can't run away.
+    computer_control_enabled: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "COMPUTER_CONTROL_ENABLED",
+            "PILK_COMPUTER_CONTROL_ENABLED",
+        ),
+    )
+    computer_control_daily_limit: int = Field(
+        default=20,
+        validation_alias=AliasChoices(
+            "COMPUTER_CONTROL_DAILY_LIMIT",
+            "PILK_COMPUTER_CONTROL_DAILY_LIMIT",
+        ),
+    )
+
     # ── Google Ads (google_ads_agent) ─────────────────────────────
     # Five secrets power the full operator. The developer token
     # authenticates your Google Ads MCC against the API; the OAuth

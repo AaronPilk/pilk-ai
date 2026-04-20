@@ -99,6 +99,7 @@ from core.sentinel.remediate import RemediationResult
 from core.supabase import SupabaseClient
 from core.tools import Gateway, ToolRegistry
 from core.tools.builtin import (
+    COMPUTER_CONTROL_TOOLS,
     CREATIVE_TOOLS,
     GOOGLE_ADS_TOOLS,
     META_ADS_TOOLS,
@@ -364,6 +365,23 @@ async def lifespan(app: FastAPI):
     log.info(
         "telegram_registered",
         tools=[t.name for t in TELEGRAM_TOOLS],
+    )
+
+    # Computer-control toolkit — IRREVERSIBLE fs/shell/osascript
+    # outside the workspace sandbox. The gate shares a single
+    # instance so rate limit + audit log + token store are
+    # consistent across the four tools.
+    from core.policy.computer_control import build_default_gate
+    from core.tools.builtin.computer_control import set_gate as _set_cc_gate
+    computer_control_gate = build_default_gate(settings.home)
+    _set_cc_gate(computer_control_gate)
+    for t in COMPUTER_CONTROL_TOOLS:
+        registry.register(t)
+    log.info(
+        "computer_control_registered",
+        tools=[t.name for t in COMPUTER_CONTROL_TOOLS],
+        daily_limit=computer_control_gate.daily_limit,
+        audit_path=str(computer_control_gate.audit_path),
     )
 
     # Web-design toolkit — html_export emits the static bundle; the
@@ -769,6 +787,7 @@ async def lifespan(app: FastAPI):
     app.state.governor = governor
     app.state.memory = memory
     app.state.brain = brain
+    app.state.computer_control = computer_control_gate
     app.state.integration_secrets = integration_secrets
     app.state.xauusd_settings = xauusd_settings
     app.state.clients = clients

@@ -1,6 +1,7 @@
 from core.tools.builtin.agent_meta import make_agent_create_tool
 from core.tools.builtin.browser import BrowserSessionManager, make_browser_tools
 from core.tools.builtin.code_task import make_code_task_tool
+from core.tools.builtin.computer_control import COMPUTER_CONTROL_TOOLS
 from core.tools.builtin.creative import (
     CREATIVE_TOOLS,
     higgsfield_generate_tool,
@@ -53,6 +54,7 @@ from core.tools.builtin.xauusd import (
 )
 
 __all__ = [
+    "COMPUTER_CONTROL_TOOLS",
     "CREATIVE_TOOLS",
     "GOOGLE_ADS_TOOLS",
     "META_ADS_TOOLS",
