@@ -18,6 +18,7 @@ from core.tools.builtin.llm_ask import make_llm_ask_tool
 from core.tools.builtin.memory_remember import make_memory_remember_tool
 from core.tools.builtin.meta_ads import META_ADS_TOOLS
 from core.tools.builtin.net import net_fetch_tool
+from core.tools.builtin.print_design import PRINT_DESIGN_TOOLS
 from core.tools.builtin.sales_ops import (
     SALES_OPS_TOOLS,
     google_places_search_tool,
@@ -54,6 +55,7 @@ __all__ = [
     "CREATIVE_TOOLS",
     "GOOGLE_ADS_TOOLS",
     "META_ADS_TOOLS",
+    "PRINT_DESIGN_TOOLS",
     "SALES_OPS_TOOLS",
     "UGC_TOOLS",
     "XAUUSD_TOOLS",

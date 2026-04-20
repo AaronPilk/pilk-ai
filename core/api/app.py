@@ -101,6 +101,7 @@ from core.tools.builtin import (
     CREATIVE_TOOLS,
     GOOGLE_ADS_TOOLS,
     META_ADS_TOOLS,
+    PRINT_DESIGN_TOOLS,
     SALES_OPS_TOOLS,
     UGC_TOOLS,
     XAUUSD_TOOLS,
@@ -330,6 +331,17 @@ async def lifespan(app: FastAPI):
     log.info(
         "google_ads_registered",
         tools=[t.name for t in GOOGLE_ADS_TOOLS],
+    )
+
+    # Print-design toolkit — HTML + Playwright PDF exporter for
+    # flyers / cards / banners / posters / trade-show backdrops. No
+    # external keys; renderer is pure Python + chromium (already in
+    # the dependency set for the browser tool).
+    for t in PRINT_DESIGN_TOOLS:
+        registry.register(t)
+    log.info(
+        "print_design_registered",
+        tools=[t.name for t in PRINT_DESIGN_TOOLS],
     )
 
     # UGC scout toolkit — Apify-backed IG/TikTok discovery + Hunter.io

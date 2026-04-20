@@ -36,6 +36,7 @@ const AGENT_AVATAR: Record<string, string> = {
   google_ads_agent: "🔎",
   meta_ads_agent: "📣",
   pitch_deck_agent: "📊",
+  print_design_agent: "🖨️",
   sales_ops_agent: "💼",
   sentinel: "🛡️",
   ugc_outreach_agent: "📧",
@@ -61,6 +62,8 @@ const AGENT_BLURB: Record<string, string> = {
     "Runs Meta (Facebook/Instagram) ad campaigns end-to-end.",
   pitch_deck_agent:
     "Builds pitch decks and presentations for clients.",
+  print_design_agent:
+    "Designs flyers, business cards, and trade-show banners as print-ready PDFs.",
   sales_ops_agent:
     "Finds leads, enriches contacts, and runs outbound campaigns.",
   sentinel:
