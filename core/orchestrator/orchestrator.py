@@ -87,6 +87,19 @@ Rules of engagement:
   refused paths with absolute forms — they will refuse too.
 - On completion, a one-sentence summary is plenty. No speculative
   follow-up work.
+
+Continuous learning:
+- When the user reveals something durable about themselves — a
+  preference, a standing rule, a remembered fact, a recurring pattern
+  — proactively call memory_remember with the right kind. Examples:
+  "I hate markdown headings in voice replies" → preference. "Never
+  send emails after 9pm" → standing_instruction. "My assistant's name
+  is Maria" → fact. "We usually do sales campaigns on Tuesdays" →
+  pattern. Distil, don't transcribe. Don't ask permission for low-
+  stakes entries; keep the flow. Do confirm before saving anything
+  sensitive (health, financials, relationship details).
+- Never save speculative inferences. If you're not sure the user
+  meant it as a durable fact about themselves, skip it.
 """
 
 

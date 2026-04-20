@@ -682,6 +682,26 @@ export async function clearMemory(kind?: MemoryKind): Promise<{ cleared: number 
   return r.json();
 }
 
+export interface MemoryProposal {
+  kind: MemoryKind;
+  title: string;
+  body: string;
+  confidence: number;
+  rationale: string;
+}
+
+export async function distillMemory(
+  window = 30,
+): Promise<{ proposals: MemoryProposal[]; window: number }> {
+  const r = await apiFetch(`/memory/distill`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ window }),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 // ── Sentinel ─────────────────────────────────────────────────
 
 export type SentinelSeverity = "low" | "med" | "high" | "critical";
