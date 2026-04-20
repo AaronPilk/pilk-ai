@@ -1097,3 +1097,46 @@ export async function setXAUUSDExecutionMode(
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
+
+// ── Brain (Obsidian-compatible long-term vault) ──────────────
+
+/** One markdown note in the vault. `folder` is empty for root-level
+ * notes; nested notes carry a POSIX path like "daily/2026-04-20". */
+export interface BrainNote {
+  path: string;
+  folder: string;
+  stem: string;
+  size: number;
+  mtime: string | null;
+}
+
+export interface BrainSearchHit {
+  path: string;
+  line: number;
+  snippet: string;
+}
+
+export async function fetchBrainNotes(): Promise<{
+  notes: BrainNote[];
+  root: string;
+}> {
+  const r = await apiFetch(`/brain`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function fetchBrainNote(
+  path: string,
+): Promise<{ path: string; body: string; size: number }> {
+  const r = await apiFetch(`/brain/note?path=${encodeURIComponent(path)}`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function searchBrain(
+  q: string,
+): Promise<{ query: string; hits: BrainSearchHit[] }> {
+  const r = await apiFetch(`/brain/search?q=${encodeURIComponent(q)}`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}

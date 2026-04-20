@@ -26,6 +26,7 @@ from core.api.routes.accounts import router as accounts_router
 from core.api.routes.agents import router as agents_router
 from core.api.routes.apple import router as apple_router
 from core.api.routes.approvals import router as approvals_router
+from core.api.routes.brain import router as brain_router
 from core.api.routes.browser import router as browser_router
 from core.api.routes.coding import router as coding_http_router
 from core.api.routes.cost import router as cost_router
@@ -799,6 +800,7 @@ def create_app() -> FastAPI:
     app.include_router(accounts_router)
     app.include_router(apple_router)
     app.include_router(memory_router)
+    app.include_router(brain_router)
     app.include_router(migration_router)
     app.include_router(integration_secrets_router)
     app.include_router(xauusd_settings_router)
