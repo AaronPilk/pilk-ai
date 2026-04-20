@@ -14,6 +14,7 @@ from core.tools.builtin.finance import (
 )
 from core.tools.builtin.fs import fs_read_tool, fs_write_tool
 from core.tools.builtin.llm_ask import make_llm_ask_tool
+from core.tools.builtin.memory_remember import make_memory_remember_tool
 from core.tools.builtin.net import net_fetch_tool
 from core.tools.builtin.sales_ops import (
     SALES_OPS_TOOLS,
@@ -66,6 +67,7 @@ __all__ = [
     "make_browser_tools",
     "make_code_task_tool",
     "make_llm_ask_tool",
+    "make_memory_remember_tool",
     "make_sentinel_acknowledge_tool",
     "make_sentinel_heartbeat_tool",
     "make_sentinel_list_incidents_tool",

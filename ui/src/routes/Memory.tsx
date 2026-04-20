@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import MemoryRow from "../components/MemoryRow";
 import {
   addMemory,
@@ -148,6 +149,28 @@ export default function Memory() {
           )}
         </div>
       </header>
+
+      <Link
+        to="/chat?start=interview"
+        className="memory-interview-cta"
+      >
+        <span className="memory-interview-cta-icon" aria-hidden>
+          💬
+        </span>
+        <div className="memory-interview-cta-body">
+          <div className="memory-interview-cta-title">
+            Let PILK get to know you
+          </div>
+          <div className="memory-interview-cta-sub">
+            Kicks off a conversational interview — PILK asks one question
+            at a time, branches on your answers, and saves what it learns
+            here with your confirmation.
+          </div>
+        </div>
+        <span className="memory-interview-cta-chev" aria-hidden>
+          →
+        </span>
+      </Link>
 
       <section className="memory-composer">
         <div className="memory-composer-row">

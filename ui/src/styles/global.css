@@ -5391,3 +5391,64 @@ body {
 .agent-card-status--expired .agent-card-status-dot {
   background: var(--text-faint);
 }
+
+/* ── Memory → "Let PILK get to know you" CTA ──────────────────
+   Sits between the memory header and the composer. Big, inviting,
+   links to Chat with the interview kick-off. */
+.memory-interview-cta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  margin: 4px 0 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(
+    135deg,
+    var(--accent-soft),
+    var(--surface)
+  );
+  color: var(--text);
+  text-decoration: none;
+  transition: transform 0.14s, border-color 0.14s, box-shadow 0.14s;
+}
+
+.memory-interview-cta:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+  box-shadow: var(--shadow);
+}
+
+.memory-interview-cta-icon {
+  width: 48px;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+  flex-shrink: 0;
+}
+
+.memory-interview-cta-body {
+  flex: 1;
+}
+
+.memory-interview-cta-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.memory-interview-cta-sub {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.memory-interview-cta-chev {
+  color: var(--text-dim);
+  font-size: 20px;
+  flex-shrink: 0;
+}

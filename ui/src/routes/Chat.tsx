@@ -17,6 +17,28 @@ function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+/** Kick-off prompt for the "Let PILK get to know you" interview.
+ * Deliberately chatty so PILK reads it as a user-authored request and
+ * responds conversationally rather than treating it as a tool-routing
+ * spec. The key instructions: one question at a time, branch on my
+ * answers, save durable entries via memory_remember when I confirm. */
+const INTERVIEW_KICKOFF =
+  "Let's do a get-to-know-me interview so you can learn how I work, " +
+  "what I care about, and what my quirks are. Rules of engagement:\n\n" +
+  "• Ask one question at a time and wait for my answer before the next.\n" +
+  "• Branch the next question based on what I just told you — follow " +
+  "the thread rather than reading a script.\n" +
+  "• Rotate topics after a few turns so you don't drill the same area: " +
+  "work, goals, people + relationships, routines, preferences, quirks, " +
+  "pet peeves.\n" +
+  "• Every few answers, distil what you've learned into a concrete entry " +
+  "and call the memory_remember tool with the right kind (preference / " +
+  "standing_instruction / fact / pattern). Keep titles short and " +
+  "scannable. Confirm with me before saving anything sensitive.\n" +
+  "• Keep it conversational — your replies are read aloud too, so short " +
+  "sentences, no bullet spam.\n\n" +
+  "Start with one warm opener.";
+
 export default function Chat() {
   const { plans } = useLivePlans();
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -36,6 +58,22 @@ export default function Chat() {
     setInput((current) => (current ? current : prefill));
     const next = new URLSearchParams(searchParams);
     next.delete("prompt");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  // "Let PILK get to know you" CTA on /memory links here with
+  // ?start=interview. We auto-submit a kick-off prompt that tells
+  // PILK to run a conversational onboarding and save answers via the
+  // memory_remember tool.
+  useEffect(() => {
+    const mode = searchParams.get("start");
+    if (mode !== "interview") return;
+    const id = uid();
+    const text = INTERVIEW_KICKOFF;
+    setMessages((prev) => [...prev, { kind: "user", id, text }]);
+    pilk.send({ type: "chat.user", id, text });
+    const next = new URLSearchParams(searchParams);
+    next.delete("start");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 

@@ -109,6 +109,7 @@ from core.tools.builtin import (
     make_browser_tools,
     make_code_task_tool,
     make_llm_ask_tool,
+    make_memory_remember_tool,
     make_sentinel_tools,
     make_xauusd_take_over_tool,
     net_fetch_tool,
@@ -499,6 +500,13 @@ async def lifespan(app: FastAPI):
 
     orchestrator: Orchestrator | None = None
     client: anthropic.AsyncAnthropic | None = None
+    # Memory write tool — scoped WRITE_LOCAL so the orchestrator can
+    # save user-stated preferences / facts / patterns during the
+    # "Talk to PILK" interview (and anywhere else it's natural to
+    # remember something). Registration is unconditional so the tool
+    # is advertised in the schema regardless of API-key state.
+    registry.register(make_memory_remember_tool(memory))
+
     if settings.anthropic_api_key:
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         registry.register(make_llm_ask_tool(client, ledger, settings.llm_ask_model))
