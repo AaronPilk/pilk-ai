@@ -1140,3 +1140,51 @@ export async function searchBrain(
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
+
+// ── Telegram (PILK push channel) ───────────────────────────────
+
+/** Shape returned by GET /telegram/bot-info. `configured` means the
+ * token is set at all; `valid` means Telegram's `getMe` accepted it.
+ * `t_me_url` is pre-built so the UI can link straight to the bot. */
+export interface TelegramBotInfo {
+  configured: boolean;
+  valid?: boolean;
+  bot_id?: number;
+  username?: string;
+  first_name?: string;
+  can_join_groups?: boolean;
+  t_me_url?: string | null;
+  error?: string;
+}
+
+export interface TelegramDetectResult {
+  detected: boolean;
+  chat_id?: string;
+  chat_type?: string;
+  chat_title?: string;
+  error?: string;
+}
+
+export interface TelegramTestResult {
+  sent: boolean;
+  message_id?: number;
+  error?: string;
+}
+
+export async function fetchTelegramBotInfo(): Promise<TelegramBotInfo> {
+  const r = await apiFetch(`/telegram/bot-info`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function detectTelegramChat(): Promise<TelegramDetectResult> {
+  const r = await apiFetch(`/telegram/detect-chat`, { method: "POST" });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function sendTelegramTest(): Promise<TelegramTestResult> {
+  const r = await apiFetch(`/telegram/test`, { method: "POST" });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}

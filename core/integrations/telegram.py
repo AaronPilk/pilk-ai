@@ -154,4 +154,10 @@ def _decode(resp: httpx.Response, method: str) -> dict[str, Any]:
     return body.get("result") or {}
 
 
-__all__ = ["TelegramClient", "TelegramConfig", "TelegramError"]
+__all__ = [
+    "TELEGRAM_API_BASE",
+    "TELEGRAM_MESSAGE_MAX_CHARS",
+    "TelegramClient",
+    "TelegramConfig",
+    "TelegramError",
+]

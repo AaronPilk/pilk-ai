@@ -42,6 +42,7 @@ from core.api.routes.sandboxes import router as sandboxes_router
 from core.api.routes.sentinel import router as sentinel_router
 from core.api.routes.supabase import router as supabase_router
 from core.api.routes.system_status import router as system_status_router
+from core.api.routes.telegram import router as telegram_router
 from core.api.routes.voice import router as voice_router
 from core.api.routes.xauusd_settings import router as xauusd_settings_router
 from core.api.ws import router as ws_router
@@ -830,6 +831,7 @@ def create_app() -> FastAPI:
     app.include_router(sandboxes_router)
     app.include_router(approvals_router)
     app.include_router(voice_router)
+    app.include_router(telegram_router)
     app.include_router(browser_router)
     app.include_router(governor_router)
     app.include_router(integrations_router)
