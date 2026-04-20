@@ -418,6 +418,19 @@ class Settings(BaseSettings):
             "PILK_BRAIN_VAULT_PATH", "BRAIN_VAULT_PATH"
         ),
     )
+    # Auto-ingest ~/.claude/projects/ into the brain vault on boot.
+    # Idempotent — writes at stable vault paths so re-runs overwrite
+    # rather than duplicate. Off means the operator has to ask PILK
+    # in chat ("ingest my Claude Code transcripts") to seed the
+    # vault. Default on so the vault is useful immediately after
+    # first boot.
+    brain_auto_ingest_on_boot: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "PILK_BRAIN_AUTO_INGEST_ON_BOOT",
+            "BRAIN_AUTO_INGEST_ON_BOOT",
+        ),
+    )
     # Dedicated model for the draft-only APIEngine. Defaults to the
     # standard tier so the governor can re-route via its normal rules
     # later without a settings change.

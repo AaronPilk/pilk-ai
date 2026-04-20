@@ -612,6 +612,14 @@ async def lifespan(app: FastAPI):
         ],
     )
 
+    # Auto-seed the vault with Claude Code transcripts on boot. Fire-
+    # and-forget — the task logs its own completion + won't kill the
+    # daemon if it fails. Operator can disable via
+    # PILK_BRAIN_AUTO_INGEST_ON_BOOT=false.
+    if settings.brain_auto_ingest_on_boot:
+        from core.brain import auto_ingest as _brain_auto_ingest
+        _brain_auto_ingest.spawn(brain)
+
     if settings.anthropic_api_key:
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         registry.register(make_llm_ask_tool(client, ledger, settings.llm_ask_model))
