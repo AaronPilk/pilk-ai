@@ -15,6 +15,7 @@ from core.tools.builtin.finance import (
 from core.tools.builtin.fs import fs_read_tool, fs_write_tool
 from core.tools.builtin.llm_ask import make_llm_ask_tool
 from core.tools.builtin.memory_remember import make_memory_remember_tool
+from core.tools.builtin.meta_ads import META_ADS_TOOLS
 from core.tools.builtin.net import net_fetch_tool
 from core.tools.builtin.sales_ops import (
     SALES_OPS_TOOLS,
@@ -49,6 +50,7 @@ from core.tools.builtin.xauusd import (
 
 __all__ = [
     "CREATIVE_TOOLS",
+    "META_ADS_TOOLS",
     "SALES_OPS_TOOLS",
     "XAUUSD_TOOLS",
     "BrowserSessionManager",

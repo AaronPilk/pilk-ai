@@ -33,6 +33,7 @@ const AGENT_AVATAR: Record<string, string> = {
   creative_content_agent: "🎬",
   elementor_converter_agent: "🧩",
   file_organization_agent: "🗂️",
+  meta_ads_agent: "📣",
   pitch_deck_agent: "📊",
   sales_ops_agent: "💼",
   sentinel: "🛡️",
@@ -51,6 +52,8 @@ const AGENT_BLURB: Record<string, string> = {
     "Turns a web design into a WordPress Elementor template.",
   file_organization_agent:
     "Cleans up and organizes files in your workspace.",
+  meta_ads_agent:
+    "Runs Meta (Facebook/Instagram) ad campaigns end-to-end.",
   pitch_deck_agent:
     "Builds pitch decks and presentations for clients.",
   sales_ops_agent:

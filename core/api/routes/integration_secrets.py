@@ -120,6 +120,54 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         ),
         "env": "BROWSERBASE_PROJECT_ID",
     },
+    "meta_access_token": {
+        "label": "Meta Marketing API — access token",
+        "description": (
+            "Long-lived user access token from your Meta app "
+            "(developers.facebook.com → your app → Graph API Explorer "
+            "or Marketing API Setup). Scopes needed: ads_management, "
+            "ads_read, business_management, pages_read_engagement. "
+            "Rotate every ~60 days."
+        ),
+        "env": "META_ACCESS_TOKEN",
+    },
+    "meta_ad_account_id": {
+        "label": "Meta ad account ID",
+        "description": (
+            "Ad account number (digits) or `act_<digits>`. Find it in "
+            "Meta Ads Manager → upper-left account picker. The "
+            "meta_ads_agent uses this for every campaign / ad set / ad "
+            "/ insight call."
+        ),
+        "env": "META_AD_ACCOUNT_ID",
+    },
+    "meta_page_id": {
+        "label": "Meta Page ID",
+        "description": (
+            "Owning Facebook Page that ads render as. Meta requires a "
+            "page on every ad creative. Get it from facebook.com/<your-"
+            "page> → About → Page Transparency, or Business Suite → "
+            "Settings → Pages."
+        ),
+        "env": "META_PAGE_ID",
+    },
+    "meta_app_id": {
+        "label": "Meta app ID (optional)",
+        "description": (
+            "App ID for the Meta app that issued the access token. Not "
+            "required for day-to-day ads operations; stored so a future "
+            "token-refresh helper works without a schema change."
+        ),
+        "env": "META_APP_ID",
+    },
+    "meta_app_secret": {
+        "label": "Meta app secret (optional)",
+        "description": (
+            "App secret paired with the Meta app ID. Optional today — "
+            "reserved for future token-refresh flows. Treat as sensitive."
+        ),
+        "env": "META_APP_SECRET",
+    },
 }
 
 
