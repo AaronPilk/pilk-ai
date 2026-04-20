@@ -179,7 +179,7 @@ async def distill_from_conversations(
             system=DISTILL_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}],
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.exception("distill_anthropic_failed")
         raise HTTPException(
             status_code=502,
