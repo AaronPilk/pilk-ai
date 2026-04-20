@@ -222,6 +222,43 @@ class Settings(BaseSettings):
             "PILK_CLAUDE_CODE_MODEL", "CLAUDE_CODE_MODEL"
         ),
     )
+    # ── Codex (OpenAI) bridge ────────────────────────────────────
+    # Companion to the Claude Code bridge. When the `codex` CLI is
+    # installed and the operator has run `codex login`, runs bill
+    # against their ChatGPT subscription instead of PILK's API budget.
+    # Same accept-a-path-or-name convention as claude_code_binary.
+    codex_binary: str = Field(
+        default="codex",
+        validation_alias=AliasChoices(
+            "PILK_CODEX_BINARY", "CODEX_BINARY"
+        ),
+    )
+    # Default permission posture: `--full-auto` gives Codex
+    # workspace-write with on-request approvals — the closest analogue
+    # to Claude Code's `bypassPermissions` without going all the way
+    # to `--yolo`. Flip `codex_yolo` to true for trusted local runs
+    # where PILK has already approved at the task level.
+    codex_yolo: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("PILK_CODEX_YOLO", "CODEX_YOLO"),
+    )
+    # Explicit sandbox mode override. When set, takes precedence over
+    # `codex_yolo` and the full-auto default. Accepts: read-only,
+    # workspace-write, danger-full-access.
+    codex_sandbox_mode: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PILK_CODEX_SANDBOX_MODE", "CODEX_SANDBOX_MODE"
+        ),
+    )
+    # Optional model override forwarded as `--model`. Unset = whatever
+    # Codex's own default is (usually the latest `gpt-5-codex` family).
+    codex_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PILK_CODEX_MODEL", "CODEX_MODEL"
+        ),
+    )
     # Dedicated model for the draft-only APIEngine. Defaults to the
     # standard tier so the governor can re-route via its normal rules
     # later without a settings change.

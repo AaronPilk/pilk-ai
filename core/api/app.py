@@ -49,6 +49,7 @@ from core.coding import (
     AgentSDKEngine,
     APIEngine,
     ClaudeCodeBridge,
+    CodexBridge,
     CodingRouter,
 )
 from core.config import get_settings
@@ -568,6 +569,12 @@ async def lifespan(app: FastAPI):
                 else None
             ),
             model=settings.claude_code_model,
+        ),
+        "codex": CodexBridge(
+            settings.codex_binary,
+            model=settings.codex_model,
+            sandbox_mode=settings.codex_sandbox_mode,
+            yolo=settings.codex_yolo,
         ),
         "agent-sdk": AgentSDKEngine(
             client=client, model=settings.coding_api_model

@@ -34,6 +34,7 @@ from core.coding.base import (
     EngineHealth,
 )
 from core.coding.claude_code_bridge import ClaudeCodeBridge
+from core.coding.codex_bridge import CodexBridge
 from core.coding.router import CodingRouter
 
 __all__ = [
@@ -43,6 +44,7 @@ __all__ = [
     "CodeRunResult",
     "CodeScope",
     "CodeTask",
+    "CodexBridge",
     "CodingEngine",
     "CodingRouter",
     "EngineHealth",
