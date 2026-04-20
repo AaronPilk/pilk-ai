@@ -569,6 +569,7 @@ async def lifespan(app: FastAPI):
     # then advertise four brain_* tools (read, write, search, list).
     from core.brain import Vault
     from core.tools.builtin.brain import make_brain_tools
+    from core.tools.builtin.brain_ingest import make_brain_ingest_tools
 
     brain = Vault(settings.brain_vault_path)
     try:
@@ -577,10 +578,20 @@ async def lifespan(app: FastAPI):
         log.warning("brain_vault_init_failed", path=str(brain.root), error=str(e))
     for t in make_brain_tools(brain):
         registry.register(t)
+    # Ingesters share the same Vault + write to the same tree, so
+    # they're wired alongside the brain tools rather than as a
+    # separate bundle.
+    ingest_tools = make_brain_ingest_tools(brain)
+    for t in ingest_tools:
+        registry.register(t)
     log.info(
         "brain_ready",
         vault=str(brain.root),
-        tools=["brain_note_read", "brain_note_write", "brain_search", "brain_note_list"],
+        tools=[
+            "brain_note_read", "brain_note_write", "brain_search",
+            "brain_note_list",
+            *[t.name for t in ingest_tools],
+        ],
     )
 
     if settings.anthropic_api_key:
