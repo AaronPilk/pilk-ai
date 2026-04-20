@@ -99,6 +99,7 @@ from core.supabase import SupabaseClient
 from core.tools import Gateway, ToolRegistry
 from core.tools.builtin import (
     CREATIVE_TOOLS,
+    GOOGLE_ADS_TOOLS,
     META_ADS_TOOLS,
     SALES_OPS_TOOLS,
     UGC_TOOLS,
@@ -320,6 +321,16 @@ async def lifespan(app: FastAPI):
     for t in META_ADS_TOOLS:
         registry.register(t)
     log.info("meta_ads_registered", tools=[t.name for t in META_ADS_TOOLS])
+
+    # Google Ads operator toolkit — symmetric to Meta Ads. Unconditional
+    # registration; handlers surface a clean "not configured" outcome
+    # when the developer token / OAuth triplet / customer ID isn't set.
+    for t in GOOGLE_ADS_TOOLS:
+        registry.register(t)
+    log.info(
+        "google_ads_registered",
+        tools=[t.name for t in GOOGLE_ADS_TOOLS],
+    )
 
     # UGC scout toolkit — Apify-backed IG/TikTok discovery + Hunter.io
     # email enrichment + CSV export. Registration is unconditional;

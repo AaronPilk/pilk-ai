@@ -223,6 +223,52 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Google Ads (google_ads_agent) ─────────────────────────────
+    # Five secrets power the full operator. The developer token
+    # authenticates your Google Ads MCC against the API; the OAuth
+    # triplet (client_id / client_secret / refresh_token) mints short-
+    # lived access tokens the client uses per call; customer_id names
+    # the ad account being operated on. login_customer_id is only
+    # needed when the token was issued against a manager account and
+    # the target is a sub-account underneath it.
+    google_ads_developer_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_ADS_DEVELOPER_TOKEN", "PILK_GOOGLE_ADS_DEVELOPER_TOKEN",
+        ),
+    )
+    google_ads_client_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_ADS_CLIENT_ID", "PILK_GOOGLE_ADS_CLIENT_ID",
+        ),
+    )
+    google_ads_client_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_ADS_CLIENT_SECRET", "PILK_GOOGLE_ADS_CLIENT_SECRET",
+        ),
+    )
+    google_ads_refresh_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_ADS_REFRESH_TOKEN", "PILK_GOOGLE_ADS_REFRESH_TOKEN",
+        ),
+    )
+    google_ads_customer_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_ADS_CUSTOMER_ID", "PILK_GOOGLE_ADS_CUSTOMER_ID",
+        ),
+    )
+    google_ads_login_customer_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
+            "PILK_GOOGLE_ADS_LOGIN_CUSTOMER_ID",
+        ),
+    )
+
     # ── Coding engines ────────────────────────────────────────────
     # Path (or bare command name on PATH) for the local Claude Code
     # binary. When resolvable and responsive, the ClaudeCodeBridge
