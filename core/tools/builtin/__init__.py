@@ -36,6 +36,7 @@ from core.tools.builtin.sentinel import (
     make_sentinel_tools,
 )
 from core.tools.builtin.shell import shell_exec_tool
+from core.tools.builtin.telegram import TELEGRAM_TOOLS
 from core.tools.builtin.ugc import UGC_TOOLS
 from core.tools.builtin.xauusd import (
     XAUUSD_TOOLS,
@@ -57,6 +58,7 @@ __all__ = [
     "META_ADS_TOOLS",
     "PRINT_DESIGN_TOOLS",
     "SALES_OPS_TOOLS",
+    "TELEGRAM_TOOLS",
     "UGC_TOOLS",
     "XAUUSD_TOOLS",
     "BrowserSessionManager",
