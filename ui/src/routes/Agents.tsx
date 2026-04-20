@@ -34,6 +34,7 @@ const AGENT_AVATAR: Record<string, string> = {
   elementor_converter_agent: "🧩",
   file_organization_agent: "🗂️",
   google_ads_agent: "🔎",
+  inbox_triage_agent: "📬",
   meta_ads_agent: "📣",
   pitch_deck_agent: "📊",
   sales_ops_agent: "💼",
@@ -57,6 +58,8 @@ const AGENT_BLURB: Record<string, string> = {
     "Cleans up and organizes files in your workspace.",
   google_ads_agent:
     "Runs Google Ads search campaigns end-to-end.",
+  inbox_triage_agent:
+    "Reads your Gmail, classifies each thread, and pre-drafts replies for approval.",
   meta_ads_agent:
     "Runs Meta (Facebook/Instagram) ad campaigns end-to-end.",
   pitch_deck_agent:
