@@ -5,10 +5,12 @@ import {
   addMemory,
   clearMemory,
   deleteMemory,
+  distillMemory,
   fetchMemory,
   pilk,
   type MemoryEntry,
   type MemoryKind,
+  type MemoryProposal,
 } from "../state/api";
 import { humanizeMemoryKind, memorySectionLabel } from "../lib/humanize";
 
@@ -150,27 +152,31 @@ export default function Memory() {
         </div>
       </header>
 
-      <Link
-        to="/chat?start=interview"
-        className="memory-interview-cta"
-      >
-        <span className="memory-interview-cta-icon" aria-hidden>
-          💬
-        </span>
-        <div className="memory-interview-cta-body">
-          <div className="memory-interview-cta-title">
-            Let PILK get to know you
+      <div className="memory-learn-row">
+        <Link
+          to="/chat?start=interview"
+          className="memory-interview-cta"
+        >
+          <span className="memory-interview-cta-icon" aria-hidden>
+            💬
+          </span>
+          <div className="memory-interview-cta-body">
+            <div className="memory-interview-cta-title">
+              Let PILK get to know you
+            </div>
+            <div className="memory-interview-cta-sub">
+              Kicks off a conversational interview — PILK asks one
+              question at a time, branches on your answers, and saves
+              what it learns here with your confirmation.
+            </div>
           </div>
-          <div className="memory-interview-cta-sub">
-            Kicks off a conversational interview — PILK asks one question
-            at a time, branches on your answers, and saves what it learns
-            here with your confirmation.
-          </div>
-        </div>
-        <span className="memory-interview-cta-chev" aria-hidden>
-          →
-        </span>
-      </Link>
+          <span className="memory-interview-cta-chev" aria-hidden>
+            →
+          </span>
+        </Link>
+
+        <DistillPanel onSaved={load} />
+      </div>
 
       <section className="memory-composer">
         <div className="memory-composer-row">
@@ -252,6 +258,137 @@ export default function Memory() {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** "Analyze recent conversations" panel on /memory. Asks the backend
+ * to run a Haiku call across the last 30 plans, surfaces the proposed
+ * memory entries, and lets the operator save each one individually. */
+function DistillPanel({ onSaved }: { onSaved: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [proposals, setProposals] = useState<MemoryProposal[] | null>(null);
+  const [savedIdx, setSavedIdx] = useState<Set<number>>(new Set());
+  const [dismissedIdx, setDismissedIdx] = useState<Set<number>>(new Set());
+
+  const run = async () => {
+    setBusy(true);
+    setErr(null);
+    setProposals(null);
+    setSavedIdx(new Set());
+    setDismissedIdx(new Set());
+    try {
+      const r = await distillMemory(30);
+      setProposals(r.proposals);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = async (i: number) => {
+    if (proposals === null) return;
+    const p = proposals[i];
+    try {
+      await addMemory({ kind: p.kind, title: p.title, body: p.body });
+      setSavedIdx((prev) => new Set(prev).add(i));
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const skip = (i: number) => {
+    setDismissedIdx((prev) => new Set(prev).add(i));
+  };
+
+  return (
+    <div className="memory-distill-cta">
+      <button
+        type="button"
+        className="memory-distill-btn"
+        onClick={() => void run()}
+        disabled={busy}
+      >
+        <span className="memory-distill-btn-icon" aria-hidden>
+          🧠
+        </span>
+        <div className="memory-distill-btn-body">
+          <div className="memory-distill-btn-title">
+            {busy ? "Analyzing…" : "Analyze recent conversations"}
+          </div>
+          <div className="memory-distill-btn-sub">
+            Let PILK skim your last 30 sessions and propose durable
+            things worth remembering. Nothing saves until you approve.
+          </div>
+        </div>
+      </button>
+
+      {err && <div className="settings-error">{err}</div>}
+
+      {proposals !== null && proposals.length === 0 && (
+        <div className="memory-distill-empty">
+          Nothing durable to extract yet — keep chatting with PILK and
+          try again later.
+        </div>
+      )}
+
+      {proposals !== null && proposals.length > 0 && (
+        <ul className="memory-distill-list">
+          {proposals.map((p, i) => {
+            if (dismissedIdx.has(i)) return null;
+            const saved = savedIdx.has(i);
+            return (
+              <li
+                key={`${p.kind}-${i}`}
+                className={`memory-distill-item${saved ? " memory-distill-item--saved" : ""}`}
+              >
+                <div className="memory-distill-item-head">
+                  <span className={`memory-distill-kind memory-distill-kind--${p.kind}`}>
+                    {humanizeMemoryKind(p.kind)}
+                  </span>
+                  <span className="memory-distill-confidence">
+                    {Math.round(p.confidence * 100)}% confident
+                  </span>
+                </div>
+                <div className="memory-distill-title">{p.title}</div>
+                {p.body && (
+                  <div className="memory-distill-body">{p.body}</div>
+                )}
+                {p.rationale && (
+                  <div className="memory-distill-rationale">
+                    <em>Why:</em> {p.rationale}
+                  </div>
+                )}
+                <div className="memory-distill-actions">
+                  {saved ? (
+                    <span className="memory-distill-saved">✓ Saved</span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="memory-distill-skip"
+                        onClick={() => skip(i)}
+                      >
+                        Skip
+                      </button>
+                      <button
+                        type="button"
+                        className="memory-distill-save"
+                        onClick={() => void save(i)}
+                      >
+                        Save to memory
+                      </button>
+                    </>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
