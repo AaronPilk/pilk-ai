@@ -831,6 +831,22 @@ export async function fetchCodingEngines(): Promise<{
   return r.json();
 }
 
+export interface InstalledPack {
+  name: string;
+  kind: "skill" | "plugin";
+  path: string;
+  description: string;
+}
+
+export async function fetchInstalledSkills(): Promise<{
+  skills: InstalledPack[];
+  plugins: InstalledPack[];
+}> {
+  const r = await apiFetch(`/coding/skills`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 async function detail(r: Response): Promise<string> {
   try {
     const body = await r.json();

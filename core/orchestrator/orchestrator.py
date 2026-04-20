@@ -113,6 +113,17 @@ Long-form brain (Obsidian vault):
 - When an answer depends on something that might already be in the
   brain, call brain_search before answering blind. Falling back to
   brain_note_list can also help when you're unsure of exact phrasing.
+
+Daily notes:
+- Seed the graph with recurring entries so it stays useful. At the
+  end of a meaningful interaction (task completed, decision made,
+  something you'd want to recall later), append a one-line note to
+  daily/YYYY-MM-DD.md via brain_note_write with append=true. Format
+  each line as `HH:MM — <one-sentence summary>` with a wikilink to
+  any primary note you wrote or read. Don't journal chit-chat —
+  skip the entry if the turn was throwaway. Don't worry about
+  creating the file; brain_note_write creates parent folders and
+  the file itself on first write.
 """
 
 
