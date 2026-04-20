@@ -103,6 +103,7 @@ from core.tools.builtin import (
     META_ADS_TOOLS,
     PRINT_DESIGN_TOOLS,
     SALES_OPS_TOOLS,
+    TELEGRAM_TOOLS,
     UGC_TOOLS,
     XAUUSD_TOOLS,
     BrowserSessionManager,
@@ -351,6 +352,18 @@ async def lifespan(app: FastAPI):
     for t in UGC_TOOLS:
         registry.register(t)
     log.info("ugc_registered", tools=[t.name for t in UGC_TOOLS])
+
+    # Telegram notification toolkit — every agent (and PILK itself)
+    # can push to the operator without waiting for a chat turn. COMMS
+    # risk on every send so the approval queue still gates noise.
+    # Unconditional registration; handlers surface "not configured"
+    # until telegram_bot_token + telegram_chat_id land in Settings.
+    for t in TELEGRAM_TOOLS:
+        registry.register(t)
+    log.info(
+        "telegram_registered",
+        tools=[t.name for t in TELEGRAM_TOOLS],
+    )
 
     # Web-design toolkit — html_export emits the static bundle; the
     # wordpress_push tool ships it to a client's WP site as an Elementor

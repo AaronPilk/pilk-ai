@@ -178,6 +178,27 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         ),
         "env": "APIFY_API_TOKEN",
     },
+    "telegram_bot_token": {
+        "label": "Telegram — bot token",
+        "description": (
+            "Bot token from @BotFather on Telegram. Create a new bot "
+            "with /newbot, copy the token it hands back. This is how "
+            "PILK (and every agent) pushes notifications to the "
+            "operator without waiting for the operator to initiate a "
+            "conversation."
+        ),
+        "env": "TELEGRAM_BOT_TOKEN",
+    },
+    "telegram_chat_id": {
+        "label": "Telegram — operator chat ID",
+        "description": (
+            "Numeric chat ID PILK sends to. To get yours: message the "
+            "bot once, then visit "
+            "https://api.telegram.org/bot<token>/getUpdates and copy "
+            "the `chat.id` value from the first update."
+        ),
+        "env": "TELEGRAM_CHAT_ID",
+    },
     "google_ads_developer_token": {
         "label": "Google Ads — developer token",
         "description": (

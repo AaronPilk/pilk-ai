@@ -210,6 +210,25 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Telegram (system-wide push channel from PILK → operator) ─
+    # Any agent — or PILK itself — can ping the operator via Telegram
+    # when it needs a human-in-the-loop (approval request, campaign
+    # report ready, sentinel incident, etc.). Single-tenant: one bot
+    # + one chat_id = one operator. Per-user bots land later alongside
+    # the rest of the BYOK story.
+    telegram_bot_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "TELEGRAM_BOT_TOKEN", "PILK_TELEGRAM_BOT_TOKEN",
+        ),
+    )
+    telegram_chat_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "TELEGRAM_CHAT_ID", "PILK_TELEGRAM_CHAT_ID",
+        ),
+    )
+
     # ── Apify (ugc_scout_agent — IG / TikTok / Facebook scraper) ─
     # Apify personal API token from console.apify.com → Settings →
     # Integrations. The UGC scout agent drives actors like
