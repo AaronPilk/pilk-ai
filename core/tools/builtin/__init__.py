@@ -13,6 +13,7 @@ from core.tools.builtin.finance import (
     trade_execute_tool,
 )
 from core.tools.builtin.fs import fs_read_tool, fs_write_tool
+from core.tools.builtin.google_ads import GOOGLE_ADS_TOOLS
 from core.tools.builtin.llm_ask import make_llm_ask_tool
 from core.tools.builtin.memory_remember import make_memory_remember_tool
 from core.tools.builtin.meta_ads import META_ADS_TOOLS
@@ -51,6 +52,7 @@ from core.tools.builtin.xauusd import (
 
 __all__ = [
     "CREATIVE_TOOLS",
+    "GOOGLE_ADS_TOOLS",
     "META_ADS_TOOLS",
     "SALES_OPS_TOOLS",
     "UGC_TOOLS",

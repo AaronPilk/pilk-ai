@@ -178,6 +178,62 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         ),
         "env": "APIFY_API_TOKEN",
     },
+    "google_ads_developer_token": {
+        "label": "Google Ads — developer token",
+        "description": (
+            "Developer token from ads.google.com → Tools → API Center. "
+            "Level test-account or basic is fine for us; we don't need "
+            "standard unless we're building for external advertisers."
+        ),
+        "env": "GOOGLE_ADS_DEVELOPER_TOKEN",
+    },
+    "google_ads_client_id": {
+        "label": "Google Ads — OAuth client ID",
+        "description": (
+            "OAuth client ID from console.cloud.google.com → APIs & "
+            "Services → Credentials. A desktop-app credential works; "
+            "the client secret is paired in the field below."
+        ),
+        "env": "GOOGLE_ADS_CLIENT_ID",
+    },
+    "google_ads_client_secret": {
+        "label": "Google Ads — OAuth client secret",
+        "description": (
+            "OAuth client secret paired with the client ID above. Used "
+            "with the refresh token to mint short-lived access tokens "
+            "for API calls — never sent to Google's Ads API itself."
+        ),
+        "env": "GOOGLE_ADS_CLIENT_SECRET",
+    },
+    "google_ads_refresh_token": {
+        "label": "Google Ads — refresh token",
+        "description": (
+            "Long-lived refresh token. Generate once via the OAuth "
+            "Playground (adwords scope) or `gcloud auth`. Rotates "
+            "rarely; the client re-mints access tokens on demand and "
+            "caches them for ~50 minutes."
+        ),
+        "env": "GOOGLE_ADS_REFRESH_TOKEN",
+    },
+    "google_ads_customer_id": {
+        "label": "Google Ads — customer ID",
+        "description": (
+            "Target Google Ads account number (digits only, no dashes). "
+            "Find it in the upper-right of ads.google.com. Every "
+            "campaign / ad group / ad call scopes to this customer."
+        ),
+        "env": "GOOGLE_ADS_CUSTOMER_ID",
+    },
+    "google_ads_login_customer_id": {
+        "label": "Google Ads — manager ID (optional)",
+        "description": (
+            "MCC (manager) account ID when the refresh token was "
+            "issued against a manager and the target customer is a "
+            "sub-account. Leave blank if the token is on the same "
+            "account as the target."
+        ),
+        "env": "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
+    },
 }
 
 
