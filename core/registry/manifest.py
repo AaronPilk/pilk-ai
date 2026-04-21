@@ -128,6 +128,18 @@ class Manifest(BaseModel):
             "only touch local state leave this empty."
         ),
     )
+    preferred_tier: Literal["light", "standard", "premium"] | None = Field(
+        default=None,
+        description=(
+            "Pin the governor's tier choice for this agent's runs. Useful "
+            "when the agent follows a fixed playbook and doesn't need "
+            "Sonnet-grade reasoning on each planner turn — set to "
+            "'light' to route through the $0-marginal Claude Code CLI "
+            "provider, keeping a dozen-turn workflow near-free. None "
+            "(default) lets the governor classify every run by its "
+            "goal text."
+        ),
+    )
 
     @field_validator("name")
     @classmethod

@@ -73,6 +73,12 @@ SCOPE_CATALOG: dict[str, ScopeSpec] = {
         label="Create or edit Google Slides presentations",
         risk_hint=RiskClass.NET_WRITE,
     ),
+    "sheets.edit": ScopeSpec(
+        name="sheets.edit",
+        scope_uri="https://www.googleapis.com/auth/spreadsheets",
+        label="Create or edit Google Sheets",
+        risk_hint=RiskClass.NET_WRITE,
+    ),
     "drive.file": ScopeSpec(
         # Scoped access to only the files the app creates — required
         # for Slides because creating a presentation also creates a
@@ -117,6 +123,9 @@ _GROUP_SCOPES_USER: dict[str, list[str]] = {
     # Slides needs presentations + drive.file (Slides API creates the
     # deck via Drive's file metadata layer).
     "slides": ["slides.edit", "drive.file"],
+    # Sheets mirrors Slides — spreadsheets + drive.file so the sheet
+    # lands as a real Drive file with a shareable URL.
+    "sheets": ["sheets.edit", "drive.file"],
 }
 
 # UI metadata: group name → human label for the Expand-access modal.
@@ -125,6 +134,7 @@ SCOPE_GROUP_LABELS: dict[str, str] = {
     "drive": "Drive",
     "calendar": "Calendar",
     "slides": "Slides",
+    "sheets": "Sheets",
 }
 
 

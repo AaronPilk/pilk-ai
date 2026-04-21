@@ -61,5 +61,6 @@ def test_provider_exposes_group_catalog() -> None:
         "drive",
         "calendar",
         "slides",
+        "sheets",
     }
     assert google_provider.default_scope_groups == ("mail",)

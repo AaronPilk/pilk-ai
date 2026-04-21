@@ -69,6 +69,7 @@ from core.integrations.google import (
     make_gmail_tools,
     migrate_legacy_if_needed,
 )
+from core.integrations.google.sheets import make_sheets_tools
 from core.integrations.google.slides import make_slides_tools
 from core.integrations.legacy_migration import migrate_batch_k_google_files
 from core.integrations.linkedin import make_linkedin_tools
@@ -449,7 +450,12 @@ async def lifespan(app: FastAPI):
     # slides.edit + drive.file scopes on the connected Google account.
     for t in make_slides_tools(accounts):
         registry.register(t)
-    log.info("google_drive_calendar_slides_registered")
+    # Sheets — user-role only. Two tools (sheets_create,
+    # sheets_append_rows). Needs the sheets.edit + drive.file scopes;
+    # the operator widens scope groups per-link in Settings.
+    for t in make_sheets_tools(accounts):
+        registry.register(t)
+    log.info("google_drive_calendar_slides_sheets_registered")
 
     # Slack — one user-role tool today (post). Registers unconditionally;
     # the tool surfaces a "connect it in Settings" message at call time

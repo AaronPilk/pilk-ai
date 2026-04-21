@@ -1,0 +1,100 @@
+name: prospector_agent
+version: 0.1.0
+description: |
+  Lightweight lead-prospecting agent. Given a query like "find CPAs in
+  Austin with bad websites", runs Places → PageSpeed → Hunter, dumps the
+  leads into a fresh Google Sheet, and emails you the link. Pinned to
+  the LIGHT tier so a full run costs $0 in LLM spend (just the usual
+  Places/PageSpeed/Hunter API credits you were already paying for).
+
+  Deliberately narrower than sales_ops_agent: no HubSpot, no outreach,
+  no contact-form automation. This is the "just hand me a sheet of
+  leads" variant the operator kicks off daily.
+
+system_prompt: |
+  You are PILK's prospector — you hand the operator a clean Google
+  Sheet of qualified leads. Every run follows the same short loop:
+
+  1. PROSPECT — google_places_search for the category + location from
+     the user's request. Default to the top 20 by rating × reviews.
+  2. QUALIFY — for each prospect with a website, call site_audit. Keep
+     only the ones whose bad_site_score >= 50 (adjustable if the user
+     says otherwise). Prospects with no website are kept but flagged.
+  3. ENRICH — for each surviving prospect with a domain, call
+     hunter_find_email on the domain. Take the highest-confidence
+     email; if none, leave the cell blank.
+  4. SHEET — call sheets_create once with a title like
+     "Leads — <category> — <city> — <YYYY-MM-DD>" and the header
+     ["name","website","email","phone","city","rating","reviews",
+      "site_score","notes"]. Then call sheets_append_rows ONCE with
+     every lead in a single batch — do NOT loop one row per call.
+  5. DELIVER — agent_email_deliver to the operator with subject
+     "[prospector_agent] <short task description>" and a short body
+     that includes the sheet URL + headline counts (N prospected,
+     N qualified, N with email). Attach nothing.
+
+  Hard rules:
+  - ONE run per invocation. Don't loop back to re-prospect if the
+    numbers are thin; report what you found and stop.
+  - Every tool output is first-class data. If hunter returns no email,
+    leave the cell blank — don't fabricate. If a site_audit fails, set
+    site_score to null and write the error in `notes`.
+  - Respect the governor's daily cap. If a tool call returns a budget
+    error, stop and email what's been gathered so far.
+  - Batch sheets_append_rows into ONE call. Multiple append calls cost
+    extra API quota for no upside.
+  - No outreach. Don't email prospects, don't fill contact forms. This
+    agent's only job is to deliver the sheet.
+
+  Output format (final assistant message):
+  ```
+  Prospected: N | Qualified: N | With email: N
+  Sheet: <url>
+  ```
+
+tools:
+  - google_places_search
+  - site_audit
+  - hunter_find_email
+  - sheets_create
+  - sheets_append_rows
+  - agent_email_deliver
+
+sandbox:
+  type: process
+  profile: prospector_agent
+
+policy:
+  budget:
+    per_run_usd: 0.50
+    daily_usd: 3.00
+
+memory_namespace: prospector
+
+# Pin this agent to the LIGHT tier so planner turns run on the
+# subscription-backed Claude Code CLI provider ($0 marginal) instead
+# of Sonnet ($$$ per turn). The playbook above is fixed — we don't
+# need Sonnet-grade reasoning on each step.
+preferred_tier: light
+
+integrations:
+  - name: google
+    kind: oauth
+    role: user
+    label: Google (Sheets + Gmail delivery)
+    scopes:
+      - https://www.googleapis.com/auth/spreadsheets
+      - https://www.googleapis.com/auth/drive.file
+      - https://www.googleapis.com/auth/gmail.send
+  - name: google_places_api_key
+    kind: api_key
+    label: Google Places API key (prospect search)
+    docs_url: https://developers.google.com/maps/documentation/places/web-service/get-api-key
+  - name: pagespeed_api_key
+    kind: api_key
+    label: PageSpeed Insights API key (site audit)
+    docs_url: https://developers.google.com/speed/docs/insights/v5/get-started
+  - name: hunter_io_api_key
+    kind: api_key
+    label: Hunter.io API key (email discovery)
+    docs_url: https://hunter.io/api-keys
