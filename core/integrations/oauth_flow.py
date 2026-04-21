@@ -61,13 +61,27 @@ class OAuthFlowManager:
         client_loader: Callable[[str], tuple[str, str] | None],
         public_base_url: str,
         callback_path: str = "/integrations/accounts/oauth/callback",
+        setup_hint_loader: Callable[[str], str | None] | None = None,
     ) -> None:
         self._providers = providers
         self._accounts = accounts
         self._client_loader = client_loader
+        self._setup_hint_loader = setup_hint_loader
         self._callback_url = public_base_url.rstrip("/") + callback_path
         self._pending: dict[str, _PendingState] = {}
         self._lock = Lock()
+
+    # ── configuration probes ──────────────────────────────────────
+
+    def is_configured(self, provider_name: str) -> bool:
+        """Whether the provider has OAuth client credentials loadable."""
+        return self._client_loader(provider_name) is not None
+
+    def setup_hint(self, provider_name: str) -> str | None:
+        """Operator-facing instruction for wiring a provider's credentials."""
+        if self._setup_hint_loader is None:
+            return None
+        return self._setup_hint_loader(provider_name)
 
     # ── begin ─────────────────────────────────────────────────────
 
@@ -88,9 +102,11 @@ class OAuthFlowManager:
             )
         client = self._client_loader(provider_name)
         if client is None:
-            raise RuntimeError(
-                f"no OAuth client configured for provider {provider_name}"
-            )
+            hint = self.setup_hint(provider_name)
+            msg = f"no OAuth client configured for provider {provider_name}"
+            if hint:
+                msg = f"{msg} — {hint}"
+            raise RuntimeError(msg)
         client_id, _client_secret = client
         groups = list(scope_groups) if scope_groups else list(provider.default_scope_groups)
         state = secrets.token_urlsafe(24)

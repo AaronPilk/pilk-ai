@@ -39,7 +39,12 @@ def _fake_provider() -> OAuthProvider:
     )
 
 
-def _manager(tmp_path: Path) -> tuple[OAuthFlowManager, AccountsStore]:
+def _manager(
+    tmp_path: Path,
+    *,
+    client_loader=None,
+    setup_hint_loader=None,
+) -> tuple[OAuthFlowManager, AccountsStore]:
     store = AccountsStore(tmp_path)
     store.ensure_layout()
     registry = ProviderRegistry()
@@ -47,7 +52,9 @@ def _manager(tmp_path: Path) -> tuple[OAuthFlowManager, AccountsStore]:
     manager = OAuthFlowManager(
         providers=registry,
         accounts=store,
-        client_loader=lambda name: ("test-client-id", "test-client-secret"),
+        client_loader=client_loader
+        or (lambda name: ("test-client-id", "test-client-secret")),
+        setup_hint_loader=setup_hint_loader,
         public_base_url="http://127.0.0.1:7424",
     )
     return manager, store
@@ -112,3 +119,36 @@ async def test_complete_errors_without_refresh_token(
     )
     with pytest.raises(RuntimeError):
         await manager.complete(code="c", state=started["state"])
+
+
+def test_is_configured_reflects_client_loader(tmp_path: Path) -> None:
+    manager, _ = _manager(tmp_path)
+    assert manager.is_configured("demo") is True
+
+    no_client, _ = _manager(tmp_path, client_loader=lambda _name: None)
+    assert no_client.is_configured("demo") is False
+
+
+def test_start_error_includes_setup_hint(tmp_path: Path) -> None:
+    manager, _ = _manager(
+        tmp_path,
+        client_loader=lambda _name: None,
+        setup_hint_loader=lambda _name: "Set DEMO_CLIENT_ID + DEMO_CLIENT_SECRET.",
+    )
+    with pytest.raises(RuntimeError) as exc_info:
+        manager.start(provider_name="demo", role="user")
+    msg = str(exc_info.value)
+    assert "no OAuth client configured for provider demo" in msg
+    assert "Set DEMO_CLIENT_ID + DEMO_CLIENT_SECRET." in msg
+
+
+def test_start_error_without_hint_falls_back_to_generic(tmp_path: Path) -> None:
+    manager, _ = _manager(tmp_path, client_loader=lambda _name: None)
+    with pytest.raises(RuntimeError) as exc_info:
+        manager.start(provider_name="demo", role="user")
+    assert str(exc_info.value) == "no OAuth client configured for provider demo"
+
+
+def test_setup_hint_is_none_without_loader(tmp_path: Path) -> None:
+    manager, _ = _manager(tmp_path)
+    assert manager.setup_hint("demo") is None

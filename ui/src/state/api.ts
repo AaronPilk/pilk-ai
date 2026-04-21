@@ -406,6 +406,8 @@ export interface ProviderInfo {
   scopes: ProviderScope[];
   scope_groups: ProviderScopeGroup[];
   default_scope_groups: string[];
+  configured: boolean;
+  setup_hint: string | null;
 }
 
 export interface ConnectedAccount {

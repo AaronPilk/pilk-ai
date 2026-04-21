@@ -29,6 +29,35 @@ def load_client(provider: str, *, settings) -> tuple[str, str] | None:
     return None
 
 
+def is_configured(provider: str, *, settings) -> bool:
+    """Whether OAuth client credentials are loadable for `provider`."""
+    return load_client(provider, settings=settings) is not None
+
+
+def setup_hint(provider: str, *, settings) -> str | None:
+    """One-line human instruction for wiring the provider's OAuth client.
+
+    Used by the UI to replace the generic "not configured" dead-end with
+    an actionable next step, and embedded in the RuntimeError the OAuth
+    flow raises when `start` is invoked on an unconfigured provider.
+    """
+    if provider == "google":
+        path = getattr(settings, "google_client_secret_path", "pilk-google-client.json")
+        return (
+            f"Place a Google Cloud Desktop OAuth client JSON at `{path}`, "
+            "or set PILK_GOOGLE_CLIENT_ID + PILK_GOOGLE_CLIENT_SECRET."
+        )
+    if provider == "slack":
+        return "Set PILK_SLACK_CLIENT_ID + PILK_SLACK_CLIENT_SECRET."
+    if provider == "linkedin":
+        return "Set PILK_LINKEDIN_CLIENT_ID + PILK_LINKEDIN_CLIENT_SECRET."
+    if provider == "x":
+        return "Set PILK_X_CLIENT_ID + PILK_X_CLIENT_SECRET."
+    if provider == "meta":
+        return "Set PILK_META_CLIENT_ID + PILK_META_CLIENT_SECRET."
+    return None
+
+
 def _load_env_pair(id_var: str, secret_var: str) -> tuple[str, str] | None:
     cid = os.getenv(id_var)
     csec = os.getenv(secret_var)

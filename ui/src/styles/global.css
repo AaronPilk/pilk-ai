@@ -2596,6 +2596,12 @@ body {
   text-transform: uppercase;
   color: var(--text-faint);
   font-weight: 700;
+  margin-bottom: 6px;
+}
+.accounts-connect-note {
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.5;
   margin-bottom: 10px;
 }
 .accounts-provider-grid {
@@ -2619,6 +2625,23 @@ body {
 .accounts-provider-chip:hover {
   background: var(--surface-active);
   border-color: var(--border-strong);
+}
+.accounts-provider-chip--disabled,
+.accounts-provider-chip--disabled:hover {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: var(--surface);
+  border-color: var(--border);
+}
+.accounts-provider-chip-tag {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
 }
 .accounts-provider-chip-label {
   font-weight: 500;
