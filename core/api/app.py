@@ -49,6 +49,7 @@ from core.api.routes.triggers import router as triggers_router
 from core.api.routes.voice import router as voice_router
 from core.api.routes.xauusd_settings import router as xauusd_settings_router
 from core.api.ws import router as ws_router
+from core.chat import AttachmentStore
 from core.clients import ClientStore, set_client_store
 from core.coding import (
     AgentSDKEngine,
@@ -109,7 +110,6 @@ from core.secrets import (
     IntegrationSecretsStore,
     set_integration_secrets_store,
 )
-from core.chat import AttachmentStore
 from core.sentinel import HeartbeatStore, IncidentStore, Supervisor
 from core.sentinel.notify import Notifier as SentinelNotifier
 from core.sentinel.remediate import RemediationResult

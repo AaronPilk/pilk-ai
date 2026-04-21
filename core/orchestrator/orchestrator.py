@@ -168,7 +168,7 @@ class RunContext:
     # on the attachment store. An image in this list forces the
     # tier choice up to at least STANDARD (the LIGHT tier runs through
     # the Claude Code CLI, which has no vision surface).
-    attachments: list["ChatAttachment"] = field(default_factory=list)
+    attachments: list[ChatAttachment] = field(default_factory=list)
 
 
 @dataclass

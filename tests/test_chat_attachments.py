@@ -14,14 +14,12 @@ import pytest
 
 from core.chat.attachments import (
     MAX_ATTACHMENT_BYTES,
-    Attachment,
     AttachmentError,
     AttachmentStore,
     attachment_kind_from_mime,
     is_allowed_mime,
 )
 from core.orchestrator.orchestrator import ChatAttachment, _build_user_content
-
 
 # ── MIME classification ─────────────────────────────────────────────
 
