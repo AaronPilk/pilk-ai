@@ -1,0 +1,8 @@
+name: _template
+description: Copy this folder, rename, edit.
+agent_name: inbox_triage_agent
+goal: Describe exactly what you want the agent to do.
+enabled: false
+schedule:
+  kind: cron
+  expression: "0 9 * * 1-5"   # 09:00 UTC weekdays

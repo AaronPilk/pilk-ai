@@ -31,7 +31,9 @@ import {
   fetchIntegrationSecrets,
   fetchProviders,
   fetchTelegramBotInfo,
+  fetchTriggers,
   fetchXAUUSDSettings,
+  fireTrigger,
   grantAgentAccess,
   pilk,
   revokeAgentAccess,
@@ -40,6 +42,7 @@ import {
   setGovernorConfig,
   setGovernorOverride,
   setIntegrationSecret,
+  setTriggerEnabled,
   setXAUUSDExecutionMode,
   startOAuthConnection,
   type AgentRow,
@@ -50,6 +53,7 @@ import {
   type IntegrationSecretEntry,
   type OverrideMode,
   type ProviderInfo,
+  type TriggerRow,
   type XAUUSDExecutionMode,
   type XAUUSDSettings,
 } from "../state/api";
@@ -109,6 +113,7 @@ type SettingsCategory =
   | "api-keys"
   | "accounts"
   | "telegram"
+  | "triggers"
   | "voice"
   | "budget"
   | "xauusd"
@@ -143,6 +148,13 @@ const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
     label: "Telegram",
     blurb:
       "How PILK pings you when you're away from the dashboard. Step-through setup with token verify + chat auto-detect.",
+  },
+  {
+    id: "triggers",
+    avatar: "⏰",
+    label: "Triggers",
+    blurb:
+      "Fire agents on a schedule or a hub event — cron rules, event filters, manual one-shot. Turns reactive PILK into a background OS.",
   },
   {
     id: "voice",
@@ -1041,6 +1053,8 @@ export default function Settings() {
 
       {selectedCategory === "telegram" && <TelegramConnectSection />}
 
+      {selectedCategory === "triggers" && <TriggersSection />}
+
       {selectedCategory === "xauusd" && <XAUUSDSettingsSection />}
 
       {selectedCategory === "trust" && (
@@ -1764,6 +1778,146 @@ function XAUUSDSettingsSection() {
       {settings && settings.is_default && (
         <div className="settings-card-hint">
           Using default ({settings.execution_mode}).
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Settings → Triggers.
+ *
+ * Lists every registered trigger (cron + event) with a live
+ * enabled-toggle and a "Run now" button for one-shot firing. Reads
+ * from /triggers on mount; WebSocket ``trigger.fired`` events would
+ * refresh `last_fired_at` in a follow-up, but a manual refresh after
+ * a fire is already enough signal. */
+function TriggersSection(): JSX.Element {
+  const [triggers, setTriggers] = useState<TriggerRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [fireMsg, setFireMsg] = useState<Record<string, string>>({});
+
+  const refresh = useCallback(() => {
+    fetchTriggers()
+      .then((r) => setTriggers(r.triggers))
+      .catch((e: Error) => setErr(e.message));
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const toggle = async (t: TriggerRow) => {
+    if (busy[t.name]) return;
+    setBusy((b) => ({ ...b, [t.name]: true }));
+    setErr(null);
+    try {
+      await setTriggerEnabled(t.name, !t.enabled);
+      refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy((b) => ({ ...b, [t.name]: false }));
+    }
+  };
+
+  const runNow = async (t: TriggerRow) => {
+    if (busy[t.name]) return;
+    setBusy((b) => ({ ...b, [t.name]: true }));
+    setErr(null);
+    setFireMsg((m) => ({ ...m, [t.name]: "" }));
+    try {
+      const out = await fireTrigger(t.name);
+      const status = out.status === "fired"
+        ? "Fired."
+        : out.status === "skipped"
+          ? `Skipped: ${out.reason ?? "busy"}`
+          : out.status === "failed"
+            ? `Failed: ${out.error ?? "unknown error"}`
+            : out.status;
+      setFireMsg((m) => ({ ...m, [t.name]: status }));
+      refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy((b) => ({ ...b, [t.name]: false }));
+    }
+  };
+
+  return (
+    <section className="settings-card">
+      <div className="settings-card-title">Proactive triggers</div>
+      <p className="settings-card-body">
+        Run a registered agent on a cron schedule, or when a
+        specific hub event fires. Drop a <code>manifest.yaml</code>
+        into <code>triggers/</code> and restart — it'll appear
+        here. Disable to pause without deleting the file.
+      </p>
+      {err && <div className="settings-error">{err}</div>}
+      {triggers === null ? (
+        <div className="settings-card-body">Loading…</div>
+      ) : triggers.length === 0 ? (
+        <div className="settings-card-body">
+          No triggers registered. See <code>triggers/README.md</code>.
+        </div>
+      ) : (
+        <div className="triggers-list">
+          {triggers.map((t) => (
+            <div key={t.name} className="triggers-row">
+              <div className="triggers-row-head">
+                <div className="triggers-row-name">
+                  {humanizeAgentName(t.name)}
+                </div>
+                <span
+                  className={`connected-account-pill${
+                    t.enabled ? " connected-account-pill--ok" : ""
+                  }`}
+                >
+                  {t.enabled ? "Enabled" : "Disabled"}
+                </span>
+              </div>
+              {t.description && (
+                <div className="triggers-row-desc">{t.description}</div>
+              )}
+              <div className="triggers-row-meta">
+                <span>
+                  <strong>Agent:</strong> {t.agent_name}
+                </span>
+                <span>
+                  <strong>Schedule:</strong>{" "}
+                  {t.schedule.kind === "cron"
+                    ? `cron "${t.schedule.expression}"`
+                    : `event "${t.schedule.event_type}"`}
+                </span>
+                {t.last_fired_at && (
+                  <span>
+                    <strong>Last fired:</strong> {t.last_fired_at}
+                  </span>
+                )}
+              </div>
+              <div className="triggers-row-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => toggle(t)}
+                  disabled={busy[t.name]}
+                >
+                  {t.enabled ? "Disable" : "Enable"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => runNow(t)}
+                  disabled={busy[t.name]}
+                >
+                  Run now
+                </button>
+                {fireMsg[t.name] && (
+                  <span className="triggers-row-msg">{fireMsg[t.name]}</span>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </section>
