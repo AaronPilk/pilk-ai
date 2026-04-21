@@ -42,6 +42,7 @@ from core.tools.builtin.sentinel import (
 )
 from core.tools.builtin.shell import shell_exec_tool
 from core.tools.builtin.telegram import TELEGRAM_TOOLS
+from core.tools.builtin.timer import make_timer_set_tool
 from core.tools.builtin.ugc import UGC_TOOLS
 from core.tools.builtin.xauusd import (
     XAUUSD_TOOLS,
@@ -91,6 +92,7 @@ __all__ = [
     "make_sentinel_list_incidents_tool",
     "make_sentinel_status_tool",
     "make_sentinel_tools",
+    "make_timer_set_tool",
     "make_xauusd_take_over_tool",
     "nano_banana_generate_tool",
     "net_fetch_tool",

@@ -159,6 +159,24 @@ CREATE TABLE IF NOT EXISTS memory_entries (
 CREATE INDEX IF NOT EXISTS idx_memory_kind ON memory_entries(kind);
 CREATE INDEX IF NOT EXISTS idx_memory_created ON memory_entries(created_at);
 
+-- One-shot timers. Rows are created by the ``timer_set`` tool and
+-- reaped by :class:`core.timers.daemon.TimerDaemon` when the wall
+-- clock reaches ``fires_at``. ``fired_at`` serves as the idempotency
+-- lock — the daemon's DELETE returns rowcount=1 exactly once even if
+-- two poll cycles race across the same due row.
+CREATE TABLE IF NOT EXISTS timers (
+    id           TEXT PRIMARY KEY,
+    message      TEXT NOT NULL,
+    fires_at     TEXT NOT NULL,              -- ISO UTC
+    created_at   TEXT NOT NULL,
+    fired_at     TEXT,                       -- NULL until delivered
+    cancelled_at TEXT,                       -- NULL unless cancelled
+    source       TEXT NOT NULL DEFAULT 'tool'  -- 'tool'|'api'|'operator'
+);
+CREATE INDEX IF NOT EXISTS idx_timers_pending_fire
+    ON timers(fires_at)
+    WHERE fired_at IS NULL AND cancelled_at IS NULL;
+
 -- Proactive triggers. Rows are seeded by the registry on every boot
 -- from ``triggers/<name>/manifest.yaml``; the ``enabled`` column is
 -- operator-mutable at runtime (Settings → Triggers) and overrides the

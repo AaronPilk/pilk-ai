@@ -43,6 +43,7 @@ from core.api.routes.sentinel import router as sentinel_router
 from core.api.routes.supabase import router as supabase_router
 from core.api.routes.system_status import router as system_status_router
 from core.api.routes.telegram import router as telegram_router
+from core.api.routes.timers import router as timers_router
 from core.api.routes.triggers import router as triggers_router
 from core.api.routes.voice import router as voice_router
 from core.api.routes.xauusd_settings import router as xauusd_settings_router
@@ -99,6 +100,8 @@ from core.sentinel import HeartbeatStore, IncidentStore, Supervisor
 from core.sentinel.notify import Notifier as SentinelNotifier
 from core.sentinel.remediate import RemediationResult
 from core.supabase import SupabaseClient
+from core.timers import TimerDaemon
+from core.timers.store import TimerStore
 from core.tools import Gateway, ToolRegistry
 from core.tools.builtin import (
     COMPUTER_CONTROL_TOOLS,
@@ -124,6 +127,7 @@ from core.tools.builtin import (
     make_memory_list_tool,
     make_memory_remember_tool,
     make_sentinel_tools,
+    make_timer_set_tool,
     make_xauusd_take_over_tool,
     net_fetch_tool,
     shell_exec_tool,
@@ -805,6 +809,31 @@ async def lifespan(app: FastAPI):
             reason="orchestrator offline — cannot fire triggers",
         )
 
+    # One-shot timers — restart-resilient reminders (SQLite-backed).
+    # The daemon resolves a fresh Telegram client on every fire via a
+    # closure so runtime secret updates land without a daemon restart.
+    timers = TimerStore(settings.db_path)
+    registry.register(make_timer_set_tool(timers))
+
+    def _timer_telegram_client():
+        from core.integrations.telegram import TelegramClient, TelegramConfig
+        from core.secrets import resolve_secret
+        token = resolve_secret("telegram_bot_token", settings.telegram_bot_token)
+        chat_id = resolve_secret("telegram_chat_id", settings.telegram_chat_id)
+        if not token or not chat_id:
+            return None
+        return TelegramClient(
+            TelegramConfig(bot_token=token, chat_id=chat_id)
+        )
+
+    timer_daemon = TimerDaemon(
+        store=timers,
+        broadcast=broadcast,
+        telegram_client_fn=_timer_telegram_client,
+    )
+    await timer_daemon.start()
+    log.info("timer_daemon_ready")
+
     voice_state = VoiceStateMachine(broadcast=broadcast)
     stt: STTDriver = (
         OpenAISTT(settings.openai_api_key) if settings.openai_api_key else StubSTT()
@@ -867,6 +896,8 @@ async def lifespan(app: FastAPI):
     app.state.sentinel_incidents = sentinel_incidents
     app.state.triggers = triggers
     app.state.trigger_scheduler = trigger_scheduler
+    app.state.timers = timers
+    app.state.timer_daemon = timer_daemon
     # Expose the broadcast callable to routes that emit their own events
     # (e.g. `sentinel.incident.acked`). Nothing else needs this; routes
     # that already had a direct handle (orchestrator, approvals) still
@@ -960,6 +991,7 @@ async def lifespan(app: FastAPI):
         await sentinel.stop()
         if trigger_scheduler is not None:
             await trigger_scheduler.stop()
+        await timer_daemon.stop()
         if telegram_bridge is not None:
             await telegram_bridge.stop()
         if telegram_approvals_bridge is not None:
@@ -1003,6 +1035,7 @@ def create_app() -> FastAPI:
     app.include_router(approvals_router)
     app.include_router(voice_router)
     app.include_router(telegram_router)
+    app.include_router(timers_router)
     app.include_router(triggers_router)
     app.include_router(browser_router)
     app.include_router(governor_router)
