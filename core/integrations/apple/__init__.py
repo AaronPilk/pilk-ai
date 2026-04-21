@@ -1,31 +1,42 @@
-"""Apple Messages — local iMessage/SMS reader.
+"""Apple on-device integrations — Messages + Contacts.
 
-Not an OAuth integration. Messages.app on macOS stores threads + text
-in a local SQLite database at ~/Library/Messages/chat.db. PILK opens
-that file read-only and surfaces recent threads on Home. It only
-works when:
+Not OAuth. Both talk to local macOS surfaces:
 
-- PILK runs on the user's macOS machine (the Mac that owns the
-  account signed into Messages)
-- The Python process has been granted Full Disk Access in
-  System Settings → Privacy & Security → Full Disk Access
+- Messages.app owns ``~/Library/Messages/chat.db`` (read-only SQLite)
+  and an AppleScript interface for sending. The reader needs Full
+  Disk Access; the sender needs Automation permission for Messages.
+- Contacts.app owns the address book and exposes read via AppleScript.
+  First call prompts for Automation + Contacts permission.
 
-Read-only in v1. Sending iMessages programmatically requires
-AppleScript shelling into Messages.app and is deferred.
+Both surfaces only work when PILK runs on the Mac whose apps are
+signed in. On non-macOS the tools register but every call cleanly
+surfaces ``macOS-only`` rather than crashing.
 """
 
+from core.integrations.apple.contacts import (
+    ContactsSearchError,
+    make_contacts_tools,
+    search_contacts,
+)
 from core.integrations.apple.messages import (
+    MessagesSendError,
     MessagesStatus,
     check_messages_status,
     make_messages_tools,
     read_thread,
     recent_threads,
+    send_message,
 )
 
 __all__ = [
+    "ContactsSearchError",
+    "MessagesSendError",
     "MessagesStatus",
     "check_messages_status",
+    "make_contacts_tools",
     "make_messages_tools",
     "read_thread",
     "recent_threads",
+    "search_contacts",
+    "send_message",
 ]
