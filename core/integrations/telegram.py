@@ -72,10 +72,15 @@ class TelegramClient:
         chat_id: str | None = None,
         parse_mode: str | None = None,
         disable_web_page_preview: bool = True,
+        reply_markup: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Send a plain text / markdown message. Long messages get
         truncated — callers that need to deliver a long document
-        should use send_document with a file instead."""
+        should use send_document with a file instead.
+
+        ``reply_markup`` is an inline keyboard or reply keyboard spec
+        (see https://core.telegram.org/bots/api#inlinekeyboardmarkup).
+        Approval cards use this to attach Approve / Reject buttons."""
         body_text = text or ""
         if len(body_text) > TELEGRAM_MESSAGE_MAX_CHARS:
             # Compute the exact prefix length from the suffix so the
@@ -95,9 +100,70 @@ class TelegramClient:
             # Telegram supports MarkdownV2 + HTML. MarkdownV2 requires
             # escaping special characters; leave that to the caller.
             payload["parse_mode"] = parse_mode
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
         async with httpx.AsyncClient(timeout=self._timeout) as c:
             r = await c.post(self._url("sendMessage"), json=payload)
         return _decode(r, "sendMessage")
+
+    async def answer_callback_query(
+        self,
+        callback_query_id: str,
+        *,
+        text: str | None = None,
+        show_alert: bool = False,
+    ) -> dict[str, Any]:
+        """Acknowledge an inline-button tap.
+
+        Telegram requires every ``callback_query`` update to be answered
+        within ~15s; otherwise the button on the client shows a
+        perpetual loading spinner. ``text`` renders as a short toast on
+        the operator's phone (or an alert if ``show_alert``)."""
+        payload: dict[str, Any] = {"callback_query_id": callback_query_id}
+        if text:
+            # Telegram caps the toast text at 200 chars; trim silently
+            # so a verbose caller doesn't trigger a 400.
+            payload["text"] = text[:200]
+        if show_alert:
+            payload["show_alert"] = True
+        async with httpx.AsyncClient(timeout=self._timeout) as c:
+            r = await c.post(self._url("answerCallbackQuery"), json=payload)
+        return _decode(r, "answerCallbackQuery")
+
+    async def edit_message_text(
+        self,
+        *,
+        chat_id: str,
+        message_id: int,
+        text: str,
+        parse_mode: str | None = None,
+        disable_web_page_preview: bool = True,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Rewrite a previously-sent message in place.
+
+        Used by the approvals bridge to swap an Approve/Reject card's
+        buttons for a "[approved]" / "[rejected]" marker once the
+        decision is made, so the operator's Telegram history tells the
+        truth about what's still pending."""
+        body_text = text or ""
+        if len(body_text) > TELEGRAM_MESSAGE_MAX_CHARS:
+            suffix = "\n\n… [truncated]"
+            prefix_len = TELEGRAM_MESSAGE_MAX_CHARS - len(suffix)
+            body_text = body_text[:prefix_len] + suffix
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": int(message_id),
+            "text": body_text,
+            "disable_web_page_preview": disable_web_page_preview,
+        }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        async with httpx.AsyncClient(timeout=self._timeout) as c:
+            r = await c.post(self._url("editMessageText"), json=payload)
+        return _decode(r, "editMessageText")
 
     async def get_updates(
         self,

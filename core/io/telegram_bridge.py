@@ -56,6 +56,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,8 @@ from core.integrations.telegram import (
 from core.logging import get_logger
 from core.orchestrator import Orchestrator
 from core.orchestrator.orchestrator import OrchestratorBusyError
+
+CallbackHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 log = get_logger("pilkd.telegram.bridge")
 
@@ -105,6 +108,7 @@ class TelegramBridge:
         hub: Hub,
         state_path: Path,
         longpoll_seconds: int = DEFAULT_LONGPOLL_S,
+        callback_handler: CallbackHandler | None = None,
     ) -> None:
         self._cfg = config
         self._client = TelegramClient(
@@ -117,6 +121,12 @@ class TelegramBridge:
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._offset: int | None = None
+        # Optional extra dispatcher for inline-button taps. The
+        # approvals bridge (``core.io.telegram_approvals``) registers
+        # itself here so its callback_queries ride the bridge's
+        # single long-poll loop instead of racing it with a second
+        # ``getUpdates`` caller.
+        self._callback_handler = callback_handler
 
     # ── lifecycle ────────────────────────────────────────────────
 
@@ -153,12 +163,18 @@ class TelegramBridge:
     # ── main loop ───────────────────────────────────────────────
 
     async def _run(self) -> None:
+        # Always allow "callback_query" so approvals buttons land here
+        # even when no callback handler is registered — the bridge
+        # silently drops unhandled callback_queries rather than letting
+        # Telegram retry them (which would cause a stuck spinner on the
+        # operator's phone).
+        allowed = ["message", "callback_query"]
         while not self._stop.is_set():
             try:
                 updates = await self._client.get_updates(
                     offset=self._offset,
                     timeout=self._longpoll,
-                    allowed_updates=["message"],
+                    allowed_updates=allowed,
                     request_timeout=DEFAULT_REQUEST_TIMEOUT_S,
                 )
             except TelegramError as e:
@@ -194,6 +210,22 @@ class TelegramBridge:
     # ── update handling ─────────────────────────────────────────
 
     async def _handle_update(self, upd: dict[str, Any]) -> None:
+        # Inline-button taps arrive as callback_query updates, not
+        # plain messages. Hand them off to the approvals bridge and
+        # return — we deliberately do NOT fall through to the chat
+        # path (a callback_query has no ``message.text`` anyway, but
+        # the explicit branch keeps the code obvious to the next
+        # reader).
+        if upd.get("callback_query") is not None:
+            if self._callback_handler is not None:
+                try:
+                    await self._callback_handler(upd)
+                except Exception as e:
+                    log.warning(
+                        "telegram_bridge_callback_handler_failed",
+                        error=str(e),
+                    )
+            return
         message = upd.get("message") or {}
         chat = (message.get("chat") or {})
         from_chat_id = str(chat.get("id") or "")
