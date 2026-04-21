@@ -1115,28 +1115,37 @@ export default function Settings() {
  * this UI.
  */
 type ApiKeyCategory =
-  | "Sales-ops"
+  | "CRM"
+  | "Comms"
+  | "Ads"
+  | "Search & Data"
+  | "Creative AI"
   | "Trading"
-  | "Creative"
-  | "Design"
-  | "Core"
+  | "Infra"
+  | "Web design"
   | "Other";
 
 const CATEGORY_ORDER: ApiKeyCategory[] = [
-  "Sales-ops",
-  "Creative",
+  "CRM",
+  "Comms",
+  "Ads",
+  "Search & Data",
+  "Creative AI",
   "Trading",
-  "Design",
-  "Core",
+  "Infra",
+  "Web design",
   "Other",
 ];
 
 const CATEGORY_BLURB: Record<ApiKeyCategory, string> = {
-  "Sales-ops": "Prospecting, enrichment, and CRM sync keys.",
-  Trading: "Price feeds and remote-browser broker sessions.",
-  Creative: "Image and video generation providers.",
-  Design: "Per-site credentials for web-design delivery.",
-  Core: "Platform-wide keys used by every agent.",
+  CRM: "Pipelines, contacts, and knowledge-base connectors.",
+  Comms: "Operator chat bridges and notification channels.",
+  Ads: "Paid-media platforms — creative, audiences, insights.",
+  "Search & Data": "Lead enrichment, search APIs, and discovery data.",
+  "Creative AI": "Image and video generation providers.",
+  Trading: "Price feeds and finance-execution integrations.",
+  Infra: "Remote browsers, kill switches, and platform-wide infra keys.",
+  "Web design": "Per-site credentials for web-design delivery.",
   Other: "Uncategorised or legacy entries — review and clean up.",
 };
 
@@ -1144,15 +1153,40 @@ const CATEGORY_BLURB: Record<ApiKeyCategory, string> = {
  * `core/api/routes/integration_secrets.KNOWN_SECRETS`. An entry that
  * doesn't appear here falls into "Other". */
 const SECRET_CATEGORY: Record<string, ApiKeyCategory> = {
-  hubspot_private_token: "Sales-ops",
-  hunter_io_api_key: "Sales-ops",
-  google_places_api_key: "Sales-ops",
-  pagespeed_api_key: "Sales-ops",
+  // CRM
+  hubspot_private_token: "CRM",
+  ghl_api_key: "CRM",
+  ghl_default_location_id: "CRM",
+  notion_api_key: "CRM",
+  // Comms
+  telegram_bot_token: "Comms",
+  telegram_chat_id: "Comms",
+  // Ads — Meta + Google Ads
+  meta_access_token: "Ads",
+  meta_ad_account_id: "Ads",
+  meta_page_id: "Ads",
+  meta_app_id: "Ads",
+  meta_app_secret: "Ads",
+  google_ads_developer_token: "Ads",
+  google_ads_client_id: "Ads",
+  google_ads_client_secret: "Ads",
+  google_ads_refresh_token: "Ads",
+  google_ads_customer_id: "Ads",
+  google_ads_login_customer_id: "Ads",
+  // Search & Data
+  hunter_io_api_key: "Search & Data",
+  google_places_api_key: "Search & Data",
+  pagespeed_api_key: "Search & Data",
+  apify_api_token: "Search & Data",
+  // Creative AI
+  nano_banana_api_key: "Creative AI",
+  higgsfield_api_key: "Creative AI",
+  // Trading
   twelvedata_api_key: "Trading",
-  browserbase_api_key: "Trading",
-  browserbase_project_id: "Trading",
-  nano_banana_api_key: "Creative",
-  higgsfield_api_key: "Creative",
+  // Infra
+  browserbase_api_key: "Infra",
+  browserbase_project_id: "Infra",
+  computer_control_enabled: "Infra",
 };
 
 /** Deep-link each card to the provider's API-key page. If the user
@@ -1182,9 +1216,9 @@ const SECRET_GET_KEY_URL: Record<string, string> = {
 
 function categorize(name: string): ApiKeyCategory {
   if (name in SECRET_CATEGORY) return SECRET_CATEGORY[name];
-  // Pattern-matched secrets (e.g. wordpress_<slug>_app_password) all
-  // land under Design for now; any future patterns can extend this.
-  if (/^wordpress_.+_app_password$/.test(name)) return "Design";
+  // Pattern-matched secrets (e.g. wordpress_<slug>_app_password) — one
+  // pattern today; extend the checks if more land.
+  if (/^wordpress_.+_app_password$/.test(name)) return "Web design";
   return "Other";
 }
 
@@ -1299,6 +1333,10 @@ function IntegrationSecretRow({
   entry: IntegrationSecretEntry;
   onChanged: () => void;
 }) {
+  // Configured keys collapse to a single line by default — with 29+
+  // possible entries the page becomes unscannable otherwise. Clicking
+  // "Manage" opens the full description + Replace/Clear row.
+  const [expanded, setExpanded] = useState<boolean>(!entry.configured);
   const [editing, setEditing] = useState<boolean>(!entry.configured);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1316,6 +1354,7 @@ function IntegrationSecretRow({
       await setIntegrationSecret(entry.name, trimmed);
       setValue("");
       setEditing(false);
+      setExpanded(false);
       onChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -1325,12 +1364,10 @@ function IntegrationSecretRow({
   };
 
   const clear = async () => {
-    if (
-      !confirm(
-        `Clear the stored ${entry.label} key? The agent will fall back ` +
-          `to the ${entry.env} env var (if set).`,
-      )
-    ) {
+    const fallback = entry.env
+      ? ` The agent will fall back to the ${entry.env} env var (if set).`
+      : "";
+    if (!confirm(`Clear the stored ${entry.label} key?${fallback}`)) {
       return;
     }
     setBusy(true);
@@ -1345,6 +1382,26 @@ function IntegrationSecretRow({
     }
   };
 
+  // Compact view for already-configured keys. Single line, just
+  // enough to find the entry at a glance; full row opens on Manage.
+  if (entry.configured && !expanded) {
+    return (
+      <div className="apikeys-row apikeys-row--compact">
+        <div className="apikeys-row-compact-label">
+          <span className="apikeys-row-label-text">{entry.label}</span>
+          <span className="apikeys-badge apikeys-badge--ok">Configured</span>
+        </div>
+        <button
+          type="button"
+          className="apikeys-btn apikeys-btn--ghost"
+          onClick={() => setExpanded(true)}
+        >
+          Manage
+        </button>
+      </div>
+    );
+  }
+
   const getKeyUrl = SECRET_GET_KEY_URL[entry.name];
 
   return (
@@ -1358,7 +1415,7 @@ function IntegrationSecretRow({
             <span className="apikeys-badge apikeys-badge--off">Not set</span>
           )}
         </div>
-        <div className="apikeys-row-env">env: {entry.env}</div>
+        {entry.env && <div className="apikeys-row-env">env: {entry.env}</div>}
       </div>
       <div className="apikeys-row-desc">{entry.description}</div>
       {getKeyUrl && (
@@ -1405,6 +1462,7 @@ function IntegrationSecretRow({
                   setEditing(false);
                   setValue("");
                   setErr(null);
+                  setExpanded(false);
                 }}
                 disabled={busy}
               >
@@ -1431,6 +1489,20 @@ function IntegrationSecretRow({
           >
             Clear
           </button>
+          {entry.configured && (
+            <button
+              type="button"
+              className="apikeys-btn apikeys-btn--ghost"
+              onClick={() => {
+                setEditing(false);
+                setExpanded(false);
+                setErr(null);
+              }}
+              disabled={busy}
+            >
+              Hide
+            </button>
+          )}
           {entry.updated_at && (
             <span className="apikeys-row-updated">
               Updated {new Date(entry.updated_at).toLocaleString()}

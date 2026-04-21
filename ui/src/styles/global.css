@@ -4472,11 +4472,15 @@ body {
 }
 
 .apikeys-category {
-  margin-top: 20px;
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
 }
 
 .apikeys-category:first-of-type {
-  margin-top: 0;
+  margin-top: 6px;
+  padding-top: 0;
+  border-top: none;
 }
 
 .apikeys-category-head {
@@ -4508,8 +4512,8 @@ body {
 
 .apikeys-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 8px;
 }
 
 /* Reuse the existing .apikeys-row styles as the card body; the grid
@@ -4525,6 +4529,45 @@ body {
 
 .apikeys-grid .apikeys-row-head {
   flex-wrap: wrap;
+}
+
+/* Compact row used when a secret is set — collapses to a single line
+   so a fully-configured list stays scannable. Full row re-opens when
+   the operator clicks Manage. */
+.apikeys-grid .apikeys-row--compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+}
+
+.apikeys-row-compact-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.apikeys-row-label-text {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.apikeys-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+
+.apikeys-btn--ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--border);
+  color: var(--text);
 }
 
 .apikeys-empty {
