@@ -496,6 +496,183 @@ class GHLClient:
             params={"limit": int(limit)},
         )
 
+    # ── calendars + appointments ──────────────────────────────
+    #
+    # Calendars in GHL are configurable booking pages (a single
+    # user / a team / a round-robin). Appointments are the booked
+    # slots on those calendars. We expose the common CRUD +
+    # availability lookup; more exotic operations (custom block-off,
+    # holidays) stay in the GHL UI.
+
+    async def calendars_list(
+        self, *, location_id: str,
+    ) -> dict[str, Any]:
+        return await self._get(
+            "/calendars/",
+            params={"locationId": location_id},
+        )
+
+    async def calendars_free_slots(
+        self,
+        calendar_id: str,
+        *,
+        start_date_ms: int,
+        end_date_ms: int,
+        timezone: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch available booking slots for a calendar.
+
+        ``start_date_ms`` / ``end_date_ms`` are epoch milliseconds
+        (GHL's chosen unit). The tool-level wrapper handles the ISO
+        date → ms conversion so the planner never has to.
+        """
+        params: dict[str, Any] = {
+            "startDate": int(start_date_ms),
+            "endDate": int(end_date_ms),
+        }
+        if timezone:
+            params["timezone"] = timezone
+        if user_id:
+            params["userId"] = user_id
+        return await self._get(
+            f"/calendars/{calendar_id}/free-slots",
+            params=params,
+        )
+
+    async def appointments_list(
+        self,
+        *,
+        location_id: str,
+        calendar_id: str | None = None,
+        contact_id: str | None = None,
+        user_id: str | None = None,
+        start_date_ms: int | None = None,
+        end_date_ms: int | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"locationId": location_id}
+        if calendar_id:
+            params["calendarId"] = calendar_id
+        if contact_id:
+            params["contactId"] = contact_id
+        if user_id:
+            params["userId"] = user_id
+        if start_date_ms is not None:
+            params["startDate"] = int(start_date_ms)
+        if end_date_ms is not None:
+            params["endDate"] = int(end_date_ms)
+        return await self._get("/calendars/events", params=params)
+
+    async def appointments_create(
+        self,
+        *,
+        calendar_id: str,
+        contact_id: str,
+        location_id: str,
+        start_time_iso: str,
+        end_time_iso: str | None = None,
+        title: str | None = None,
+        appointment_status: str | None = None,
+        assigned_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "calendarId": calendar_id,
+            "contactId": contact_id,
+            "locationId": location_id,
+            "startTime": start_time_iso,
+        }
+        if end_time_iso:
+            payload["endTime"] = end_time_iso
+        if title:
+            payload["title"] = title
+        if appointment_status:
+            payload["appointmentStatus"] = appointment_status
+        if assigned_user_id:
+            payload["assignedUserId"] = assigned_user_id
+        return await self._post(
+            "/calendars/events/appointments", json=payload,
+        )
+
+    async def appointments_update(
+        self,
+        appointment_id: str,
+        *,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._put(
+            f"/calendars/events/appointments/{appointment_id}",
+            json=payload,
+        )
+
+    # ── tasks ─────────────────────────────────────────────────
+
+    async def tasks_list(
+        self, contact_id: str,
+    ) -> dict[str, Any]:
+        return await self._get(f"/contacts/{contact_id}/tasks")
+
+    async def tasks_create(
+        self,
+        contact_id: str,
+        *,
+        title: str,
+        body: str | None = None,
+        due_date_iso: str | None = None,
+        assigned_to: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"title": title}
+        if body:
+            payload["body"] = body
+        if due_date_iso:
+            payload["dueDate"] = due_date_iso
+        if assigned_to:
+            payload["assignedTo"] = assigned_to
+        return await self._post(
+            f"/contacts/{contact_id}/tasks", json=payload,
+        )
+
+    # ── workflows ─────────────────────────────────────────────
+
+    async def workflows_list(
+        self, *, location_id: str,
+    ) -> dict[str, Any]:
+        return await self._get(
+            "/workflows/",
+            params={"locationId": location_id},
+        )
+
+    async def workflows_add_contact(
+        self,
+        *,
+        contact_id: str,
+        workflow_id: str,
+        event_start_time_iso: str | None = None,
+    ) -> dict[str, Any]:
+        """Enroll a contact in a workflow.
+
+        GHL's POST body is intentionally small — the workflow
+        itself carries the logic (triggers, steps, delays); we're
+        just kicking it off for this contact. ``event_start_time``
+        is optional and only matters for workflows whose first
+        step is a time-based delay anchored on that event.
+        """
+        payload: dict[str, Any] = {}
+        if event_start_time_iso:
+            payload["eventStartTime"] = event_start_time_iso
+        return await self._post(
+            f"/contacts/{contact_id}/workflow/{workflow_id}",
+            json=payload,
+        )
+
+    # ── tags ──────────────────────────────────────────────────
+
+    async def tags_list(
+        self, *, location_id: str,
+    ) -> dict[str, Any]:
+        return await self._get(
+            f"/locations/{location_id}/tags",
+        )
+
     # ── meta (agency + directory reads) ───────────────────────
 
     async def locations_list(
