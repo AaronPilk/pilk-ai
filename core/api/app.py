@@ -68,7 +68,10 @@ from core.integrations.apple import (
     make_messages_tools,
 )
 from core.integrations.client_secrets import load_client
-from core.integrations.ghl import make_ghl_pipeline_tools
+from core.integrations.ghl import (
+    make_ghl_contact_tools,
+    make_ghl_pipeline_tools,
+)
 from core.integrations.google import (
     ROLES,
     make_calendar_tools,
@@ -548,6 +551,18 @@ async def lifespan(app: FastAPI):
     log.info(
         "ghl_pipeline_tools_registered",
         tools=[t.name for t in ghl_pipeline_tools],
+    )
+
+    # Contacts CRUD + meta (PR #75c). 8 contact tools + 3 meta tools,
+    # all driven by the same agency PIT. Registered as a sibling
+    # factory so a future schema change in one doesn't cascade into
+    # the other.
+    ghl_contact_tools = make_ghl_contact_tools()
+    for t in ghl_contact_tools:
+        registry.register(t)
+    log.info(
+        "ghl_contact_tools_registered",
+        tools=[t.name for t in ghl_contact_tools],
     )
 
     # Apple Messages + Contacts — local macOS integrations (not OAuth).
