@@ -431,6 +431,26 @@ class Settings(BaseSettings):
             "BRAIN_AUTO_INGEST_ON_BOOT",
         ),
     )
+    # Gmail auto-ingest is gated separately because it hits the
+    # network AND can produce hundreds of notes on a large inbox.
+    # Default OFF so a fresh install doesn't blast the vault with
+    # 90 days of email before the operator sees the Brain page for
+    # the first time. Flip to true (in .env or via an env var) once
+    # you've linked Google and want the inbox in the brain.
+    brain_auto_ingest_gmail_on_boot: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "PILK_BRAIN_AUTO_INGEST_GMAIL_ON_BOOT",
+            "BRAIN_AUTO_INGEST_GMAIL_ON_BOOT",
+        ),
+    )
+    brain_auto_ingest_gmail_query: str = Field(
+        default="newer_than:30d",
+        validation_alias=AliasChoices(
+            "PILK_BRAIN_AUTO_INGEST_GMAIL_QUERY",
+            "BRAIN_AUTO_INGEST_GMAIL_QUERY",
+        ),
+    )
     # Dedicated model for the draft-only APIEngine. Defaults to the
     # standard tier so the governor can re-route via its normal rules
     # later without a settings change.

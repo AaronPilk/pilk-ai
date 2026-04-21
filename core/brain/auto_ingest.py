@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 from core.brain import Vault
 from core.integrations.ingesters.claude_code import (
@@ -142,4 +143,125 @@ async def _wrapped(
     return summary
 
 
-__all__ = ["DEFAULT_MAX_PROJECTS", "run_once", "spawn"]
+# ── Gmail ingest on boot ──────────────────────────────────────────
+#
+# Separate from the Claude Code auto-ingest above because Gmail is
+# (a) network-bound, (b) much larger by default, and (c) depends on
+# the user having linked their Google account. Default off — the
+# operator opts in via PILK_BRAIN_AUTO_INGEST_GMAIL_ON_BOOT=true.
+
+
+async def run_gmail_once(
+    vault: Vault,
+    creds_loader: Any,
+    *,
+    query: str | None = None,
+    max_threads: int | None = None,
+) -> dict[str, Any]:
+    """Pull the operator's Gmail inbox into the brain. ``creds_loader``
+    is a zero-arg callable that returns ``(creds, account)`` — same
+    shape make_gmail_tools uses. We accept it as a loader rather than
+    a concrete creds object so the caller isn't forced to crash at
+    boot if the user hasn't linked Google yet."""
+    from core.integrations.ingesters.gmail import (
+        DEFAULT_MAX_THREADS,
+        DEFAULT_QUERY,
+        render_thread_note,
+        scan_threads,
+    )
+
+    summary: dict[str, Any] = {
+        "query": query or DEFAULT_QUERY,
+        "threads_scanned": 0,
+        "written": 0,
+        "errors": [],
+    }
+    try:
+        creds, _account = creds_loader()
+    except Exception as e:  # loader should never kill boot
+        summary["errors"] = [f"creds loader failed: {e}"]
+        return summary
+    if creds is None:
+        summary["errors"] = ["google user account not linked"]
+        return summary
+
+    effective_query = query or DEFAULT_QUERY
+    effective_max = int(max_threads or DEFAULT_MAX_THREADS)
+    try:
+        threads = await asyncio.to_thread(
+            scan_threads,
+            creds,
+            query=effective_query,
+            max_threads=effective_max,
+        )
+    except Exception as e:
+        log.warning("brain_auto_ingest_gmail_scan_failed", error=str(e))
+        summary["errors"] = [f"scan failed: {e}"]
+        return summary
+    summary["threads_scanned"] = len(threads)
+    if not threads:
+        return summary
+    written = 0
+    errors: list[str] = []
+    for thread in threads:
+        note = render_thread_note(thread)
+        try:
+            vault.write(note.path, note.body)
+            written += 1
+        except (OSError, ValueError) as e:
+            errors.append(f"{thread.thread_id}: {e}")
+    summary["written"] = written
+    summary["errors"] = errors
+    return summary
+
+
+def spawn_gmail(
+    vault: Vault,
+    creds_loader: Any,
+    *,
+    query: str | None = None,
+    max_threads: int | None = None,
+) -> asyncio.Task:
+    return asyncio.create_task(
+        _wrapped_gmail(
+            vault, creds_loader, query=query, max_threads=max_threads,
+        ),
+        name="brain-auto-ingest-gmail",
+    )
+
+
+async def _wrapped_gmail(
+    vault: Vault,
+    creds_loader: Any,
+    *,
+    query: str | None,
+    max_threads: int | None,
+) -> dict[str, Any]:
+    log.info(
+        "brain_auto_ingest_gmail_started",
+        vault=str(vault.root),
+        query=query or "default",
+    )
+    try:
+        summary = await run_gmail_once(
+            vault, creds_loader, query=query, max_threads=max_threads,
+        )
+    except Exception as e:
+        log.exception("brain_auto_ingest_gmail_failed", error=str(e))
+        return {"error": str(e)}
+    log.info(
+        "brain_auto_ingest_gmail_completed",
+        scanned=summary.get("threads_scanned"),
+        written=summary.get("written"),
+        error_count=len(summary.get("errors") or []),
+    )
+    return summary
+
+
+__all__ = [
+    "DEFAULT_MAX_PROJECTS",
+    "run_gmail_once",
+    "run_once",
+    "spawn",
+    "spawn_gmail",
+]

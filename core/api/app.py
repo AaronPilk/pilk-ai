@@ -599,7 +599,7 @@ async def lifespan(app: FastAPI):
     # Ingesters share the same Vault + write to the same tree, so
     # they're wired alongside the brain tools rather than as a
     # separate bundle.
-    ingest_tools = make_brain_ingest_tools(brain)
+    ingest_tools = make_brain_ingest_tools(brain, accounts=accounts)
     for t in ingest_tools:
         registry.register(t)
     log.info(
@@ -619,6 +619,22 @@ async def lifespan(app: FastAPI):
     if settings.brain_auto_ingest_on_boot:
         from core.brain import auto_ingest as _brain_auto_ingest
         _brain_auto_ingest.spawn(brain)
+
+    # Gmail auto-ingest piggybacks on the user-role OAuth binding. We
+    # defer evaluating the binding until the task actually runs —
+    # linking the account after boot should work without a restart.
+    if settings.brain_auto_ingest_gmail_on_boot:
+        from core.brain import auto_ingest as _brain_auto_ingest_gmail
+        from core.tools.builtin.brain_ingest import _load_user_gmail_creds
+
+        def _gmail_creds_loader():
+            return _load_user_gmail_creds(accounts)
+
+        _brain_auto_ingest_gmail.spawn_gmail(
+            brain,
+            _gmail_creds_loader,
+            query=settings.brain_auto_ingest_gmail_query,
+        )
 
     if settings.anthropic_api_key:
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
