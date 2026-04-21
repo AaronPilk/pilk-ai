@@ -45,14 +45,14 @@ def test_wordpress_pattern_rejects_empty_slug() -> None:
 
 
 def test_non_wordpress_name_returns_none() -> None:
-    assert _match_pattern("hubspot_private_token") is None
+    assert _match_pattern("ghl_api_key") is None
 
 
 # ── _ensure_known ──────────────────────────────────────────────
 
 
 def test_ensure_known_accepts_static_entry() -> None:
-    _ensure_known("hubspot_private_token")  # does not raise
+    _ensure_known("ghl_api_key")  # does not raise
 
 
 def test_ensure_known_accepts_pattern_match() -> None:
@@ -61,7 +61,7 @@ def test_ensure_known_accepts_pattern_match() -> None:
 
 def test_ensure_known_rejects_typo() -> None:
     try:
-        _ensure_known("hubsput_private_token")
+        _ensure_known("ghl_api_kye")
     except HTTPException as e:
         assert e.status_code == 400
         assert "unknown" in e.detail
@@ -91,7 +91,8 @@ def test_wordpress_pattern_is_registered() -> None:
 def test_known_static_entries_unchanged_contract() -> None:
     # Don't shrink the published secret list without noticing.
     expected = {
-        "hubspot_private_token",
+        "ghl_api_key",
+        "ghl_default_location_id",
         "hunter_io_api_key",
         "google_places_api_key",
         "pagespeed_api_key",

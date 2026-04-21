@@ -1,17 +1,20 @@
-"""Sales-ops toolkit: prospecting, site audits, email enrichment, CRM sync.
+"""Sales-ops toolkit: prospecting, site audits, email enrichment.
 
-Drop-in tool pack for the `sales_ops_agent`. Every tool here is a thin
-httpx wrapper around a third-party API — no local state, no sandbox
-side-effects. When the underlying key isn't configured the handler
-returns a clean ``is_error`` outcome instead of raising, so the agent
-can recover (or surface "connect this integration in Settings").
+Drop-in tool pack for the ``sales_ops_agent``. Every tool here is a
+thin httpx wrapper around a third-party API — no local state, no
+sandbox side-effects. When the underlying key isn't configured the
+handler returns a clean ``is_error`` outcome instead of raising, so
+the agent can recover (or surface "connect this integration in
+Settings").
 
 Risk classes:
     google_places_search, site_audit, hunter_* → NET_READ  (outbound GET)
-    hubspot_* (create/update/note)             → NET_WRITE (mutates CRM)
 
-HubSpot auth is a single Private App token for v1. Phase 2 moves this
-onto AccountsStore so each signed-in user brings their own.
+CRM operations (contacts, opportunities, notes) live in the Go High
+Level toolkit at ``core.integrations.ghl``. HubSpot was the v1 CRM
+backend; it was removed in PR #75c when GHL shipped with broader
+coverage (pipelines, conversations, calendars, workflows). The two
+coexisted briefly during the rollout — today there is only GHL.
 """
 
 from __future__ import annotations
@@ -26,7 +29,6 @@ from core.secrets import resolve_secret
 from core.tools.registry import Tool, ToolContext, ToolOutcome
 
 DEFAULT_TIMEOUT_S = 20.0
-HUBSPOT_API_BASE = "https://api.hubapi.com"
 
 
 def _secret(name: str, fallback: str | None) -> str | None:
@@ -337,317 +339,9 @@ hunter_find_email_tool = Tool(
 )
 
 
-# ── HubSpot (single-tenant Private App token) ─────────────────────
-
-def _hubspot_headers() -> dict[str, str] | None:
-    token = _secret("hubspot_private_token", get_settings().hubspot_private_token)
-    if not token:
-        return None
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-
-
-def _hubspot_not_configured() -> ToolOutcome:
-    return ToolOutcome(
-        content=(
-            "HubSpot is not configured. Create a Private App in HubSpot "
-            "(Settings → Integrations → Private Apps) with CRM contact + "
-            "note scopes, then paste the token in PILK's Settings → API "
-            "Keys (or set HUBSPOT_PRIVATE_TOKEN)."
-        ),
-        is_error=True,
-    )
-
-
-async def _hubspot_search_contact(
-    args: dict, ctx: ToolContext
-) -> ToolOutcome:
-    email = str(args.get("email") or "").strip().lower()
-    if not email:
-        return ToolOutcome(
-            content="hubspot_search_contact requires an 'email' argument.",
-            is_error=True,
-        )
-    headers = _hubspot_headers()
-    if headers is None:
-        return _hubspot_not_configured()
-    body = {
-        "filterGroups": [
-            {
-                "filters": [
-                    {
-                        "propertyName": "email",
-                        "operator": "EQ",
-                        "value": email,
-                    }
-                ]
-            }
-        ],
-        "properties": ["email", "firstname", "lastname", "company", "website"],
-        "limit": 1,
-    }
-    try:
-        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_S) as client:
-            resp = await client.post(
-                f"{HUBSPOT_API_BASE}/crm/v3/objects/contacts/search",
-                headers=headers,
-                json=body,
-            )
-    except (httpx.HTTPError, TimeoutError) as e:
-        return ToolOutcome(
-            content=f"hubspot_search_contact failed: {type(e).__name__}: {e}",
-            is_error=True,
-        )
-    if resp.status_code >= 400:
-        return ToolOutcome(
-            content=f"HubSpot error {resp.status_code}: {resp.text[:500]}",
-            is_error=True,
-            data={"status": resp.status_code},
-        )
-    results = resp.json().get("results") or []
-    if not results:
-        return ToolOutcome(
-            content=f"No HubSpot contact found for {email}.",
-            data={"email": email, "exists": False},
-        )
-    contact = results[0]
-    return ToolOutcome(
-        content=(
-            f"HubSpot contact exists for {email}: id={contact.get('id')}."
-        ),
-        data={
-            "email": email,
-            "exists": True,
-            "id": contact.get("id"),
-            "properties": contact.get("properties") or {},
-        },
-    )
-
-
-hubspot_search_contact_tool = Tool(
-    name="hubspot_search_contact",
-    description=(
-        "Look up a HubSpot contact by email. Use before creating to avoid "
-        "duplicates. Requires HUBSPOT_PRIVATE_TOKEN."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "email": {
-                "type": "string",
-                "description": "Email address (lowercased automatically).",
-            }
-        },
-        "required": ["email"],
-    },
-    risk=RiskClass.NET_READ,
-    handler=_hubspot_search_contact,
-)
-
-
-async def _hubspot_upsert_contact(
-    args: dict, ctx: ToolContext
-) -> ToolOutcome:
-    email = str(args.get("email") or "").strip().lower()
-    if not email:
-        return ToolOutcome(
-            content="hubspot_upsert_contact requires 'email'.",
-            is_error=True,
-        )
-    headers = _hubspot_headers()
-    if headers is None:
-        return _hubspot_not_configured()
-    properties = {"email": email}
-    for key in (
-        "firstname",
-        "lastname",
-        "company",
-        "website",
-        "phone",
-        "jobtitle",
-        "lifecyclestage",
-    ):
-        v = args.get(key)
-        if v is not None and str(v).strip() != "":
-            properties[key] = str(v)
-    try:
-        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_S) as client:
-            # Try create; on 409 (exists), fall back to update by email.
-            create = await client.post(
-                f"{HUBSPOT_API_BASE}/crm/v3/objects/contacts",
-                headers=headers,
-                json={"properties": properties},
-            )
-            if create.status_code == 409:
-                update = await client.patch(
-                    f"{HUBSPOT_API_BASE}/crm/v3/objects/contacts/{email}"
-                    "?idProperty=email",
-                    headers=headers,
-                    json={"properties": properties},
-                )
-                if update.status_code >= 400:
-                    return ToolOutcome(
-                        content=(
-                            f"HubSpot update error {update.status_code}: "
-                            f"{update.text[:500]}"
-                        ),
-                        is_error=True,
-                    )
-                contact = update.json()
-                return ToolOutcome(
-                    content=f"Updated HubSpot contact {email}.",
-                    data={
-                        "action": "update",
-                        "id": contact.get("id"),
-                        "email": email,
-                    },
-                )
-            if create.status_code >= 400:
-                return ToolOutcome(
-                    content=(
-                        f"HubSpot create error {create.status_code}: "
-                        f"{create.text[:500]}"
-                    ),
-                    is_error=True,
-                )
-            contact = create.json()
-    except (httpx.HTTPError, TimeoutError) as e:
-        return ToolOutcome(
-            content=f"hubspot_upsert_contact failed: {type(e).__name__}: {e}",
-            is_error=True,
-        )
-    return ToolOutcome(
-        content=f"Created HubSpot contact {email}.",
-        data={
-            "action": "create",
-            "id": contact.get("id"),
-            "email": email,
-        },
-    )
-
-
-hubspot_upsert_contact_tool = Tool(
-    name="hubspot_upsert_contact",
-    description=(
-        "Create or update a HubSpot contact keyed by email. Optional "
-        "properties: firstname, lastname, company, website, phone, "
-        "jobtitle, lifecyclestage. Idempotent. Requires "
-        "HUBSPOT_PRIVATE_TOKEN."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "email": {"type": "string"},
-            "firstname": {"type": "string"},
-            "lastname": {"type": "string"},
-            "company": {"type": "string"},
-            "website": {"type": "string"},
-            "phone": {"type": "string"},
-            "jobtitle": {"type": "string"},
-            "lifecyclestage": {
-                "type": "string",
-                "description": (
-                    "HubSpot lifecycle stage "
-                    "(e.g. lead, marketingqualifiedlead)."
-                ),
-            },
-        },
-        "required": ["email"],
-    },
-    risk=RiskClass.NET_WRITE,
-    handler=_hubspot_upsert_contact,
-)
-
-
-async def _hubspot_add_note(args: dict, ctx: ToolContext) -> ToolOutcome:
-    contact_id = str(args.get("contact_id") or "").strip()
-    body = str(args.get("body") or "").strip()
-    if not contact_id or not body:
-        return ToolOutcome(
-            content="hubspot_add_note requires 'contact_id' and 'body'.",
-            is_error=True,
-        )
-    headers = _hubspot_headers()
-    if headers is None:
-        return _hubspot_not_configured()
-    # Current epoch millis is what HubSpot wants for hs_timestamp.
-    import time as _time
-    ts_ms = int(_time.time() * 1000)
-    create_payload = {
-        "properties": {
-            "hs_timestamp": ts_ms,
-            "hs_note_body": body,
-        },
-        "associations": [
-            {
-                "to": {"id": contact_id},
-                # 202 = note → contact association type id.
-                "types": [
-                    {
-                        "associationCategory": "HUBSPOT_DEFINED",
-                        "associationTypeId": 202,
-                    }
-                ],
-            }
-        ],
-    }
-    try:
-        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_S) as client:
-            resp = await client.post(
-                f"{HUBSPOT_API_BASE}/crm/v3/objects/notes",
-                headers=headers,
-                json=create_payload,
-            )
-    except (httpx.HTTPError, TimeoutError) as e:
-        return ToolOutcome(
-            content=f"hubspot_add_note failed: {type(e).__name__}: {e}",
-            is_error=True,
-        )
-    if resp.status_code >= 400:
-        return ToolOutcome(
-            content=f"HubSpot error {resp.status_code}: {resp.text[:500]}",
-            is_error=True,
-        )
-    note = resp.json()
-    return ToolOutcome(
-        content=f"Added note to HubSpot contact {contact_id}.",
-        data={"id": note.get("id"), "contact_id": contact_id},
-    )
-
-
-hubspot_add_note_tool = Tool(
-    name="hubspot_add_note",
-    description=(
-        "Attach a note (engagement) to a HubSpot contact. Use this after "
-        "each outreach action so the CRM timeline stays accurate. Requires "
-        "HUBSPOT_PRIVATE_TOKEN."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "contact_id": {
-                "type": "string",
-                "description": "HubSpot contact id (from upsert/search).",
-            },
-            "body": {
-                "type": "string",
-                "description": "Plain-text or HTML body of the note.",
-            },
-        },
-        "required": ["contact_id", "body"],
-    },
-    risk=RiskClass.NET_WRITE,
-    handler=_hubspot_add_note,
-)
-
 
 SALES_OPS_TOOLS: list[Tool] = [
     google_places_search_tool,
     site_audit_tool,
     hunter_find_email_tool,
-    hubspot_search_contact_tool,
-    hubspot_upsert_contact_tool,
-    hubspot_add_note_tool,
 ]

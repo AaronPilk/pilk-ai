@@ -7,9 +7,9 @@ description: |
   the LIGHT tier so a full run costs $0 in LLM spend (just the usual
   Places/PageSpeed/Hunter API credits you were already paying for).
 
-  Deliberately narrower than sales_ops_agent: no HubSpot, no outreach,
-  no contact-form automation. This is the "just hand me a sheet of
-  leads" variant the operator kicks off daily.
+  Deliberately narrower than sales_ops_agent: no CRM write, no
+  outreach, no contact-form automation. This is the "just hand me a
+  sheet of leads" variant the operator kicks off daily.
 
 system_prompt: |
   You are PILK's prospector — you hand the operator a clean Google

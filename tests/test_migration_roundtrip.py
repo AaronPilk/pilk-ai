@@ -58,7 +58,7 @@ def _make_home(tmp_path: Path, label: str) -> Path:
     _insert_memory(home / "pilk.db", "favorite city: Tampa")
 
     secrets = IntegrationSecretsStore(home / "pilk.db")
-    secrets.upsert("hubspot_private_token", "pat-test-12345")
+    secrets.upsert("ghl_api_key", "pit-test-12345")
     secrets.upsert("hunter_io_api_key", "hunt-test-12345")
 
     accounts = AccountsStore(home)
@@ -141,7 +141,7 @@ def test_export_then_import_restores_secrets(tmp_path: Path) -> None:
     apply_bundle(bundle_bytes=bundle.read_bytes(), target_home=dst)
 
     dst_secrets = IntegrationSecretsStore(dst / "pilk.db")
-    assert dst_secrets.get_value("hubspot_private_token") == "pat-test-12345"
+    assert dst_secrets.get_value("ghl_api_key") == "pit-test-12345"
     assert dst_secrets.get_value("hunter_io_api_key") == "hunt-test-12345"
 
 

@@ -674,4 +674,853 @@ def make_ghl_pipeline_tools() -> list[Tool]:
     ]
 
 
-__all__ = ["make_ghl_pipeline_tools"]
+# ── contacts (PR #75c) ───────────────────────────────────────────
+#
+# Eight contact tools cover the full CRUD + the two relationship
+# surfaces that matter at a CRM level (tags + notes). Naming
+# convention: ``ghl_contact_<verb>`` so the planner picks them by
+# intent the same way it picks the pipeline tools.
+#
+# Risk classes:
+#   READ on get / search
+#   WRITE on create / update / delete / add_tag / remove_tag /
+#         add_note (every mutation queues for approval by default)
+#
+# Validation pattern: every required field checked up-front before
+# we even resolve the API key, so a malformed call surfaces the
+# real error instead of "not configured" or a 422 round-trip.
+
+
+def _contact_create_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        # GHL accepts contacts with no required field, but at least
+        # one identifier (email or phone) is needed for the contact
+        # to be useful. Refusing the no-identifier case here saves
+        # a wasted CRM row.
+        email = str(args.get("email") or "").strip()
+        phone = str(args.get("phone") or "").strip()
+        first_name = str(args.get("first_name") or "").strip()
+        last_name = str(args.get("last_name") or "").strip()
+        name = str(args.get("name") or "").strip()
+        company_name = str(args.get("company_name") or "").strip()
+        if not (email or phone):
+            return ToolOutcome(
+                content=(
+                    "ghl_contact_create requires at least one of "
+                    "'email' or 'phone' so the contact is reachable."
+                ),
+                is_error=True,
+            )
+        loc, err = _unwrap_location(args, "ghl_contact_create")
+        if err:
+            return err
+        payload: dict[str, Any] = {}
+        if email:
+            payload["email"] = email
+        if phone:
+            payload["phone"] = phone
+        if first_name:
+            payload["firstName"] = first_name
+        if last_name:
+            payload["lastName"] = last_name
+        if name:
+            payload["name"] = name
+        if company_name:
+            payload["companyName"] = company_name
+        tags = args.get("tags")
+        if isinstance(tags, list) and tags:
+            payload["tags"] = [str(t).strip() for t in tags if str(t).strip()]
+        custom = args.get("custom_fields")
+        if isinstance(custom, list) and custom:
+            payload["customFields"] = custom
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_contact_create")
+        try:
+            result = await client.contacts_create(
+                location_id=loc, payload=payload,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_contact_create")
+        contact = result.get("contact") or result
+        cid = contact.get("id") or ""
+        label = (
+            f"{first_name} {last_name}".strip()
+            or name
+            or email
+            or phone
+        )
+        return ToolOutcome(
+            content=(
+                f"Created contact '{label}' "
+                f"({cid[:12]}…) in location {loc[:8]}…"
+            ),
+            data={
+                "contact_id": cid,
+                "email": email,
+                "phone": phone,
+                "raw": result,
+            },
+        )
+
+    return Tool(
+        name="ghl_contact_create",
+        description=(
+            "Create a new contact in a GHL location. At least one of "
+            "'email' or 'phone' is required (otherwise the contact "
+            "has no way to be reached). Optional: first_name, "
+            "last_name, name, company_name, tags (list of strings), "
+            "custom_fields (list of {id, field_value} per GHL's "
+            "custom-field schema). NET_WRITE — queues for approval."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "email": {"type": "string"},
+                "phone": {"type": "string"},
+                "first_name": {"type": "string"},
+                "last_name": {"type": "string"},
+                "name": {"type": "string"},
+                "company_name": {"type": "string"},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "custom_fields": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                },
+                "location_id": {"type": "string"},
+            },
+        },
+        risk=RiskClass.NET_WRITE,
+        handler=handler,
+    )
+
+
+def _contact_get_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        contact_id = str(args.get("contact_id") or "").strip()
+        if not contact_id:
+            return ToolOutcome(
+                content="ghl_contact_get requires 'contact_id'.",
+                is_error=True,
+            )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_contact_get")
+        try:
+            result = await client.contacts_get(contact_id)
+        except GHLError as e:
+            return _surface(e, "ghl_contact_get")
+        contact = result.get("contact") or result
+        return ToolOutcome(
+            content=(
+                f"{contact.get('firstName', '') or ''} "
+                f"{contact.get('lastName', '') or ''}".strip()
+                + f" · {contact.get('email', '') or ''}"
+                + f" · {contact.get('phone', '') or ''}"
+                + f" (tags: {', '.join(contact.get('tags', []) or []) or 'none'})"
+            ),
+            data={"contact": contact},
+        )
+
+    return Tool(
+        name="ghl_contact_get",
+        description=(
+            "Fetch one contact by id. Returns name, email, phone, "
+            "company, tags, and custom fields. Use when you have an "
+            "id from search / create and need the full record."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+            },
+            "required": ["contact_id"],
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def _contact_search_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        loc, err = _unwrap_location(args, "ghl_contact_search")
+        if err:
+            return err
+        try:
+            limit = int(args.get("limit") or 25)
+        except (TypeError, ValueError):
+            limit = 25
+        limit = max(1, min(limit, 100))
+        # email > phone > query precedence (matches client-side order
+        # — exact match wins over fuzzy).
+        email = str(args.get("email") or "").strip() or None
+        phone = str(args.get("phone") or "").strip() or None
+        query = str(args.get("query") or "").strip() or None
+        if not (email or phone or query):
+            return ToolOutcome(
+                content=(
+                    "ghl_contact_search requires at least one of "
+                    "'email', 'phone', or 'query'."
+                ),
+                is_error=True,
+            )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_contact_search")
+        try:
+            result = await client.contacts_search(
+                location_id=loc,
+                email=email,
+                phone=phone,
+                query=query,
+                limit=limit,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_contact_search")
+        contacts = result.get("contacts") or []
+        lines = [
+            (
+                f"- {c.get('firstName', '') or ''} "
+                f"{c.get('lastName', '') or ''}".strip()
+                + f" · {c.get('email', '') or '(no email)'}"
+                + f" · id={c.get('id', '')[:12]}…"
+            )
+            for c in contacts
+        ]
+        body = "\n".join(lines) if lines else "No contacts match."
+        return ToolOutcome(
+            content=f"{len(contacts)} contact(s):\n{body}",
+            data={
+                "contacts": contacts,
+                "location_id": loc,
+                "total": result.get("total"),
+            },
+        )
+
+    return Tool(
+        name="ghl_contact_search",
+        description=(
+            "Search contacts in a GHL location. At least one of: "
+            "email (exact match, fastest), phone (exact match), or "
+            "query (substring across name + email). limit 1-100, "
+            "default 25. NET_READ — first call may queue for approval."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "email": {"type": "string"},
+                "phone": {"type": "string"},
+                "query": {"type": "string"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+                "location_id": {"type": "string"},
+            },
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def _contact_update_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        contact_id = str(args.get("contact_id") or "").strip()
+        if not contact_id:
+            return ToolOutcome(
+                content="ghl_contact_update requires 'contact_id'.",
+                is_error=True,
+            )
+        payload: dict[str, Any] = {}
+        # Snake-case → GHL camelCase.
+        for arg_key, body_key in (
+            ("email", "email"),
+            ("phone", "phone"),
+            ("first_name", "firstName"),
+            ("last_name", "lastName"),
+            ("name", "name"),
+            ("company_name", "companyName"),
+        ):
+            raw = args.get(arg_key)
+            if isinstance(raw, str) and raw.strip():
+                payload[body_key] = raw.strip()
+        tags = args.get("tags")
+        if isinstance(tags, list):
+            payload["tags"] = [str(t).strip() for t in tags if str(t).strip()]
+        custom = args.get("custom_fields")
+        if isinstance(custom, list):
+            payload["customFields"] = custom
+        if not payload:
+            return ToolOutcome(
+                content=(
+                    "ghl_contact_update needs at least one field to "
+                    "change (email / phone / first_name / last_name / "
+                    "name / company_name / tags / custom_fields). "
+                    "For tag-only changes prefer ghl_contact_add_tag / "
+                    "remove_tag — they're additive instead of "
+                    "destructive."
+                ),
+                is_error=True,
+            )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_contact_update")
+        try:
+            result = await client.contacts_update(
+                contact_id, payload=payload,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_contact_update")
+        return ToolOutcome(
+            content=(
+                f"Updated contact {contact_id[:12]}… "
+                f"({', '.join(sorted(payload.keys()))})."
+            ),
+            data={
+                "contact_id": contact_id,
+                "changed_fields": sorted(payload.keys()),
+                "raw": result,
+            },
+        )
+
+    return Tool(
+        name="ghl_contact_update",
+        description=(
+            "Update fields on an existing contact. Pass only the "
+            "ones you're changing. NOTE: passing 'tags' REPLACES "
+            "the entire tag list — for additive changes use "
+            "ghl_contact_add_tag / ghl_contact_remove_tag instead. "
+            "NET_WRITE — queues for approval."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+                "email": {"type": "string"},
+                "phone": {"type": "string"},
+                "first_name": {"type": "string"},
+                "last_name": {"type": "string"},
+                "name": {"type": "string"},
+                "company_name": {"type": "string"},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "REPLACES existing tags. Use add_tag / "
+                        "remove_tag for additive changes."
+                    ),
+                },
+                "custom_fields": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                },
+            },
+            "required": ["contact_id"],
+        },
+        risk=RiskClass.NET_WRITE,
+        handler=handler,
+    )
+
+
+def _contact_delete_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        contact_id = str(args.get("contact_id") or "").strip()
+        if not contact_id:
+            return ToolOutcome(
+                content="ghl_contact_delete requires 'contact_id'.",
+                is_error=True,
+            )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_contact_delete")
+        try:
+            await client.contacts_delete(contact_id)
+        except GHLError as e:
+            return _surface(e, "ghl_contact_delete")
+        return ToolOutcome(
+            content=f"Deleted contact {contact_id[:12]}….",
+            data={"contact_id": contact_id, "deleted": True},
+        )
+
+    return Tool(
+        name="ghl_contact_delete",
+        description=(
+            "Delete a contact by id. GHL keeps deleted contacts in "
+            "trash for a short window (recoverable from the GHL UI). "
+            "NET_WRITE — queues for approval. For 'this lead went "
+            "cold' situations, prefer ghl_contact_remove_tag to drop "
+            "their hot/active tags so the contact stays in the "
+            "history."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {"contact_id": {"type": "string"}},
+            "required": ["contact_id"],
+        },
+        risk=RiskClass.NET_WRITE,
+        handler=handler,
+    )
+
+
+def _contact_add_tag_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        contact_id = str(args.get("contact_id") or "").strip()
+        if not contact_id:
+            return ToolOutcome(
+                content="ghl_contact_add_tag requires 'contact_id'.",
+                is_error=True,
+            )
+        tags_raw = args.get("tags")
+        if not isinstance(tags_raw, list) or not tags_raw:
+            return ToolOutcome(
+                content=(
+                    "ghl_contact_add_tag requires a non-empty 'tags' "
+                    "list of strings."
+                ),
+                is_error=True,
+            )
+        tags = [str(t).strip() for t in tags_raw if str(t).strip()]
+        if not tags:
+            return ToolOutcome(
+                content=(
+                    "ghl_contact_add_tag 'tags' had no non-empty "
+                    "values."
+                ),
+                is_error=True,
+            )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_contact_add_tag")
+        try:
+            result = await client.contacts_add_tags(
+                contact_id, tags=tags,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_contact_add_tag")
+        return ToolOutcome(
+            content=(
+                f"Added {len(tags)} tag(s) to contact "
+                f"{contact_id[:12]}…: {', '.join(tags)}"
+            ),
+            data={
+                "contact_id": contact_id,
+                "tags_added": tags,
+                "raw": result,
+            },
+        )
+
+    return Tool(
+        name="ghl_contact_add_tag",
+        description=(
+            "Add one or more tags to a contact. Additive — existing "
+            "tags are preserved. Tag names are case-sensitive in GHL "
+            "and create-if-missing (no separate 'create tag' call). "
+            "NET_WRITE — queues for approval."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                },
+            },
+            "required": ["contact_id", "tags"],
+        },
+        risk=RiskClass.NET_WRITE,
+        handler=handler,
+    )
+
+
+def _contact_remove_tag_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        contact_id = str(args.get("contact_id") or "").strip()
+        if not contact_id:
+            return ToolOutcome(
+                content=(
+                    "ghl_contact_remove_tag requires 'contact_id'."
+                ),
+                is_error=True,
+            )
+        tags_raw = args.get("tags")
+        if not isinstance(tags_raw, list) or not tags_raw:
+            return ToolOutcome(
+                content=(
+                    "ghl_contact_remove_tag requires a non-empty "
+                    "'tags' list of strings."
+                ),
+                is_error=True,
+            )
+        tags = [str(t).strip() for t in tags_raw if str(t).strip()]
+        if not tags:
+            return ToolOutcome(
+                content=(
+                    "ghl_contact_remove_tag 'tags' had no non-empty "
+                    "values."
+                ),
+                is_error=True,
+            )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_contact_remove_tag")
+        try:
+            result = await client.contacts_remove_tags(
+                contact_id, tags=tags,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_contact_remove_tag")
+        return ToolOutcome(
+            content=(
+                f"Removed {len(tags)} tag(s) from contact "
+                f"{contact_id[:12]}…: {', '.join(tags)}"
+            ),
+            data={
+                "contact_id": contact_id,
+                "tags_removed": tags,
+                "raw": result,
+            },
+        )
+
+    return Tool(
+        name="ghl_contact_remove_tag",
+        description=(
+            "Remove one or more tags from a contact. Other tags are "
+            "preserved. Tag names not currently on the contact are "
+            "silently ignored (GHL doesn't error). NET_WRITE — "
+            "queues for approval."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                },
+            },
+            "required": ["contact_id", "tags"],
+        },
+        risk=RiskClass.NET_WRITE,
+        handler=handler,
+    )
+
+
+def _contact_add_note_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        contact_id = str(args.get("contact_id") or "").strip()
+        body = str(args.get("body") or "").strip()
+        if not contact_id:
+            return ToolOutcome(
+                content="ghl_contact_add_note requires 'contact_id'.",
+                is_error=True,
+            )
+        if not body:
+            return ToolOutcome(
+                content=(
+                    "ghl_contact_add_note requires a non-empty "
+                    "'body' — the note text shown on the contact's "
+                    "timeline in GHL."
+                ),
+                is_error=True,
+            )
+        user_id_raw = args.get("user_id")
+        user_id = (
+            str(user_id_raw).strip()
+            if isinstance(user_id_raw, str) and user_id_raw.strip()
+            else None
+        )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_contact_add_note")
+        try:
+            result = await client.contacts_add_note(
+                contact_id, body=body, user_id=user_id,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_contact_add_note")
+        note = result.get("note") or result
+        nid = note.get("id") or ""
+        return ToolOutcome(
+            content=(
+                f"Added note ({nid[:12]}…) to contact "
+                f"{contact_id[:12]}…: {body[:80]}"
+            ),
+            data={
+                "contact_id": contact_id,
+                "note_id": nid,
+                "raw": result,
+            },
+        )
+
+    return Tool(
+        name="ghl_contact_add_note",
+        description=(
+            "Add a free-text note to a contact's timeline in GHL. "
+            "Use for 'spoke with them at 3pm', 'left voicemail', "
+            "'wants pricing breakdown' — anything that should appear "
+            "in the contact's history alongside other CRM activity. "
+            "Optional 'user_id' attributes the note to a specific GHL "
+            "user (call ghl_user_list to find one); omit and the note "
+            "is attributed to the integration. NET_WRITE — queues for "
+            "approval."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+                "body": {"type": "string"},
+                "user_id": {"type": "string"},
+            },
+            "required": ["contact_id", "body"],
+        },
+        risk=RiskClass.NET_WRITE,
+        handler=handler,
+    )
+
+
+# ── meta (PR #75c) ───────────────────────────────────────────────
+#
+# Three small reads that let the planner discover the IDs every
+# other tool needs. ``ghl_location_list`` is essential for agency
+# accounts; the other two are convenience reads that save a planner
+# turn looking IDs up from the GHL UI.
+
+
+def _location_list_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        try:
+            limit = int(args.get("limit") or 100)
+        except (TypeError, ValueError):
+            limit = 100
+        limit = max(1, min(limit, 500))
+        company_raw = args.get("company_id")
+        company_id = (
+            str(company_raw).strip()
+            if isinstance(company_raw, str) and company_raw.strip()
+            else None
+        )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_location_list")
+        try:
+            result = await client.locations_list(
+                company_id=company_id, limit=limit,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_location_list")
+        locations = result.get("locations") or []
+        lines = [
+            f"- {loc.get('name', '(unnamed)')} ({loc.get('id', '')})"
+            for loc in locations
+        ]
+        body = (
+            "\n".join(lines)
+            if lines
+            else "No locations visible to this PIT (agency-level "
+                 "tokens see all sub-accounts; location PITs see "
+                 "only their own)."
+        )
+        return ToolOutcome(
+            content=f"{len(locations)} location(s):\n{body}",
+            data={"locations": locations},
+        )
+
+    return Tool(
+        name="ghl_location_list",
+        description=(
+            "List GHL sub-accounts (locations) the agency PIT can "
+            "see. Agency-level tokens return every location under "
+            "the agency; location-scoped tokens return only their "
+            "own. Use to discover location IDs for the optional "
+            "'location_id' arg on every other tool. Optional "
+            "company_id narrows further when the PIT spans "
+            "multiple companies (rare). NET_READ."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "company_id": {"type": "string"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500,
+                },
+            },
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def _user_list_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        loc, err = _unwrap_location(args, "ghl_user_list")
+        if err:
+            return err
+        try:
+            limit = int(args.get("limit") or 100)
+        except (TypeError, ValueError):
+            limit = 100
+        limit = max(1, min(limit, 500))
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_user_list")
+        try:
+            result = await client.users_list(
+                location_id=loc, limit=limit,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_user_list")
+        users = result.get("users") or []
+        lines = [
+            (
+                f"- {u.get('firstName', '') or ''} "
+                f"{u.get('lastName', '') or ''}".strip()
+                + f" · {u.get('email', '') or '(no email)'}"
+                + f" · id={u.get('id', '')[:12]}…"
+                + (
+                    f" · roles={', '.join(u.get('roles', {}).get('role', []))}"
+                    if u.get("roles") else ""
+                )
+            )
+            for u in users
+        ]
+        body = "\n".join(lines) if lines else "No users."
+        return ToolOutcome(
+            content=f"{len(users)} user(s):\n{body}",
+            data={"users": users, "location_id": loc},
+        )
+
+    return Tool(
+        name="ghl_user_list",
+        description=(
+            "List GHL users in a location. Use to find a user_id "
+            "for assigning opportunities, attributing notes, or "
+            "routing conversations. Returns name, email, role(s), "
+            "id. NET_READ."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "location_id": {"type": "string"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500,
+                },
+            },
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def _custom_field_list_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        loc, err = _unwrap_location(args, "ghl_custom_field_list")
+        if err:
+            return err
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_custom_field_list")
+        try:
+            result = await client.custom_fields_list(location_id=loc)
+        except GHLError as e:
+            return _surface(e, "ghl_custom_field_list")
+        fields = result.get("customFields") or []
+        lines = [
+            (
+                f"- {f.get('name', '(unnamed)')} "
+                f"[{f.get('dataType', '?')}] id={f.get('id', '')[:12]}…"
+            )
+            for f in fields
+        ]
+        body = "\n".join(lines) if lines else "No custom fields."
+        return ToolOutcome(
+            content=f"{len(fields)} custom field(s):\n{body}",
+            data={"custom_fields": fields, "location_id": loc},
+        )
+
+    return Tool(
+        name="ghl_custom_field_list",
+        description=(
+            "List a location's custom fields with id, name, data "
+            "type. Use to discover the field id + value shape "
+            "before passing 'custom_fields' to ghl_contact_create / "
+            "update. NET_READ."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "location_id": {"type": "string"},
+            },
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def make_ghl_contact_tools() -> list[Tool]:
+    """Contacts CRUD + meta tools.
+
+    PR #75c ships these 11; sibling factories (pipelines, future
+    conversations / calendars / workflows) are kept separate so the
+    lifespan can register subsets without one factory's failure
+    breaking the others.
+    """
+    return [
+        _contact_create_tool(),
+        _contact_get_tool(),
+        _contact_search_tool(),
+        _contact_update_tool(),
+        _contact_delete_tool(),
+        _contact_add_tag_tool(),
+        _contact_remove_tag_tool(),
+        _contact_add_note_tool(),
+        _location_list_tool(),
+        _user_list_tool(),
+        _custom_field_list_tool(),
+    ]
+
+
+__all__ = ["make_ghl_contact_tools", "make_ghl_pipeline_tools"]

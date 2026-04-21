@@ -5,7 +5,7 @@
 # "send the rebuild offer", etc.). Keep this file as the reference.
 #
 # Template variables:
-#   {{first_name}}   — from Hunter.io / HubSpot best-guess
+#   {{first_name}}   — from Hunter.io / GHL best-guess
 #   {{company}}      — place display name
 #   {{website}}      — prospect domain (bare, no protocol)
 #   {{bad_score}}    — site_audit score 0–100 (higher = worse)

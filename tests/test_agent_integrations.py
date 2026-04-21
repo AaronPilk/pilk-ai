@@ -93,10 +93,11 @@ def test_sales_ops_manifest_declares_keys() -> None:
     path = AGENTS_DIR / "sales_ops_agent" / "manifest.yaml"
     manifest = Manifest.load(path)
     names = {i.name for i in manifest.integrations}
-    # The agent's sales-ops loop reads HubSpot + Hunter + Places +
+    # The agent's sales-ops loop reads GHL + Hunter + Places +
     # PageSpeed + Gmail — any one missing makes the run fail, so the
     # panel must surface them all.
-    assert "hubspot_private_token" in names
+    assert "ghl_api_key" in names
+    assert "ghl_default_location_id" in names
     assert "hunter_io_api_key" in names
     assert "google_places_api_key" in names
     assert "pagespeed_api_key" in names
@@ -155,19 +156,19 @@ def test_agents_route_reflects_configured_api_key(client: TestClient) -> None:
     with client:
         settings = get_settings()
         secrets = IntegrationSecretsStore(settings.db_path)
-        secrets.upsert("hubspot_private_token", "pat-test-12345")
+        secrets.upsert("ghl_api_key", "pit-test-12345")
         try:
             r = client.get("/agents")
             by_name = {a["name"]: a for a in r.json()["agents"]}
             sales = by_name["sales_ops_agent"]
-            hubspot = next(
+            ghl = next(
                 i
                 for i in sales["integrations"]
-                if i["name"] == "hubspot_private_token"
+                if i["name"] == "ghl_api_key"
             )
-            assert hubspot["configured"] is True
+            assert ghl["configured"] is True
         finally:
-            secrets.delete("hubspot_private_token")
+            secrets.delete("ghl_api_key")
 
 
 def test_integration_spec_round_trips_through_yaml(tmp_path: Path) -> None:

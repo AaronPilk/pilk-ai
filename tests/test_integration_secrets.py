@@ -36,41 +36,41 @@ def store() -> IntegrationSecretsStore:
 
 
 def test_upsert_and_get(store: IntegrationSecretsStore) -> None:
-    assert store.get_value("hubspot_private_token") is None
-    store.upsert("hubspot_private_token", "tok-1")
-    assert store.get_value("hubspot_private_token") == "tok-1"
+    assert store.get_value("ghl_api_key") is None
+    store.upsert("ghl_api_key", "tok-1")
+    assert store.get_value("ghl_api_key") == "tok-1"
 
 
 def test_upsert_replaces(store: IntegrationSecretsStore) -> None:
-    store.upsert("hubspot_private_token", "tok-1")
-    store.upsert("hubspot_private_token", "tok-2")
-    assert store.get_value("hubspot_private_token") == "tok-2"
+    store.upsert("ghl_api_key", "tok-1")
+    store.upsert("ghl_api_key", "tok-2")
+    assert store.get_value("ghl_api_key") == "tok-2"
 
 
 def test_upsert_rejects_empty_value(store: IntegrationSecretsStore) -> None:
     with pytest.raises(ValueError, match="empty values"):
-        store.upsert("hubspot_private_token", "")
+        store.upsert("ghl_api_key", "")
 
 
 def test_delete_roundtrip(store: IntegrationSecretsStore) -> None:
-    store.upsert("hubspot_private_token", "tok-1")
-    assert store.delete("hubspot_private_token") is True
-    assert store.get_value("hubspot_private_token") is None
+    store.upsert("ghl_api_key", "tok-1")
+    assert store.delete("ghl_api_key") is True
+    assert store.get_value("ghl_api_key") is None
     # Deleting again is a no-op, not an error.
-    assert store.delete("hubspot_private_token") is False
+    assert store.delete("ghl_api_key") is False
 
 
 def test_list_entries(store: IntegrationSecretsStore) -> None:
     store.upsert("hunter_io_api_key", "h-1")
-    store.upsert("hubspot_private_token", "t-1")
+    store.upsert("ghl_api_key", "t-1")
     names = sorted(e.name for e in store.list_entries())
-    assert names == ["hubspot_private_token", "hunter_io_api_key"]
+    assert names == ["ghl_api_key", "hunter_io_api_key"]
 
 
 def test_resolve_secret_prefers_store(store: IntegrationSecretsStore) -> None:
-    store.upsert("hubspot_private_token", "live")
+    store.upsert("ghl_api_key", "live")
     assert (
-        resolve_secret("hubspot_private_token", "env-fallback") == "live"
+        resolve_secret("ghl_api_key", "env-fallback") == "live"
     )
 
 
@@ -78,7 +78,7 @@ def test_resolve_secret_falls_back_to_env(
     store: IntegrationSecretsStore,
 ) -> None:
     assert (
-        resolve_secret("hubspot_private_token", "env-fallback")
+        resolve_secret("ghl_api_key", "env-fallback")
         == "env-fallback"
     )
 

@@ -69,8 +69,8 @@ def test_manifest_excludes_outreach_tools(manifest: Manifest) -> None:
         "x_post",
         "x_send_dm",
         "browser_form_fill",
-        "hubspot_upsert_contact",
-        "hubspot_add_note",
+        "ghl_contact_create",
+        "ghl_contact_add_note",
     }
     leaked = outreach_markers & set(manifest.tools)
     assert not leaked, f"prospector shouldn't have outreach tools: {leaked}"
