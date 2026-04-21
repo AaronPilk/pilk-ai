@@ -68,6 +68,7 @@ from core.integrations.apple import (
     make_messages_tools,
 )
 from core.integrations.client_secrets import load_client
+from core.integrations.ghl import make_ghl_pipeline_tools
 from core.integrations.google import (
     ROLES,
     make_calendar_tools,
@@ -534,6 +535,19 @@ async def lifespan(app: FastAPI):
     log.info(
         "notion_registered",
         tools=["notion_read", "notion_write"],
+    )
+
+    # Go High Level — agency PIT-backed CRM. Pipeline / opportunity
+    # tools ship here; contacts, conversations, calendars, and
+    # workflows land in follow-up PRs (#75c-e). Handlers resolve the
+    # PIT on every call so a runtime rotation via Settings → API Keys
+    # doesn't need a daemon restart.
+    ghl_pipeline_tools = make_ghl_pipeline_tools()
+    for t in ghl_pipeline_tools:
+        registry.register(t)
+    log.info(
+        "ghl_pipeline_tools_registered",
+        tools=[t.name for t in ghl_pipeline_tools],
     )
 
     # Apple Messages + Contacts — local macOS integrations (not OAuth).

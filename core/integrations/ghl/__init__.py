@@ -39,6 +39,7 @@ from core.integrations.ghl.client import (
     client_from_settings,
     resolve_location_id,
 )
+from core.integrations.ghl.tools import make_ghl_pipeline_tools
 
 __all__ = [
     "GHL_API_BASE",
@@ -47,5 +48,6 @@ __all__ = [
     "GHLError",
     "GHLNotConfiguredError",
     "client_from_settings",
+    "make_ghl_pipeline_tools",
     "resolve_location_id",
 ]

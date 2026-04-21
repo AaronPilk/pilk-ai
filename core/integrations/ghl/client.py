@@ -269,6 +269,112 @@ class GHLClient:
             f"/contacts/{contact_id}/notes", json=payload,
         )
 
+    # ── opportunities + pipelines ─────────────────────────────
+    #
+    # Pipelines are the sales-stage configuration; opportunities
+    # are individual deals moving through those stages. GHL's API
+    # exposes pipelines as read-only from the integration side
+    # (operators configure them in the UI) and opportunities as
+    # full CRUD. Moving an opportunity between stages is just a
+    # PUT with a new ``pipelineStageId``, but we expose it as a
+    # dedicated method/tool since "advance the deal" is the most
+    # common operation and keeping it distinct makes the planner's
+    # tool selection cleaner.
+
+    async def pipelines_list(
+        self, *, location_id: str,
+    ) -> dict[str, Any]:
+        return await self._get(
+            "/opportunities/pipelines",
+            params={"locationId": location_id},
+        )
+
+    async def opportunities_create(
+        self, *, location_id: str, payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        body = {"locationId": location_id, **payload}
+        return await self._post("/opportunities/", json=body)
+
+    async def opportunities_get(
+        self, opportunity_id: str,
+    ) -> dict[str, Any]:
+        return await self._get(
+            f"/opportunities/{opportunity_id}"
+        )
+
+    async def opportunities_search(
+        self,
+        *,
+        location_id: str,
+        query: str | None = None,
+        pipeline_id: str | None = None,
+        pipeline_stage_id: str | None = None,
+        status: str | None = None,
+        assigned_to: str | None = None,
+        limit: int = 25,
+    ) -> dict[str, Any]:
+        """Rich filter over a location's opportunities.
+
+        Every filter is optional; unset ones are omitted from the
+        query string so GHL's endpoint sees only the constraints
+        the caller actually asked for.
+        """
+        params: dict[str, Any] = {
+            "location_id": location_id,
+            "limit": int(limit),
+        }
+        if query:
+            params["query"] = query
+        if pipeline_id:
+            params["pipeline_id"] = pipeline_id
+        if pipeline_stage_id:
+            params["pipeline_stage_id"] = pipeline_stage_id
+        if status:
+            params["status"] = status
+        if assigned_to:
+            params["assigned_to"] = assigned_to
+        return await self._get("/opportunities/search", params=params)
+
+    async def opportunities_update(
+        self,
+        opportunity_id: str,
+        *,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._put(
+            f"/opportunities/{opportunity_id}", json=payload,
+        )
+
+    async def opportunities_move_stage(
+        self,
+        opportunity_id: str,
+        *,
+        pipeline_stage_id: str,
+        pipeline_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Shortcut over ``opportunities_update`` for the common
+        "advance / regress this deal" operation.
+
+        ``pipeline_id`` is technically optional for GHL when the
+        stage id is globally unique, but GHL has been known to
+        422 when the target stage belongs to a different pipeline
+        than the opportunity currently sits in. We pass it through
+        when set so the planner can be explicit.
+        """
+        payload: dict[str, Any] = {"pipelineStageId": pipeline_stage_id}
+        if pipeline_id:
+            payload["pipelineId"] = pipeline_id
+        return await self.opportunities_update(
+            opportunity_id, payload=payload,
+        )
+
+    async def opportunities_delete(
+        self, opportunity_id: str,
+    ) -> dict[str, Any]:
+        return await self._delete(
+            f"/opportunities/{opportunity_id}"
+        )
+
     # ── meta (agency + directory reads) ───────────────────────
 
     async def locations_list(
