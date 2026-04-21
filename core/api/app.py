@@ -80,6 +80,7 @@ from core.integrations.google.slides import make_slides_tools
 from core.integrations.legacy_migration import migrate_batch_k_google_files
 from core.integrations.linkedin import make_linkedin_tools
 from core.integrations.meta import make_meta_tools
+from core.integrations.notion import make_notion_tools
 from core.integrations.oauth_flow import OAuthFlowManager
 from core.integrations.provider import ProviderRegistry
 from core.integrations.providers.google import google_provider
@@ -523,6 +524,16 @@ async def lifespan(app: FastAPI):
     log.info(
         "meta_registered",
         linked=accounts.default("meta", "user") is not None,
+    )
+
+    # Notion — API-key integration (not OAuth). Tools resolve the key
+    # via resolve_secret on every call, so a runtime update in Settings
+    # → API Keys takes effect without restarting the daemon.
+    for t in make_notion_tools():
+        registry.register(t)
+    log.info(
+        "notion_registered",
+        tools=["notion_read", "notion_write"],
     )
 
     # Apple Messages + Contacts — local macOS integrations (not OAuth).

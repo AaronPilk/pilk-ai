@@ -58,6 +58,18 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         ),
         "env": "HUNTER_IO_API_KEY",
     },
+    "notion_api_key": {
+        "label": "Notion",
+        "description": (
+            "Internal Integration Secret from "
+            "notion.com/my-integrations. After pasting, share each "
+            "page / database you want PILK to read or append to with "
+            "the integration (⋯ menu on the page → Add connections). "
+            "Nothing is accessible by default — Notion is opt-in "
+            "per-page."
+        ),
+        "env": "NOTION_API_KEY",
+    },
     "google_places_api_key": {
         "label": "Google Places",
         "description": (
