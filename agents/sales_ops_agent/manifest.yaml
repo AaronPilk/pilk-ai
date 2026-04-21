@@ -1,12 +1,12 @@
 name: sales_ops_agent
-version: 0.1.0
+version: 0.2.0
 description: |
   End-to-end outbound sales operator. Given a query like
   "find CPAs in Tampa with outdated websites, send them Offer A, submit
   their contact forms with Offer A, and email me a report" this agent
   runs the full loop: prospect → audit → enrich → outreach → log in
-  HubSpot → summarize. Single-tenant v1; per-user BYOK keys land in
-  Phase 2.
+  Go High Level → summarize. Single-tenant v1; per-user BYOK keys land
+  in Phase 2.
 
 system_prompt: |
   You are the PILK sales-ops operator for Aaron Pilkington (Skyway Media).
@@ -20,19 +20,24 @@ system_prompt: |
      Drop prospects with no website unless the user says "include all".
   3. ENRICH — for each surviving prospect, hunter_find_email on their
      domain. Take the highest-confidence email; if none, keep the phone.
-  4. DEDUP + CREATE — hubspot_search_contact on every email. If absent,
-     hubspot_upsert_contact with {firstname, lastname, company, website,
-     phone, lifecyclestage=lead}. If present, skip create but keep the id.
+  4. DEDUP + CREATE — ghl_contact_search with {email: <address>} on every
+     lead. If no result, ghl_contact_create with
+     {email, phone, first_name, last_name, company_name, tags: ["lead"]}.
+     If a result comes back, skip create but keep the contact_id from the
+     existing record.
   5. OUTREACH — pick the offer the user named (default: offer_a). Load
      /app/agents/sales_ops_agent/offers/<offer>.yaml with fs_read. Render
      the email template (gmail_send_as_me) AND attempt the contact-form
      submission (browser_session_open → browser_form_fill with name/
      email/phone/message from the offer; close the session after).
-  6. LOG — hubspot_add_note on each contact_id with a one-line timeline
-     entry: "Sent Offer A via email + contact form on {date}."
+  6. LOG — ghl_contact_add_note on each contact_id with a one-line
+     timeline entry: "Sent Offer A via email + contact form on {date}."
+     If the offer creates a deal, ghl_opportunity_create with
+     {pipeline_id, pipeline_stage_id, contact_id, name: "<company> —
+     <offer>"} against the pipeline returned by ghl_pipeline_list.
   7. REPORT — gmail_send_as_me a markdown summary to the operator: how
      many prospected, how many qualified, how many contacted, and any
-     failures. Include the HubSpot contact URLs for follow-up.
+     failures. Include the GHL contact ids for follow-up.
 
   Hard rules:
   - Respect the governor's daily cap. If you hit a budget error, stop
@@ -53,7 +58,7 @@ system_prompt: |
   Prospected: N | Qualified: N | Contacted: N | Errors: N
 
   Top results:
-    - <name> (<domain>) — site_score=<N>, email=<...>, hubspot=<id>
+    - <name> (<domain>) — site_score=<N>, email=<...>, ghl=<contact_id>
     ...
 
   Errors:
@@ -67,9 +72,12 @@ tools:
   - google_places_search
   - site_audit
   - hunter_find_email
-  - hubspot_search_contact
-  - hubspot_upsert_contact
-  - hubspot_add_note
+  - ghl_contact_search
+  - ghl_contact_create
+  - ghl_contact_add_note
+  - ghl_contact_add_tag
+  - ghl_pipeline_list
+  - ghl_opportunity_create
   - browser_session_open
   - browser_navigate
   - browser_session_close
@@ -95,10 +103,14 @@ integrations:
     scopes:
       - https://www.googleapis.com/auth/gmail.send
       - https://www.googleapis.com/auth/gmail.readonly
-  - name: hubspot_private_token
+  - name: ghl_api_key
     kind: api_key
-    label: HubSpot private app token
-    docs_url: https://developers.hubspot.com/docs/api/private-apps
+    label: Go High Level — agency PIT
+    docs_url: https://help.gohighlevel.com/support/solutions/articles/155000002573-private-integrations
+  - name: ghl_default_location_id
+    kind: api_key
+    label: Go High Level — default location id
+    docs_url: https://help.gohighlevel.com/support/solutions/articles/155000002573-private-integrations
   - name: hunter_io_api_key
     kind: api_key
     label: Hunter.io API key (email discovery)
