@@ -49,12 +49,14 @@ _ROLE_NAMES: dict[GoogleRole, dict[str, str]] = {
         "search": "gmail_search_pilk_inbox",
         "read": "gmail_read_pilk",
         "thread_read": "gmail_thread_read_pilk",
+        "draft_save": "gmail_draft_save_as_pilk",
     },
     "user": {
         "send": "gmail_send_as_me",
         "search": "gmail_search_my_inbox",
         "read": "gmail_read_me",
         "thread_read": "gmail_thread_read_me",
+        "draft_save": "gmail_draft_save_as_me",
     },
 }
 
@@ -120,6 +122,7 @@ def make_gmail_tools(role: GoogleRole, accounts: AccountsStore) -> list[Tool]:
         body = str(args.get("body") or "")
         cc = str(args.get("cc") or "").strip()
         bcc = str(args.get("bcc") or "").strip()
+        reply_to_thread_id = str(args.get("reply_to_thread_id") or "").strip()
         if not to or "@" not in to:
             return ToolOutcome(
                 content=f"{names['send']} requires a valid 'to' address.",
@@ -141,12 +144,18 @@ def make_gmail_tools(role: GoogleRole, accounts: AccountsStore) -> list[Tool]:
             if creds.email:
                 msg["from"] = creds.email
             raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
-            sent = await asyncio.to_thread(_do_send, creds, raw)
+            sent = await asyncio.to_thread(
+                _do_send, creds, raw, reply_to_thread_id or None,
+            )
             thread_id = sent.get("threadId") or ""
             msg_id = sent.get("id") or ""
+            suffix = (
+                " (replied to existing thread)"
+                if reply_to_thread_id else ""
+            )
             return ToolOutcome(
                 content=(
-                    f"Sent to {to} (subject: {subject}). "
+                    f"Sent to {to} (subject: {subject}){suffix}. "
                     f"Thread {thread_id[:12]}…"
                 ),
                 data={"thread_id": thread_id, "message_id": msg_id, "to": to},
@@ -211,6 +220,63 @@ def make_gmail_tools(role: GoogleRole, accounts: AccountsStore) -> list[Tool]:
             data=msg,
         )
 
+    async def _draft_save(args: dict, ctx: ToolContext) -> ToolOutcome:
+        creds, _account = _load_creds()
+        if creds is None:
+            return _not_linked
+        to = str(args.get("to") or "").strip()
+        subject = str(args.get("subject") or "").strip()
+        body = str(args.get("body") or "")
+        cc = str(args.get("cc") or "").strip()
+        bcc = str(args.get("bcc") or "").strip()
+        reply_to_thread_id = str(args.get("reply_to_thread_id") or "").strip()
+        if not to or "@" not in to:
+            return ToolOutcome(
+                content=f"{names['draft_save']} requires a valid 'to' address.",
+                is_error=True,
+            )
+        if not subject:
+            return ToolOutcome(
+                content=f"{names['draft_save']} requires a 'subject'.",
+                is_error=True,
+            )
+        try:
+            msg = MIMEText(body, "plain", "utf-8")
+            msg["to"] = to
+            msg["subject"] = subject
+            if cc:
+                msg["cc"] = cc
+            if bcc:
+                msg["bcc"] = bcc
+            if creds.email:
+                msg["from"] = creds.email
+            raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+            draft = await asyncio.to_thread(
+                _do_draft_save, creds, raw, reply_to_thread_id or None,
+            )
+            draft_id = draft.get("id") or ""
+            msg_obj = draft.get("message") or {}
+            thread_id = msg_obj.get("threadId") or ""
+            return ToolOutcome(
+                content=(
+                    f"Draft saved to {to} (subject: {subject}). "
+                    f"Draft {draft_id[:12]}… — review in Gmail drafts, "
+                    "then send when ready."
+                ),
+                data={
+                    "draft_id": draft_id,
+                    "thread_id": thread_id,
+                    "to": to,
+                    "subject": subject,
+                },
+            )
+        except Exception as e:
+            log.exception("gmail_draft_save_failed", tool=names["draft_save"])
+            return ToolOutcome(
+                content=f"{names['draft_save']} failed: {type(e).__name__}: {e}",
+                is_error=True,
+            )
+
     async def _thread_read(args: dict, ctx: ToolContext) -> ToolOutcome:
         creds, _account = _load_creds()
         if creds is None:
@@ -265,6 +331,17 @@ def make_gmail_tools(role: GoogleRole, accounts: AccountsStore) -> list[Tool]:
                 "body": {"type": "string", "description": "Plain-text body."},
                 "cc": {"type": "string", "description": "Optional CC (comma-separated)."},
                 "bcc": {"type": "string", "description": "Optional BCC."},
+                "reply_to_thread_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional Gmail threadId to attach this message "
+                        "to. When set, the message lands inside the "
+                        "existing thread instead of starting a new one — "
+                        "Gmail threads it on both ends. Get the thread_id "
+                        "from a prior gmail_search / gmail_thread_read "
+                        "result."
+                    ),
+                },
             },
             "required": ["to", "subject", "body"],
         },
@@ -332,18 +409,84 @@ def make_gmail_tools(role: GoogleRole, accounts: AccountsStore) -> list[Tool]:
         handler=_thread_read,
         account_binding=binding,
     )
-    return [send_tool, search_tool, read_tool, thread_read_tool]
+    draft_save_tool = Tool(
+        name=names["draft_save"],
+        description=(
+            f"Save a Gmail draft from {sender} without sending. Use "
+            "when the operator wants to review a message before it "
+            "goes out, or when composing a reply they'll edit later. "
+            "Returns the draft_id — the draft appears in Gmail's "
+            "Drafts folder and can be sent from there. WRITE_LOCAL "
+            "risk, not COMMS: nothing leaves the mailbox."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient email address."},
+                "subject": {"type": "string"},
+                "body": {"type": "string", "description": "Plain-text body."},
+                "cc": {"type": "string", "description": "Optional CC (comma-separated)."},
+                "bcc": {"type": "string", "description": "Optional BCC."},
+                "reply_to_thread_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional Gmail threadId. When set, the draft "
+                        "attaches to the existing thread so the reply "
+                        "threads correctly if the operator sends it."
+                    ),
+                },
+            },
+            "required": ["to", "subject", "body"],
+        },
+        # Nothing actually goes out, so we treat this the same as any
+        # other local write. The operator reviews the draft in Gmail
+        # and hits send themselves (or asks PILK to).
+        risk=RiskClass.WRITE_LOCAL,
+        handler=_draft_save,
+        account_binding=binding,
+    )
+    return [send_tool, search_tool, read_tool, thread_read_tool, draft_save_tool]
 
 
 # ── synchronous Google API helpers (run in a thread) ───────────────────
 
 
-def _do_send(creds, raw_b64url: str) -> dict:
+def _do_send(
+    creds,
+    raw_b64url: str,
+    reply_to_thread_id: str | None = None,
+) -> dict:
     service = creds.build("gmail", "v1")
+    body: dict = {"raw": raw_b64url}
+    if reply_to_thread_id:
+        # Gmail threads by attaching messages to an existing threadId.
+        # Subject + References headers would also normally matter for
+        # threading on OTHER clients, but the Gmail web UI threads on
+        # threadId alone; we keep the body simple and let the operator
+        # pass a threading-friendly subject themselves.
+        body["threadId"] = reply_to_thread_id
     return (
         service.users()
         .messages()
-        .send(userId="me", body={"raw": raw_b64url})
+        .send(userId="me", body=body)
+        .execute()
+    )
+
+
+def _do_draft_save(
+    creds,
+    raw_b64url: str,
+    reply_to_thread_id: str | None = None,
+) -> dict:
+    service = creds.build("gmail", "v1")
+    message: dict = {"raw": raw_b64url}
+    if reply_to_thread_id:
+        message["threadId"] = reply_to_thread_id
+    body: dict = {"message": message}
+    return (
+        service.users()
+        .drafts()
+        .create(userId="me", body=body)
         .execute()
     )
 

@@ -16,6 +16,10 @@ from core.tools.builtin.finance import (
 from core.tools.builtin.fs import fs_read_tool, fs_write_tool
 from core.tools.builtin.google_ads import GOOGLE_ADS_TOOLS
 from core.tools.builtin.llm_ask import make_llm_ask_tool
+from core.tools.builtin.memory_manage import (
+    make_memory_delete_tool,
+    make_memory_list_tool,
+)
 from core.tools.builtin.memory_remember import make_memory_remember_tool
 from core.tools.builtin.meta_ads import META_ADS_TOOLS
 from core.tools.builtin.net import net_fetch_tool
@@ -79,6 +83,8 @@ __all__ = [
     "make_browser_tools",
     "make_code_task_tool",
     "make_llm_ask_tool",
+    "make_memory_delete_tool",
+    "make_memory_list_tool",
     "make_memory_remember_tool",
     "make_sentinel_acknowledge_tool",
     "make_sentinel_heartbeat_tool",

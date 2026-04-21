@@ -120,6 +120,8 @@ from core.tools.builtin import (
     make_browser_tools,
     make_code_task_tool,
     make_llm_ask_tool,
+    make_memory_delete_tool,
+    make_memory_list_tool,
     make_memory_remember_tool,
     make_sentinel_tools,
     make_xauusd_take_over_tool,
@@ -590,6 +592,12 @@ async def lifespan(app: FastAPI):
     # remember something). Registration is unconditional so the tool
     # is advertised in the schema regardless of API-key state.
     registry.register(make_memory_remember_tool(memory))
+    # memory_list + memory_delete complete the CRUD cycle on the
+    # structured memory store so the orchestrator can recall what
+    # it knows + forget things the operator corrects, without
+    # bouncing to the dashboard.
+    registry.register(make_memory_list_tool(memory))
+    registry.register(make_memory_delete_tool(memory))
 
     # Long-term brain vault — Obsidian-compatible markdown folder the
     # operator can also open visually. Auto-create + seed if missing,
@@ -616,7 +624,7 @@ async def lifespan(app: FastAPI):
         vault=str(brain.root),
         tools=[
             "brain_note_read", "brain_note_write", "brain_search",
-            "brain_note_list",
+            "brain_note_list", "brain_note_search_and_replace",
             *[t.name for t in ingest_tools],
         ],
     )

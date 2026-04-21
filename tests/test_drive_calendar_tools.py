@@ -37,9 +37,14 @@ def test_drive_tool_names_and_bindings(tmp_path: Path) -> None:
 def test_calendar_tool_names_risk_and_bindings(tmp_path: Path) -> None:
     tools = make_calendar_tools(_empty_store(tmp_path))
     names = [t.name for t in tools]
-    assert names == ["calendar_read_my_today", "calendar_create_my_event"]
-    read, create = tools
+    assert names == [
+        "calendar_read_my_today",
+        "calendar_read_my_range",
+        "calendar_create_my_event",
+    ]
+    read, read_range, create = tools
     assert read.risk == RiskClass.NET_READ
+    assert read_range.risk == RiskClass.NET_READ
     assert create.risk == RiskClass.NET_WRITE
     for t in tools:
         assert t.account_binding is not None
@@ -61,9 +66,13 @@ async def test_drive_tools_refuse_when_not_linked(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_calendar_tools_refuse_when_not_linked(tmp_path: Path) -> None:
     store = _empty_store(tmp_path)
-    [read, create] = make_calendar_tools(store)
+    [read, read_range, create] = make_calendar_tools(store)
     read_result = await read.handler({}, ToolContext())
     assert read_result.is_error is True
+    read_range_result = await read_range.handler(
+        {"start": "2026-04-20", "end": "2026-04-27"}, ToolContext(),
+    )
+    assert read_range_result.is_error is True
     create_result = await create.handler(
         {
             "summary": "x",
@@ -74,3 +83,40 @@ async def test_calendar_tools_refuse_when_not_linked(tmp_path: Path) -> None:
     )
     assert create_result.is_error is True
     assert "Expand access" in create_result.content
+
+
+@pytest.mark.asyncio
+async def test_calendar_range_validation_fires_before_creds_check(
+    tmp_path: Path,
+) -> None:
+    """The range tool validates start/end/span BEFORE consulting
+    the accounts store, so a malformed call surfaces the real error
+    instead of a generic 'Expand access'. Locks in the input-first
+    ordering so a future refactor doesn't regress it."""
+    store = _empty_store(tmp_path)
+    [_read, read_range, _create] = make_calendar_tools(store)
+    # Missing fields.
+    out = await read_range.handler({"start": "2026-04-20"}, ToolContext())
+    assert out.is_error is True
+    assert "'start' and 'end'" in out.content
+
+    # Malformed date (not ISO).
+    out = await read_range.handler(
+        {"start": "next monday", "end": "2026-04-27"}, ToolContext(),
+    )
+    assert out.is_error is True
+    assert "invalid date" in out.content.lower()
+
+    # Inverted range.
+    out = await read_range.handler(
+        {"start": "2026-04-27", "end": "2026-04-20"}, ToolContext(),
+    )
+    assert out.is_error is True
+    assert ">=" in out.content
+
+    # Too wide (>92 days).
+    out = await read_range.handler(
+        {"start": "2026-01-01", "end": "2026-12-31"}, ToolContext(),
+    )
+    assert out.is_error is True
+    assert "too wide" in out.content.lower()
