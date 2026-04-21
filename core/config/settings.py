@@ -153,6 +153,36 @@ class Settings(BaseSettings):
             "NOTION_API_KEY", "PILK_NOTION_API_KEY"
         ),
     )
+    # Go High Level — Agency-level Private Integration Token.
+    # Create at Settings → Company → Private Integrations in GHL's
+    # agency view. Check EVERY scope box when issuing — the token
+    # represents PILK's full access across every sub-account the
+    # agency owns. Bearer auth; no OAuth flow, no token refresh.
+    ghl_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GHL_API_KEY", "PILK_GHL_API_KEY"
+        ),
+    )
+    # Default GHL location (sub-account) id. Every GHL call is
+    # scoped to a location; tools accept an optional ``location_id``
+    # override per invocation but fall back here when the operator
+    # hasn't specified. Grab the 24-char id from the URL of any
+    # sub-account: https://app.gohighlevel.com/location/<id>/…
+    ghl_default_location_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GHL_DEFAULT_LOCATION_ID", "PILK_GHL_DEFAULT_LOCATION_ID"
+        ),
+    )
+    # GHL API base — overridable for white-labelled reseller
+    # deployments or future API-version pinning.
+    ghl_api_base: str = Field(
+        default="https://services.leadconnectorhq.com",
+        validation_alias=AliasChoices(
+            "GHL_API_BASE", "PILK_GHL_API_BASE"
+        ),
+    )
     # Higgsfield Cloud API key for cinematic text→video / image→video.
     # Dashboard: https://cloud.higgsfield.ai. Tokens are short-lived;
     # rotate via the dashboard-paste flow rather than baking long-lived

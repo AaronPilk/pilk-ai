@@ -70,6 +70,27 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         ),
         "env": "NOTION_API_KEY",
     },
+    "ghl_api_key": {
+        "label": "Go High Level — agency PIT",
+        "description": (
+            "Agency-level Private Integration Token from GHL "
+            "(Settings → Company → Private Integrations). Check "
+            "EVERY scope box when issuing — the token represents "
+            "PILK's full access across every sub-account the agency "
+            "owns. Shown once; copy and paste here."
+        ),
+        "env": "GHL_API_KEY",
+    },
+    "ghl_default_location_id": {
+        "label": "Go High Level — default location id",
+        "description": (
+            "Default sub-account (location) id PILK operates in when "
+            "a tool call doesn't specify one. Grab the 24-char id "
+            "from any sub-account URL: "
+            "https://app.gohighlevel.com/location/<id>/…"
+        ),
+        "env": "GHL_DEFAULT_LOCATION_ID",
+    },
     "google_places_api_key": {
         "label": "Google Places",
         "description": (
