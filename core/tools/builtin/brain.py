@@ -32,6 +32,7 @@ def make_brain_tools(vault: Vault) -> list[Tool]:
         _write_tool(vault),
         _search_tool(vault),
         _list_tool(vault),
+        _search_and_replace_tool(vault),
     ]
 
 
@@ -220,6 +221,129 @@ def _search_tool(vault: Vault) -> Tool:
             "required": ["query"],
         },
         risk=RiskClass.READ,
+        handler=handler,
+    )
+
+
+def _search_and_replace_tool(vault: Vault) -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext
+    ) -> ToolOutcome:
+        path = str(args.get("path") or "").strip()
+        find = args.get("find")
+        replace = args.get("replace")
+        replace_all = args.get("replace_all")
+        if replace_all is None:
+            replace_all = True  # documented default
+        if not path:
+            return ToolOutcome(
+                content=(
+                    "brain_note_search_and_replace requires a 'path'."
+                ),
+                is_error=True,
+            )
+        if not isinstance(find, str) or find == "":
+            return ToolOutcome(
+                content=(
+                    "brain_note_search_and_replace requires a non-empty "
+                    "'find' string."
+                ),
+                is_error=True,
+            )
+        if not isinstance(replace, str):
+            return ToolOutcome(
+                content=(
+                    "brain_note_search_and_replace requires a 'replace' "
+                    "string (empty string allowed, e.g. to delete)."
+                ),
+                is_error=True,
+            )
+        try:
+            body = vault.read(path)
+        except FileNotFoundError as e:
+            return ToolOutcome(content=str(e), is_error=True)
+        except (IsADirectoryError, ValueError) as e:
+            return ToolOutcome(content=str(e), is_error=True)
+        count_before = body.count(find)
+        if count_before == 0:
+            return ToolOutcome(
+                content=(
+                    f"No occurrences of {find!r} in {path}. Nothing to "
+                    "replace."
+                ),
+                data={"path": path, "replaced": 0, "find": find},
+                is_error=True,
+            )
+        if replace_all:
+            new_body = body.replace(find, replace)
+            replaced = count_before
+        else:
+            new_body = body.replace(find, replace, 1)
+            replaced = 1
+        try:
+            vault.write(path, new_body, append=False)
+        except ValueError as e:
+            return ToolOutcome(content=str(e), is_error=True)
+        except OSError as e:
+            return ToolOutcome(
+                content=f"write failed: {type(e).__name__}: {e}",
+                is_error=True,
+            )
+        return ToolOutcome(
+            content=(
+                f"Replaced {replaced} occurrence(s) of {find!r} "
+                f"in {path}."
+            ),
+            data={
+                "path": path,
+                "replaced": replaced,
+                "find": find,
+                "replace_all": bool(replace_all),
+            },
+        )
+
+    return Tool(
+        name="brain_note_search_and_replace",
+        description=(
+            "Read a vault note, substitute every occurrence of `find` "
+            "with `replace`, and write it back atomically. Exact "
+            "string match — no regex. Use for targeted edits like "
+            "fixing a typo or renaming an entity across a long note "
+            "without rewriting the whole body. Default replaces every "
+            "occurrence; pass replace_all=false for just the first. "
+            "Errors out (non-destructively) if the `find` string isn't "
+            "present so you don't silently no-op."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Vault-relative path to the note.",
+                },
+                "find": {
+                    "type": "string",
+                    "description": (
+                        "Exact substring to locate. Case-sensitive."
+                    ),
+                },
+                "replace": {
+                    "type": "string",
+                    "description": (
+                        "Replacement. Empty string deletes the match."
+                    ),
+                },
+                "replace_all": {
+                    "type": "boolean",
+                    "description": (
+                        "If false, replace only the first match. "
+                        "Default true."
+                    ),
+                },
+            },
+            "required": ["path", "find", "replace"],
+        },
+        risk=RiskClass.WRITE_LOCAL,
         handler=handler,
     )
 

@@ -1,8 +1,10 @@
 """Google Calendar tools, user-role only.
 
-Two tools bound to the user's default Google account:
+Three tools bound to the user's default Google account:
 
-- calendar_read_my_today  — today's events on the primary calendar
+- calendar_read_my_today   — today's events on the primary calendar
+                             (NET_READ).
+- calendar_read_my_range   — events between two ISO dates, inclusive
                              (NET_READ).
 - calendar_create_my_event — create an event on the primary calendar
                              (NET_WRITE — always hits approval).
@@ -25,6 +27,14 @@ from core.tools.registry import AccountBinding, Tool, ToolContext, ToolOutcome
 log = get_logger("pilkd.google.calendar")
 
 MAX_EVENTS = 50
+# Upper bound on calendar_read_my_range total events. Anything bigger
+# should be paged or narrowed; a month of a busy calendar fits inside
+# 250 comfortably. Gmail/Calendar's native pagination would add a lot
+# of surface area for what is, in practice, a recap-style tool.
+MAX_RANGE_EVENTS = 250
+# Hard cap on the range width, to keep a runaway "read the last year"
+# call from turning into a 5000-event response.
+MAX_RANGE_DAYS = 92
 
 
 def make_calendar_tools(accounts: AccountsStore) -> list[Tool]:
@@ -91,6 +101,97 @@ def make_calendar_tools(accounts: AccountsStore) -> list[Tool]:
         return ToolOutcome(
             content=header + "\n".join(lines),
             data={"date": date_str, "events": events},
+        )
+
+    async def _read_range(args: dict, ctx: ToolContext) -> ToolOutcome:
+        # Input validation first so a malformed call fails fast even
+        # when Google isn't linked — the error tells the caller what
+        # to fix without forcing them to link an account to discover
+        # they passed a bad date.
+        start_raw = str(args.get("start") or "").strip()
+        end_raw = str(args.get("end") or "").strip()
+        if not start_raw or not end_raw:
+            return ToolOutcome(
+                content=(
+                    "calendar_read_my_range requires 'start' and 'end' "
+                    "as ISO dates (YYYY-MM-DD)."
+                ),
+                is_error=True,
+            )
+        try:
+            start_day = _parse_date(start_raw)
+            end_day = _parse_date(end_raw)
+        except ValueError as e:
+            return ToolOutcome(
+                content=(
+                    f"calendar_read_my_range invalid date: {e}. "
+                    "Use YYYY-MM-DD format."
+                ),
+                is_error=True,
+            )
+        if end_day < start_day:
+            return ToolOutcome(
+                content="calendar_read_my_range 'end' must be >= 'start'.",
+                is_error=True,
+            )
+        span_days = (end_day - start_day).days + 1
+        if span_days > MAX_RANGE_DAYS:
+            return ToolOutcome(
+                content=(
+                    f"calendar_read_my_range range too wide "
+                    f"({span_days} days, cap {MAX_RANGE_DAYS}). Narrow "
+                    "the window or call multiple times."
+                ),
+                is_error=True,
+            )
+        creds, _account = _load_creds()
+        if creds is None:
+            return not_linked
+        try:
+            events = await asyncio.to_thread(
+                _do_read_range, creds, start_day, end_day,
+            )
+        except Exception as e:
+            log.exception("calendar_read_range_failed")
+            return ToolOutcome(
+                content=(
+                    f"calendar_read_my_range failed: {type(e).__name__}: {e}"
+                ),
+                is_error=True,
+            )
+        if not events:
+            return ToolOutcome(
+                content=(
+                    "No events on your primary calendar between "
+                    f"{start_raw} and {end_raw}."
+                ),
+                data={"start": start_raw, "end": end_raw, "events": []},
+            )
+        truncated = len(events) > MAX_RANGE_EVENTS
+        shown = events[:MAX_RANGE_EVENTS]
+        lines = [
+            f"{e['start']}  →  {e['end']}   {e['summary']}"
+            + (
+                f"   (with {', '.join(e['attendees'])})"
+                if e['attendees'] else ""
+            )
+            for e in shown
+        ]
+        header = (
+            f"{len(events)} event(s) between {start_raw} and {end_raw}:\n\n"
+        )
+        if truncated:
+            lines.append(
+                f"\n[showing first {MAX_RANGE_EVENTS} of {len(events)}]"
+            )
+        return ToolOutcome(
+            content=header + "\n".join(lines),
+            data={
+                "start": start_raw,
+                "end": end_raw,
+                "events": shown,
+                "total": len(events),
+            },
         )
 
     async def _create_event(args: dict, ctx: ToolContext) -> ToolOutcome:
@@ -171,6 +272,38 @@ def make_calendar_tools(accounts: AccountsStore) -> list[Tool]:
         handler=_read_today,
         account_binding=binding,
     )
+    read_range_tool = Tool(
+        name="calendar_read_my_range",
+        description=(
+            "List events on your primary Google Calendar between two "
+            "ISO dates (inclusive). Great for weekly recaps, "
+            "end-of-month reviews, or 'what's on next month?'. Hard "
+            f"caps: {MAX_RANGE_DAYS}-day window, {MAX_RANGE_EVENTS} "
+            "events returned (older events drop off first). Read-"
+            "only; first call may ask for approval."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "start": {
+                    "type": "string",
+                    "description": (
+                        "First ISO date (YYYY-MM-DD), inclusive."
+                    ),
+                },
+                "end": {
+                    "type": "string",
+                    "description": (
+                        "Last ISO date (YYYY-MM-DD), inclusive."
+                    ),
+                },
+            },
+            "required": ["start", "end"],
+        },
+        risk=RiskClass.NET_READ,
+        handler=_read_range,
+        account_binding=binding,
+    )
     create_tool = Tool(
         name="calendar_create_my_event",
         description=(
@@ -205,7 +338,7 @@ def make_calendar_tools(accounts: AccountsStore) -> list[Tool]:
         handler=_create_event,
         account_binding=binding,
     )
-    return [read_tool, create_tool]
+    return [read_tool, read_range_tool, create_tool]
 
 
 # ── synchronous Calendar helpers ────────────────────────────────────────
@@ -225,6 +358,52 @@ def _do_read_today(creds, date_str: str) -> list[dict]:
             singleEvents=True,
             orderBy="startTime",
             maxResults=MAX_EVENTS,
+        )
+        .execute()
+    )
+    events: list[dict] = []
+    for e in listing.get("items", []) or []:
+        events.append(
+            {
+                "id": e.get("id"),
+                "summary": e.get("summary", "(no title)"),
+                "start": _event_time(e.get("start")),
+                "end": _event_time(e.get("end")),
+                "attendees": [
+                    a.get("email")
+                    for a in (e.get("attendees") or [])
+                    if a.get("email")
+                ],
+                "html_link": e.get("htmlLink", ""),
+            }
+        )
+    return events
+
+
+def _do_read_range(creds, start_day, end_day) -> list[dict]:
+    """Fetch all primary-calendar events between start_day and
+    end_day (inclusive). Uses singleEvents expansion so recurring
+    events are flattened into concrete instances, and orderBy=startTime
+    so the caller gets a chronological list.
+
+    We intentionally do not page through ``nextPageToken`` — the
+    MAX_RANGE_EVENTS cap in the caller is the ceiling. If that ever
+    bites, pagination can land without changing the tool contract.
+    """
+    service = creds.build("calendar", "v3")
+    start = datetime.combine(start_day, time.min, tzinfo=UTC)
+    # ``end_day`` is inclusive, so we bump past it by one day to get
+    # a half-open [start, end) interval the API likes.
+    end = datetime.combine(end_day, time.min, tzinfo=UTC) + timedelta(days=1)
+    listing = (
+        service.events()
+        .list(
+            calendarId="primary",
+            timeMin=start.isoformat(),
+            timeMax=end.isoformat(),
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=MAX_RANGE_EVENTS,
         )
         .execute()
     )
