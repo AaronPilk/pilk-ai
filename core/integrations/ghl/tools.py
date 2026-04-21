@@ -1946,8 +1946,868 @@ def make_ghl_conversation_tools() -> list[Tool]:
     ]
 
 
+# ── calendars + appointments (PR #75e) ───────────────────────────
+#
+# Five tools covering the operator's scheduling surface: list
+# calendars, look up free slots, list existing appointments, book,
+# reschedule. GHL's free-slots endpoint wants epoch milliseconds;
+# the tool wrappers accept ISO date strings and do the conversion
+# so the planner can reason in human time.
+
+
+def _iso_date_to_ms(iso_date: str) -> int:
+    """Convert an ISO date (YYYY-MM-DD) or ISO datetime to epoch
+    milliseconds UTC. Handles both date-only and full datetime
+    inputs defensively."""
+    from datetime import UTC, datetime
+
+    s = iso_date.strip()
+    if len(s) == 10:
+        # Date only → midnight UTC.
+        dt = datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=UTC)
+    else:
+        # Try ISO 8601 with optional 'Z'.
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+    return int(dt.timestamp() * 1000)
+
+
+def _calendar_list_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        loc, err = _unwrap_location(args, "ghl_calendar_list")
+        if err:
+            return err
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_calendar_list")
+        try:
+            result = await client.calendars_list(location_id=loc)
+        except GHLError as e:
+            return _surface(e, "ghl_calendar_list")
+        calendars = result.get("calendars") or []
+        lines = [
+            (
+                f"- {c.get('name', '(unnamed)')} "
+                f"[{c.get('eventType', 'calendar')}] "
+                f"(id={c.get('id', '')[:12]}…)"
+            )
+            for c in calendars
+        ]
+        body = (
+            "\n".join(lines) if lines
+            else "No calendars configured for this location."
+        )
+        return ToolOutcome(
+            content=f"{len(calendars)} calendar(s):\n{body}",
+            data={"calendars": calendars, "location_id": loc},
+        )
+
+    return Tool(
+        name="ghl_calendar_list",
+        description=(
+            "List every calendar (booking page) configured in a "
+            "GHL location. Use before ghl_appointment_slots to find "
+            "the calendar_id you want availability for. Returns "
+            "name, event type (round-robin / team / single-user), "
+            "and id for each. NET_READ."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "location_id": {"type": "string"},
+            },
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def _appointment_slots_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        calendar_id = str(args.get("calendar_id") or "").strip()
+        start_date = str(args.get("start_date") or "").strip()
+        end_date = str(args.get("end_date") or "").strip()
+        if not calendar_id:
+            return ToolOutcome(
+                content="ghl_appointment_slots requires 'calendar_id'.",
+                is_error=True,
+            )
+        if not (start_date and end_date):
+            return ToolOutcome(
+                content=(
+                    "ghl_appointment_slots requires 'start_date' + "
+                    "'end_date' (ISO dates, e.g. 2026-04-21)."
+                ),
+                is_error=True,
+            )
+        try:
+            start_ms = _iso_date_to_ms(start_date)
+            end_ms = _iso_date_to_ms(end_date)
+        except ValueError as e:
+            return ToolOutcome(
+                content=(
+                    f"ghl_appointment_slots invalid date: {e}. Use "
+                    "YYYY-MM-DD or a full ISO 8601 datetime."
+                ),
+                is_error=True,
+            )
+        if end_ms <= start_ms:
+            return ToolOutcome(
+                content=(
+                    "ghl_appointment_slots 'end_date' must be "
+                    "after 'start_date'."
+                ),
+                is_error=True,
+            )
+        timezone = (
+            str(args["timezone"]).strip()
+            if isinstance(args.get("timezone"), str)
+            and args["timezone"].strip()
+            else None
+        )
+        user_id = (
+            str(args["user_id"]).strip()
+            if isinstance(args.get("user_id"), str)
+            and args["user_id"].strip()
+            else None
+        )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_appointment_slots")
+        try:
+            result = await client.calendars_free_slots(
+                calendar_id,
+                start_date_ms=start_ms,
+                end_date_ms=end_ms,
+                timezone=timezone,
+                user_id=user_id,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_appointment_slots")
+        # GHL's free-slots response shape varies: sometimes
+        # {"slots": [...]}, sometimes keyed by date (YYYY-MM-DD).
+        # Count + preview both shapes without ordering assumptions.
+        slot_count = 0
+        preview: list[str] = []
+        slots_field = result.get("slots")
+        if isinstance(slots_field, list):
+            slot_count = len(slots_field)
+            preview = [str(s) for s in slots_field[:5]]
+        else:
+            for day, day_slots in (result.items() if isinstance(result, dict) else []):
+                if isinstance(day_slots, dict):
+                    inner = day_slots.get("slots") or []
+                    if isinstance(inner, list):
+                        slot_count += len(inner)
+                        for s in inner[:2]:
+                            preview.append(f"{day}: {s}")
+        body = (
+            "\n".join(f"- {s}" for s in preview[:10])
+            if preview else "No slots available in that window."
+        )
+        return ToolOutcome(
+            content=f"{slot_count} slot(s) available:\n{body}",
+            data={
+                "calendar_id": calendar_id,
+                "start_date": start_date,
+                "end_date": end_date,
+                "raw": result,
+            },
+        )
+
+    return Tool(
+        name="ghl_appointment_slots",
+        description=(
+            "List available booking slots for a GHL calendar in an "
+            "ISO date range. Pass 'start_date' + 'end_date' as "
+            "YYYY-MM-DD (or full ISO 8601); the tool converts to "
+            "the epoch-milliseconds format GHL wants. Optional "
+            "'timezone' (IANA string like 'America/New_York') and "
+            "'user_id' narrow to specific team-member availability. "
+            "NET_READ."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "calendar_id": {"type": "string"},
+                "start_date": {
+                    "type": "string",
+                    "description": "ISO date (YYYY-MM-DD), inclusive.",
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "ISO date (YYYY-MM-DD), exclusive.",
+                },
+                "timezone": {"type": "string"},
+                "user_id": {"type": "string"},
+            },
+            "required": ["calendar_id", "start_date", "end_date"],
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def _appointment_list_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        loc, err = _unwrap_location(args, "ghl_appointment_list")
+        if err:
+            return err
+        calendar_id = (
+            str(args["calendar_id"]).strip()
+            if isinstance(args.get("calendar_id"), str)
+            and args["calendar_id"].strip() else None
+        )
+        contact_id = (
+            str(args["contact_id"]).strip()
+            if isinstance(args.get("contact_id"), str)
+            and args["contact_id"].strip() else None
+        )
+        user_id = (
+            str(args["user_id"]).strip()
+            if isinstance(args.get("user_id"), str)
+            and args["user_id"].strip() else None
+        )
+        start_ms: int | None = None
+        end_ms: int | None = None
+        try:
+            if isinstance(args.get("start_date"), str) and args["start_date"].strip():
+                start_ms = _iso_date_to_ms(args["start_date"])
+            if isinstance(args.get("end_date"), str) and args["end_date"].strip():
+                end_ms = _iso_date_to_ms(args["end_date"])
+        except ValueError as e:
+            return ToolOutcome(
+                content=f"ghl_appointment_list invalid date: {e}",
+                is_error=True,
+            )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_appointment_list")
+        try:
+            result = await client.appointments_list(
+                location_id=loc,
+                calendar_id=calendar_id,
+                contact_id=contact_id,
+                user_id=user_id,
+                start_date_ms=start_ms,
+                end_date_ms=end_ms,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_appointment_list")
+        events = result.get("events") or result.get("appointments") or []
+        lines = [
+            (
+                f"- {e.get('title', '(untitled)')} "
+                f"{e.get('startTime', '')[:16]} → "
+                f"{e.get('endTime', '')[11:16]} "
+                f"[{e.get('appointmentStatus', 'booked')}] "
+                f"(id={e.get('id', '')[:12]}…)"
+            )
+            for e in events
+        ]
+        body = "\n".join(lines) if lines else "No appointments match."
+        return ToolOutcome(
+            content=f"{len(events)} appointment(s):\n{body}",
+            data={"appointments": events, "location_id": loc},
+        )
+
+    return Tool(
+        name="ghl_appointment_list",
+        description=(
+            "List appointments in a GHL location. Every filter is "
+            "optional: calendar_id, contact_id, user_id (assignee), "
+            "start_date + end_date (ISO dates — converted to ms "
+            "internally). Returns title / start / end / status / "
+            "id for each. NET_READ."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "calendar_id": {"type": "string"},
+                "contact_id": {"type": "string"},
+                "user_id": {"type": "string"},
+                "start_date": {"type": "string"},
+                "end_date": {"type": "string"},
+                "location_id": {"type": "string"},
+            },
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def _appointment_create_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        calendar_id = str(args.get("calendar_id") or "").strip()
+        contact_id = str(args.get("contact_id") or "").strip()
+        start_time = str(args.get("start_time") or "").strip()
+        if not calendar_id:
+            return ToolOutcome(
+                content=(
+                    "ghl_appointment_create requires 'calendar_id' "
+                    "(from ghl_calendar_list)."
+                ),
+                is_error=True,
+            )
+        if not contact_id:
+            return ToolOutcome(
+                content=(
+                    "ghl_appointment_create requires 'contact_id'."
+                ),
+                is_error=True,
+            )
+        if not start_time:
+            return ToolOutcome(
+                content=(
+                    "ghl_appointment_create requires 'start_time' "
+                    "(ISO 8601 with timezone, e.g. "
+                    "2026-04-21T14:00:00-07:00)."
+                ),
+                is_error=True,
+            )
+        loc, err = _unwrap_location(args, "ghl_appointment_create")
+        if err:
+            return err
+        end_time = (
+            str(args["end_time"]).strip()
+            if isinstance(args.get("end_time"), str)
+            and args["end_time"].strip() else None
+        )
+        title = (
+            str(args["title"]).strip()
+            if isinstance(args.get("title"), str)
+            and args["title"].strip() else None
+        )
+        status = (
+            str(args["appointment_status"]).strip()
+            if isinstance(args.get("appointment_status"), str)
+            and args["appointment_status"].strip() else None
+        )
+        assigned_user = (
+            str(args["assigned_user_id"]).strip()
+            if isinstance(args.get("assigned_user_id"), str)
+            and args["assigned_user_id"].strip() else None
+        )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_appointment_create")
+        try:
+            result = await client.appointments_create(
+                calendar_id=calendar_id,
+                contact_id=contact_id,
+                location_id=loc,
+                start_time_iso=start_time,
+                end_time_iso=end_time,
+                title=title,
+                appointment_status=status,
+                assigned_user_id=assigned_user,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_appointment_create")
+        appt = result.get("appointment") or result
+        appt_id = appt.get("id") or ""
+        return ToolOutcome(
+            content=(
+                f"Booked '{title or 'appointment'}' at {start_time} "
+                f"for contact {contact_id[:12]}… "
+                f"(id={appt_id[:12]}…)"
+            ),
+            data={
+                "appointment_id": appt_id,
+                "calendar_id": calendar_id,
+                "contact_id": contact_id,
+                "start_time": start_time,
+                "raw": result,
+            },
+        )
+
+    return Tool(
+        name="ghl_appointment_create",
+        description=(
+            "Book an appointment for a contact on a GHL calendar. "
+            "Requires calendar_id, contact_id, and start_time (ISO "
+            "8601 WITH timezone, e.g. 2026-04-21T14:00:00-07:00). "
+            "Optional: end_time, title, appointment_status "
+            "('confirmed' | 'new' | 'showed' | 'noshow' | "
+            "'cancelled'), assigned_user_id. NET_WRITE — queues for "
+            "approval."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "calendar_id": {"type": "string"},
+                "contact_id": {"type": "string"},
+                "start_time": {"type": "string"},
+                "end_time": {"type": "string"},
+                "title": {"type": "string"},
+                "appointment_status": {"type": "string"},
+                "assigned_user_id": {"type": "string"},
+                "location_id": {"type": "string"},
+            },
+            "required": ["calendar_id", "contact_id", "start_time"],
+        },
+        risk=RiskClass.NET_WRITE,
+        handler=handler,
+    )
+
+
+def _appointment_update_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        appt_id = str(args.get("appointment_id") or "").strip()
+        if not appt_id:
+            return ToolOutcome(
+                content=(
+                    "ghl_appointment_update requires "
+                    "'appointment_id'."
+                ),
+                is_error=True,
+            )
+        payload: dict[str, Any] = {}
+        for arg_key, body_key in (
+            ("start_time", "startTime"),
+            ("end_time", "endTime"),
+            ("title", "title"),
+            ("appointment_status", "appointmentStatus"),
+            ("assigned_user_id", "assignedUserId"),
+        ):
+            raw = args.get(arg_key)
+            if isinstance(raw, str) and raw.strip():
+                payload[body_key] = raw.strip()
+        if not payload:
+            return ToolOutcome(
+                content=(
+                    "ghl_appointment_update needs at least one "
+                    "field to change (start_time / end_time / "
+                    "title / appointment_status / assigned_user_id)."
+                ),
+                is_error=True,
+            )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_appointment_update")
+        try:
+            result = await client.appointments_update(
+                appt_id, payload=payload,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_appointment_update")
+        changed = ", ".join(sorted(payload.keys()))
+        return ToolOutcome(
+            content=(
+                f"Updated appointment {appt_id[:12]}… ({changed})."
+            ),
+            data={
+                "appointment_id": appt_id,
+                "changed_fields": sorted(payload.keys()),
+                "raw": result,
+            },
+        )
+
+    return Tool(
+        name="ghl_appointment_update",
+        description=(
+            "Reschedule or update an existing appointment. Pass "
+            "only the fields you're changing — common uses: "
+            "push to new start_time + end_time (both in ISO 8601 "
+            "with timezone), flip appointment_status to 'showed' "
+            "/ 'noshow' / 'cancelled' after the fact, or reassign "
+            "to a different user. NET_WRITE — queues for approval."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "appointment_id": {"type": "string"},
+                "start_time": {"type": "string"},
+                "end_time": {"type": "string"},
+                "title": {"type": "string"},
+                "appointment_status": {"type": "string"},
+                "assigned_user_id": {"type": "string"},
+            },
+            "required": ["appointment_id"],
+        },
+        risk=RiskClass.NET_WRITE,
+        handler=handler,
+    )
+
+
+def make_ghl_calendar_tools() -> list[Tool]:
+    """Calendar + appointment tools.
+
+    Five tools — list calendars, find free slots, list existing
+    appointments, book a new one, update/reschedule an existing
+    one. Every mutation (create/update) is NET_WRITE so it flows
+    through the approval queue by default.
+    """
+    return [
+        _calendar_list_tool(),
+        _appointment_slots_tool(),
+        _appointment_list_tool(),
+        _appointment_create_tool(),
+        _appointment_update_tool(),
+    ]
+
+
+# ── tasks + workflows + tags (PR #75e) ───────────────────────────
+
+
+def _task_list_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        contact_id = str(args.get("contact_id") or "").strip()
+        if not contact_id:
+            return ToolOutcome(
+                content="ghl_task_list requires 'contact_id'.",
+                is_error=True,
+            )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_task_list")
+        try:
+            result = await client.tasks_list(contact_id)
+        except GHLError as e:
+            return _surface(e, "ghl_task_list")
+        tasks = result.get("tasks") or []
+        lines = [
+            (
+                f"- {'[x]' if t.get('completed') else '[ ]'} "
+                f"{t.get('title', '(untitled)')} "
+                f"(due: {t.get('dueDate', 'none')})"
+            )
+            for t in tasks
+        ]
+        body = "\n".join(lines) if lines else "No tasks on this contact."
+        return ToolOutcome(
+            content=f"{len(tasks)} task(s):\n{body}",
+            data={"tasks": tasks, "contact_id": contact_id},
+        )
+
+    return Tool(
+        name="ghl_task_list",
+        description=(
+            "List every task on a GHL contact. Returns title, "
+            "completed status, due date per task. Use to surface "
+            "follow-ups before composing outreach to the contact. "
+            "NET_READ."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+            },
+            "required": ["contact_id"],
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def _task_create_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        contact_id = str(args.get("contact_id") or "").strip()
+        title = str(args.get("title") or "").strip()
+        if not contact_id:
+            return ToolOutcome(
+                content="ghl_task_create requires 'contact_id'.",
+                is_error=True,
+            )
+        if not title:
+            return ToolOutcome(
+                content=(
+                    "ghl_task_create requires a non-empty 'title' "
+                    "(the one-line summary shown in GHL)."
+                ),
+                is_error=True,
+            )
+        body = (
+            str(args["body"]).strip()
+            if isinstance(args.get("body"), str)
+            and args["body"].strip() else None
+        )
+        due = (
+            str(args["due_date"]).strip()
+            if isinstance(args.get("due_date"), str)
+            and args["due_date"].strip() else None
+        )
+        assigned = (
+            str(args["assigned_to"]).strip()
+            if isinstance(args.get("assigned_to"), str)
+            and args["assigned_to"].strip() else None
+        )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_task_create")
+        try:
+            result = await client.tasks_create(
+                contact_id,
+                title=title,
+                body=body,
+                due_date_iso=due,
+                assigned_to=assigned,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_task_create")
+        task = result.get("task") or result
+        tid = task.get("id") or ""
+        return ToolOutcome(
+            content=(
+                f"Created task '{title}' on contact "
+                f"{contact_id[:12]}… (id={tid[:12]}…)"
+            ),
+            data={
+                "task_id": tid,
+                "contact_id": contact_id,
+                "title": title,
+                "raw": result,
+            },
+        )
+
+    return Tool(
+        name="ghl_task_create",
+        description=(
+            "Add a task to a GHL contact. Use for 'follow up "
+            "Tuesday', 'send contract draft', etc. Required: "
+            "contact_id + title. Optional: body (longer notes), "
+            "due_date (ISO 8601), assigned_to (user id). NET_WRITE "
+            "— queues for approval."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+                "title": {"type": "string"},
+                "body": {"type": "string"},
+                "due_date": {"type": "string"},
+                "assigned_to": {"type": "string"},
+            },
+            "required": ["contact_id", "title"],
+        },
+        risk=RiskClass.NET_WRITE,
+        handler=handler,
+    )
+
+
+def _workflow_list_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        loc, err = _unwrap_location(args, "ghl_workflow_list")
+        if err:
+            return err
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_workflow_list")
+        try:
+            result = await client.workflows_list(location_id=loc)
+        except GHLError as e:
+            return _surface(e, "ghl_workflow_list")
+        workflows = result.get("workflows") or []
+        lines = [
+            (
+                f"- {w.get('name', '(unnamed)')} "
+                f"[{w.get('status', '?')}] "
+                f"(id={w.get('id', '')[:12]}…)"
+            )
+            for w in workflows
+        ]
+        body = (
+            "\n".join(lines) if lines
+            else "No workflows configured for this location."
+        )
+        return ToolOutcome(
+            content=f"{len(workflows)} workflow(s):\n{body}",
+            data={"workflows": workflows, "location_id": loc},
+        )
+
+    return Tool(
+        name="ghl_workflow_list",
+        description=(
+            "List every automation workflow configured in a GHL "
+            "location. Use before ghl_workflow_add_contact to find "
+            "the workflow_id you want to enroll a contact in. "
+            "Returns name, status (active / draft), and id. "
+            "NET_READ."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "location_id": {"type": "string"},
+            },
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def _workflow_add_contact_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        contact_id = str(args.get("contact_id") or "").strip()
+        workflow_id = str(args.get("workflow_id") or "").strip()
+        if not contact_id:
+            return ToolOutcome(
+                content=(
+                    "ghl_workflow_add_contact requires 'contact_id'."
+                ),
+                is_error=True,
+            )
+        if not workflow_id:
+            return ToolOutcome(
+                content=(
+                    "ghl_workflow_add_contact requires "
+                    "'workflow_id' (from ghl_workflow_list)."
+                ),
+                is_error=True,
+            )
+        event_start = (
+            str(args["event_start_time"]).strip()
+            if isinstance(args.get("event_start_time"), str)
+            and args["event_start_time"].strip() else None
+        )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_workflow_add_contact")
+        try:
+            result = await client.workflows_add_contact(
+                contact_id=contact_id,
+                workflow_id=workflow_id,
+                event_start_time_iso=event_start,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_workflow_add_contact")
+        return ToolOutcome(
+            content=(
+                f"Enrolled contact {contact_id[:12]}… in workflow "
+                f"{workflow_id[:12]}…"
+            ),
+            data={
+                "contact_id": contact_id,
+                "workflow_id": workflow_id,
+                "raw": result,
+            },
+        )
+
+    return Tool(
+        name="ghl_workflow_add_contact",
+        description=(
+            "Enroll a contact in a GHL automation workflow. The "
+            "workflow itself (triggers, steps, delays) is "
+            "configured in the GHL UI — this just kicks it off for "
+            "the contact. Optional 'event_start_time' (ISO 8601) "
+            "anchors time-based delays in the workflow. NET_WRITE "
+            "— queues for approval."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+                "workflow_id": {"type": "string"},
+                "event_start_time": {"type": "string"},
+            },
+            "required": ["contact_id", "workflow_id"],
+        },
+        risk=RiskClass.NET_WRITE,
+        handler=handler,
+    )
+
+
+def _tag_list_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        loc, err = _unwrap_location(args, "ghl_tag_list")
+        if err:
+            return err
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_tag_list")
+        try:
+            result = await client.tags_list(location_id=loc)
+        except GHLError as e:
+            return _surface(e, "ghl_tag_list")
+        tags = result.get("tags") or []
+        # Some GHL shapes return {name: ...}, some plain strings.
+        names = [
+            t.get("name") if isinstance(t, dict) else str(t)
+            for t in tags
+        ]
+        names = [n for n in names if n]
+        body = (
+            ", ".join(names) if names
+            else "No tags defined for this location."
+        )
+        return ToolOutcome(
+            content=f"{len(names)} tag(s): {body}",
+            data={"tags": names, "location_id": loc},
+        )
+
+    return Tool(
+        name="ghl_tag_list",
+        description=(
+            "List every tag name in use in a GHL location. Use "
+            "before ghl_contact_add_tag to pick a canonical name "
+            "the location already has, instead of creating "
+            "near-duplicates (e.g. 'hot-lead' vs 'hot lead'). "
+            "NET_READ."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "location_id": {"type": "string"},
+            },
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def make_ghl_workflow_tools() -> list[Tool]:
+    """Tasks + workflows + tags.
+
+    Five tools covering the automation + classification surface:
+    list + create tasks for a contact, list + enroll contacts in
+    workflows, list location-wide tags. Tasks / workflows mutate
+    (NET_WRITE) so they queue for approval; lookups are NET_READ.
+    """
+    return [
+        _task_list_tool(),
+        _task_create_tool(),
+        _workflow_list_tool(),
+        _workflow_add_contact_tool(),
+        _tag_list_tool(),
+    ]
+
+
 __all__ = [
+    "make_ghl_calendar_tools",
     "make_ghl_contact_tools",
     "make_ghl_conversation_tools",
     "make_ghl_pipeline_tools",
+    "make_ghl_workflow_tools",
 ]
