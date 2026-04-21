@@ -67,7 +67,7 @@ from core.integrations.apple import (
     make_contacts_tools,
     make_messages_tools,
 )
-from core.integrations.client_secrets import load_client
+from core.integrations.client_secrets import load_client, setup_hint
 from core.integrations.ghl import (
     make_ghl_calendar_tools,
     make_ghl_contact_tools,
@@ -440,10 +440,14 @@ async def lifespan(app: FastAPI):
     def _load_oauth_client(name: str) -> tuple[str, str] | None:
         return load_client(name, settings=settings)
 
+    def _oauth_setup_hint(name: str) -> str | None:
+        return setup_hint(name, settings=settings)
+
     oauth_flow = OAuthFlowManager(
         providers=oauth_providers,
         accounts=accounts,
         client_loader=_load_oauth_client,
+        setup_hint_loader=_oauth_setup_hint,
         public_base_url=f"http://{settings.host}:{settings.port}",
     )
 

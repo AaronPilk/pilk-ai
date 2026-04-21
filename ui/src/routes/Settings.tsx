@@ -815,6 +815,10 @@ export default function Settings() {
 
         <div className="accounts-connect">
           <div className="accounts-connect-label">Connect a new account</div>
+          <div className="accounts-connect-note">
+            You can connect multiple accounts from the same provider —
+            PILK keeps each one separate and you can pick a default per role.
+          </div>
           <div className="accounts-provider-grid">
             {providers.map((p) => {
               // When a provider supports both roles, default to the most
@@ -825,12 +829,35 @@ export default function Settings() {
               )
                 ? "user"
                 : "system";
+              const existing = (accounts ?? []).filter(
+                (a) => a.provider === p.name,
+              ).length;
+              const chipLabel =
+                existing > 0 ? `Add another ${p.label}` : p.label;
+              const disabled = !p.configured;
+              const title = disabled
+                ? p.setup_hint ?? `${p.label} OAuth client is not configured.`
+                : existing > 0
+                  ? `You have ${existing} ${p.label} account${existing === 1 ? "" : "s"} connected. Click to add another.`
+                  : `Connect a ${p.label} account.`;
               return (
                 <button
                   key={p.name}
                   type="button"
-                  className="accounts-provider-chip"
+                  className={
+                    "accounts-provider-chip" +
+                    (disabled ? " accounts-provider-chip--disabled" : "")
+                  }
+                  disabled={disabled}
+                  title={title}
                   onClick={() => {
+                    if (disabled) {
+                      setConnectError(
+                        p.setup_hint ??
+                          `${p.label} OAuth client is not configured.`,
+                      );
+                      return;
+                    }
                     setConnectError(null);
                     setConnectDialog({
                       provider: p.name,
@@ -839,7 +866,14 @@ export default function Settings() {
                     });
                   }}
                 >
-                  <span className="accounts-provider-chip-label">{p.label}</span>
+                  <span className="accounts-provider-chip-label">
+                    {chipLabel}
+                  </span>
+                  {disabled && (
+                    <span className="accounts-provider-chip-tag">
+                      Not configured
+                    </span>
+                  )}
                 </button>
               );
             })}

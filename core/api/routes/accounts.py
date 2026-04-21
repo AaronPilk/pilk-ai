@@ -87,8 +87,11 @@ async def _broadcast(request: Request, event_type: str, payload: dict) -> None:
 @router.get("/providers")
 async def list_providers(request: Request) -> dict:
     registry = _providers(request)
+    flow = getattr(request.app.state, "oauth_flow", None)
     out: list[dict] = []
     for p in registry.all():
+        configured = flow.is_configured(p.name) if flow is not None else False
+        hint = flow.setup_hint(p.name) if (flow is not None and not configured) else None
         out.append(
             {
                 "name": p.name,
@@ -107,6 +110,8 @@ async def list_providers(request: Request) -> dict:
                     for name, label in p.scope_groups.items()
                 ],
                 "default_scope_groups": list(p.default_scope_groups),
+                "configured": configured,
+                "setup_hint": hint,
             }
         )
     return {"providers": out}
