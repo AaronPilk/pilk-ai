@@ -1,17 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { pilk, type ApprovalRequest } from "../state/api";
+import {
+  deleteChatAttachment,
+  pilk,
+  uploadChatAttachment,
+  type ApprovalRequest,
+  type ChatAttachment,
+} from "../state/api";
 import { useLivePlans } from "../state/plans";
 import PlanCard from "../components/PlanCard";
 import ApprovalInline from "../components/ApprovalInline";
 import VoiceOrb from "../components/VoiceOrb";
 
 type Msg =
-  | { kind: "user"; id: string; text: string }
+  | { kind: "user"; id: string; text: string; attachments?: ChatAttachment[] }
   | { kind: "assistant"; id: string; text: string; plan_id?: string }
   | { kind: "system"; id: string; text: string }
   | { kind: "plan"; plan_id: string }
   | { kind: "approval"; approval_id: string };
+
+/** Files the composer already uploaded; kept local to the draft until
+ * Send wires them onto the WS message. Each entry pairs a ChatAttachment
+ * with a preview URL for image thumbnails (freed on remove / submit). */
+interface DraftAttachment {
+  attachment: ChatAttachment;
+  previewUrl?: string;
+}
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -46,6 +60,11 @@ export default function Chat() {
   const [resolvedApprovals, setResolvedApprovals] = useState<Record<string, { decision: string; reason?: string }>>({});
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [drafts, setDrafts] = useState<DraftAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -131,14 +150,72 @@ export default function Chat() {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, plans, approvals]);
 
+  const uploadFiles = useCallback(async (files: FileList | File[]) => {
+    const list = Array.from(files);
+    if (list.length === 0) return;
+    setUploading(true);
+    setUploadError(null);
+    // Upload in sequence rather than parallel — keeps the browser's
+    // progress feedback legible and avoids the server choking on five
+    // 20 MiB PDFs arriving on the same event-loop tick.
+    for (const file of list) {
+      try {
+        const attachment = await uploadChatAttachment(file);
+        const previewUrl = file.type.startsWith("image/")
+          ? URL.createObjectURL(file)
+          : undefined;
+        setDrafts((prev) => [...prev, { attachment, previewUrl }]);
+      } catch (e) {
+        setUploadError(e instanceof Error ? e.message : String(e));
+        break;
+      }
+    }
+    setUploading(false);
+  }, []);
+
+  const removeDraft = useCallback(
+    (id: string) => {
+      setDrafts((prev) => {
+        const match = prev.find((d) => d.attachment.id === id);
+        if (match?.previewUrl) URL.revokeObjectURL(match.previewUrl);
+        return prev.filter((d) => d.attachment.id !== id);
+      });
+      // Fire-and-forget server-side cleanup. The orchestrator would
+      // only read the file if referenced on a send, so leaving it on
+      // disk is harmless — this just keeps temp clean.
+      void deleteChatAttachment(id);
+    },
+    [],
+  );
+
   const submit = useCallback(() => {
     const text = input.trim();
-    if (!text || busy) return;
+    if (busy) return;
+    if (!text && drafts.length === 0) return;
     const id = uid();
-    setMessages((prev) => [...prev, { kind: "user", id, text }]);
-    pilk.send({ type: "chat.user", id, text });
+    const attachments = drafts.map((d) => d.attachment);
+    setMessages((prev) => [
+      ...prev,
+      {
+        kind: "user",
+        id,
+        text,
+        attachments: attachments.length ? attachments : undefined,
+      },
+    ]);
+    pilk.send({
+      type: "chat.user",
+      id,
+      text,
+      attachments: attachments.map((a) => ({ id: a.id })),
+    });
+    // Release preview ObjectURLs now that the thumbnails render from
+    // the attachment metadata instead of the draft.
+    drafts.forEach((d) => d.previewUrl && URL.revokeObjectURL(d.previewUrl));
     setInput("");
-  }, [input, busy]);
+    setDrafts([]);
+    setUploadError(null);
+  }, [input, busy, drafts]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -146,6 +223,37 @@ export default function Chat() {
       submit();
     }
   };
+
+  const onDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setDragOver(false);
+      if (busy) return;
+      if (e.dataTransfer.files?.length) {
+        void uploadFiles(e.dataTransfer.files);
+      }
+    },
+    [busy, uploadFiles],
+  );
+
+  const onDragOver = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      // Needed so the browser treats this as a drop target.
+      e.preventDefault();
+      if (!busy) setDragOver(true);
+    },
+    [busy],
+  );
+
+  const onDragLeave = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      // Ignore drag-leaves that fire when hovering over an inner
+      // element (e.g. textarea) — only reset when the pointer actually
+      // leaves the drop container.
+      if (e.currentTarget === e.target) setDragOver(false);
+    },
+    [],
+  );
 
   return (
     <div className="chat">
@@ -210,7 +318,14 @@ export default function Chat() {
           }
           return (
             <div key={m.id ?? i} className={`msg msg--${m.kind}`}>
-              <div className="msg-text">{m.text}</div>
+              {m.kind === "user" && m.attachments?.length ? (
+                <div className="msg-attachments">
+                  {m.attachments.map((a) => (
+                    <AttachmentPreview key={a.id} attachment={a} />
+                  ))}
+                </div>
+              ) : null}
+              {m.text ? <div className="msg-text">{m.text}</div> : null}
             </div>
           );
         })}
@@ -219,7 +334,53 @@ export default function Chat() {
       <div className="chat-orb-dock">
         <VoiceOrb size="large" />
       </div>
-      <div className="chat-composer">
+      <div
+        className={
+          "chat-composer" + (dragOver ? " chat-composer--dragover" : "")
+        }
+        onDrop={onDrop}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+      >
+        {drafts.length > 0 && (
+          <div className="chat-drafts">
+            {drafts.map((d) => (
+              <div key={d.attachment.id} className="chat-draft">
+                {d.previewUrl ? (
+                  <img
+                    src={d.previewUrl}
+                    alt={d.attachment.filename}
+                    className="chat-draft-thumb"
+                  />
+                ) : (
+                  <div className="chat-draft-icon">
+                    {d.attachment.kind === "document" ? "PDF" : "TXT"}
+                  </div>
+                )}
+                <div className="chat-draft-meta">
+                  <div className="chat-draft-name" title={d.attachment.filename}>
+                    {d.attachment.filename}
+                  </div>
+                  <div className="chat-draft-size">
+                    {formatBytes(d.attachment.size)}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="chat-draft-remove"
+                  onClick={() => removeDraft(d.attachment.id)}
+                  title="Remove attachment"
+                  aria-label="Remove attachment"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {uploadError && (
+          <div className="chat-upload-error">{uploadError}</div>
+        )}
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -227,16 +388,38 @@ export default function Chat() {
           placeholder={
             busy
               ? "A plan is currently running — wait for it to finish…"
-              : "Tell PILK what to do. ⌘/Ctrl+Enter to send."
+              : "Tell PILK what to do. ⌘/Ctrl+Enter to send. Drop files anywhere."
           }
           rows={3}
           disabled={busy}
         />
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,.md,.txt,.csv,.json"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            if (e.target.files) void uploadFiles(e.target.files);
+            // Reset so selecting the same file twice still fires change.
+            e.target.value = "";
+          }}
+        />
         <div className="chat-actions">
+          <button
+            className="btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={busy || uploading}
+            title="Attach files"
+          >
+            {uploading ? "Uploading…" : "Attach"}
+          </button>
           <button
             className="btn btn--primary"
             onClick={submit}
-            disabled={busy || !input.trim()}
+            disabled={
+              busy || uploading || (!input.trim() && drafts.length === 0)
+            }
           >
             {busy ? "Running…" : "Send"}
           </button>
@@ -244,4 +427,32 @@ export default function Chat() {
       </div>
     </div>
   );
+}
+
+/** Inline preview used in the chat thread for a sent attachment.
+ *  Images render as a thumbnail at the stored /chat/uploads/{id}/raw
+ *  path if we ever expose one; for now we fall back to a filename chip
+ *  since the upload response doesn't include a public URL. */
+function AttachmentPreview({ attachment }: { attachment: ChatAttachment }) {
+  return (
+    <div className="msg-attachment" title={attachment.filename}>
+      <span className="msg-attachment-kind">
+        {attachment.kind === "image"
+          ? "IMG"
+          : attachment.kind === "document"
+            ? "PDF"
+            : "TXT"}
+      </span>
+      <span className="msg-attachment-name">{attachment.filename}</span>
+      <span className="msg-attachment-size">
+        {formatBytes(attachment.size)}
+      </span>
+    </div>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }

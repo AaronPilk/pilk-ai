@@ -1,7 +1,9 @@
 """WebSocket endpoint.
 
 Inbound events from the dashboard:
-  chat.user   {id, text} — start a new plan with `text` as the goal.
+  chat.user   {id, text, attachments?} — start a new plan.
+              `attachments` is an optional [{id: str}, ...] where each
+              id was returned by POST /chat/uploads.
   ping        {id}        — liveness check; server replies with `pong`.
 
 Outbound events from pilkd (via the hub):
@@ -20,7 +22,9 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from core.chat import AttachmentError
 from core.logging import get_logger
+from core.orchestrator.orchestrator import ChatAttachment
 
 router = APIRouter()
 log = get_logger("pilkd.ws")
@@ -55,7 +59,8 @@ async def websocket(ws: WebSocket) -> None:
             mtype = msg.get("type")
             if mtype == "chat.user":
                 text = (msg.get("text") or "").strip()
-                if not text:
+                raw_attachments = msg.get("attachments") or []
+                if not text and not raw_attachments:
                     continue
                 if orchestrator is None:
                     await ws.send_json(
@@ -73,9 +78,45 @@ async def websocket(ws: WebSocket) -> None:
                         {"type": "system.error", "text": "a plan is already running"}
                     )
                     continue
+                # Resolve attachment IDs → on-disk records before the
+                # orchestrator starts, so a missing/corrupt upload fails
+                # fast with a user-facing error instead of silently
+                # dropping from the prompt.
+                attachments: list[ChatAttachment] = []
+                attachment_err = None
+                store = getattr(ws.app.state, "chat_attachments", None)
+                if raw_attachments and store is None:
+                    attachment_err = "chat attachment store offline"
+                else:
+                    try:
+                        ids = [
+                            str(a.get("id"))
+                            for a in raw_attachments
+                            if isinstance(a, dict) and a.get("id")
+                        ]
+                        resolved = store.resolve_many(ids) if ids else []
+                        attachments = [
+                            ChatAttachment(
+                                id=a.id,
+                                kind=a.kind,
+                                mime=a.mime,
+                                filename=a.filename,
+                                path=a.path,
+                            )
+                            for a in resolved
+                        ]
+                    except AttachmentError as e:
+                        attachment_err = str(e)
+                if attachment_err:
+                    await ws.send_json(
+                        {"type": "system.error", "text": attachment_err}
+                    )
+                    continue
                 # Keep a strong reference on app state so GC doesn't cancel mid-run.
                 tasks: set[asyncio.Task] = ws.app.state.orchestrator_tasks
-                task = asyncio.create_task(orchestrator.run(text))
+                task = asyncio.create_task(
+                    orchestrator.run(text, attachments=attachments)
+                )
                 tasks.add(task)
                 task.add_done_callback(tasks.discard)
             elif mtype == "agent.run":
