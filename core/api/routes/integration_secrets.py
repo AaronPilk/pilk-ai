@@ -42,14 +42,6 @@ router = APIRouter(prefix="/integration-secrets")
 # a single-tenant integration; reach for a pattern when the slug is
 # per-site / per-client / per-user.
 KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
-    "hubspot_private_token": {
-        "label": "HubSpot",
-        "description": (
-            "Private App token (Settings → Integrations → Private Apps "
-            "in HubSpot). Needs CRM contact + note scopes."
-        ),
-        "env": "HUBSPOT_PRIVATE_TOKEN",
-    },
     "hunter_io_api_key": {
         "label": "Hunter.io",
         "description": (

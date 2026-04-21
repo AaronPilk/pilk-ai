@@ -27,9 +27,6 @@ from core.tools.builtin.print_design import PRINT_DESIGN_TOOLS
 from core.tools.builtin.sales_ops import (
     SALES_OPS_TOOLS,
     google_places_search_tool,
-    hubspot_add_note_tool,
-    hubspot_search_contact_tool,
-    hubspot_upsert_contact_tool,
     hunter_find_email_tool,
     site_audit_tool,
 )
@@ -76,9 +73,6 @@ __all__ = [
     "fs_write_tool",
     "google_places_search_tool",
     "higgsfield_generate_tool",
-    "hubspot_add_note_tool",
-    "hubspot_search_contact_tool",
-    "hubspot_upsert_contact_tool",
     "hunter_find_email_tool",
     "make_agent_create_tool",
     "make_browser_tools",

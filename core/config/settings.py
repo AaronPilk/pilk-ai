@@ -110,16 +110,6 @@ class Settings(BaseSettings):
             "HUNTER_IO_API_KEY", "PILK_HUNTER_IO_API_KEY"
         ),
     )
-    # HubSpot Private App access token — simpler than OAuth for v1.
-    # Create in HubSpot → Settings → Integrations → Private Apps and
-    # grant contact + note scopes. Single-tenant for now; Phase 2 will
-    # move this onto AccountsStore so each user brings their own.
-    hubspot_private_token: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "HUBSPOT_PRIVATE_TOKEN", "PILK_HUBSPOT_PRIVATE_TOKEN"
-        ),
-    )
     # Twelve Data — XAU/USD price-feed for the xauusd_execution_agent.
     # Free tier: 8 req/min, 800 req/day. Dashboard → API Keys ("Add
     # new") at twelvedata.com. Dashboard-paste wins over this env var.
