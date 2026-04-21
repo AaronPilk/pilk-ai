@@ -844,23 +844,47 @@ async def lifespan(app: FastAPI):
     # via ``resolve_secret`` so a runtime update through Settings →
     # API Keys is picked up on the next daemon restart without
     # needing an env-var change.
+    #
+    # When the bridge is active the approvals bridge piggy-backs on
+    # its long-poll loop for callback_query updates, so there's only
+    # ever one ``getUpdates`` caller in the process.
     telegram_bridge = None
+    telegram_approvals_bridge = None
     if settings.telegram_chat_bridge_enabled and orchestrator is not None:
         from core.integrations.telegram import TelegramConfig
-        from core.io import TelegramBridge
+        from core.io import TelegramApprovals, TelegramBridge
         from core.secrets import resolve_secret
 
         _tg_token = resolve_secret("telegram_bot_token", settings.telegram_bot_token)
         _tg_chat_id = resolve_secret("telegram_chat_id", settings.telegram_chat_id)
         if _tg_token and _tg_chat_id:
+            from core.integrations.telegram import TelegramClient
+
+            _tg_cfg = TelegramConfig(bot_token=_tg_token, chat_id=_tg_chat_id)
+            # The approvals bridge owns its own client so its
+            # sendMessage / editMessageText / answerCallbackQuery
+            # calls are decoupled from the bridge's long-poll
+            # connection pool.
+            telegram_approvals_bridge = TelegramApprovals(
+                client=TelegramClient(_tg_cfg),
+                hub=hub,
+                approvals=approvals,
+                chat_id=_tg_chat_id,
+            )
+            telegram_approvals_bridge.start()
             telegram_bridge = TelegramBridge(
-                config=TelegramConfig(bot_token=_tg_token, chat_id=_tg_chat_id),
+                config=_tg_cfg,
                 orchestrator=orchestrator,
                 hub=hub,
                 state_path=home / "state" / "telegram-bridge.json",
+                callback_handler=telegram_approvals_bridge.handle_callback,
             )
             await telegram_bridge.start()
-            log.info("telegram_bridge_ready", chat_id=_tg_chat_id)
+            log.info(
+                "telegram_bridge_ready",
+                chat_id=_tg_chat_id,
+                approvals_forwarded=True,
+            )
         else:
             log.info(
                 "telegram_bridge_inactive",
@@ -873,6 +897,7 @@ async def lifespan(app: FastAPI):
             orchestrator=orchestrator is not None,
         )
     app.state.telegram_bridge = telegram_bridge
+    app.state.telegram_approvals = telegram_approvals_bridge
 
     # Supabase foundation — stays None-like when unconfigured. Nothing
     # in the runtime path depends on it yet; only GET /supabase/health
@@ -894,6 +919,8 @@ async def lifespan(app: FastAPI):
         await sentinel.stop()
         if telegram_bridge is not None:
             await telegram_bridge.stop()
+        if telegram_approvals_bridge is not None:
+            telegram_approvals_bridge.stop()
         if browser_sessions is not None:
             await browser_sessions.close_all()
         if client is not None:
