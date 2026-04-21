@@ -61,7 +61,11 @@ from core.governor import DailyBudget, Governor, Tier, Tiers, TierSpec
 from core.governor.providers import build_providers
 from core.identity import AccountsStore, GrantsStore
 from core.identity.bootstrap import seed_identity_memory
-from core.integrations.apple import check_messages_status, make_messages_tools
+from core.integrations.apple import (
+    check_messages_status,
+    make_contacts_tools,
+    make_messages_tools,
+)
 from core.integrations.client_secrets import load_client
 from core.integrations.google import (
     ROLES,
@@ -517,16 +521,24 @@ async def lifespan(app: FastAPI):
         linked=accounts.default("meta", "user") is not None,
     )
 
-    # Apple Messages — local macOS integration (not OAuth). Tools
-    # always register; handlers surface a clean error when the chat.db
-    # isn't readable (Full Disk Access missing, non-macOS host, etc.).
+    # Apple Messages + Contacts — local macOS integrations (not OAuth).
+    # Tools always register; handlers surface a clean error when the
+    # chat.db isn't readable or osascript refuses (Full Disk Access /
+    # Automation missing, non-macOS host, etc.).
     for t in make_messages_tools():
+        registry.register(t)
+    for t in make_contacts_tools():
         registry.register(t)
     apple_status = check_messages_status()
     log.info(
         "apple_messages_registered",
         available=apple_status.available,
         reason=apple_status.reason,
+        tools=["messages_search_mine", "messages_read_thread", "messages_send"],
+    )
+    log.info(
+        "apple_contacts_registered",
+        tools=["contacts_search"],
     )
 
     browser_sessions: BrowserSessionManager | None = None

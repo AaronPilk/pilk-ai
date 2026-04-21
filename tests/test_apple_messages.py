@@ -149,19 +149,22 @@ def test_search_matches_substring(fake_db: Path) -> None:
 
 
 def test_tools_metadata_and_risk() -> None:
-    [search, read] = make_messages_tools()
+    [search, read, send] = make_messages_tools()
     assert search.name == "messages_search_mine"
     assert read.name == "messages_read_thread"
+    assert send.name == "messages_send"
     assert search.risk == RiskClass.READ
     assert read.risk == RiskClass.READ
-    # These tools are local reads — no account_binding.
-    assert search.account_binding is None
-    assert read.account_binding is None
+    # Send always hits the approval queue.
+    assert send.risk == RiskClass.COMMS
+    # These tools are local — no account_binding.
+    for t in (search, read, send):
+        assert t.account_binding is None
 
 
 @pytest.mark.asyncio
 async def test_tool_handler_returns_results(fake_db: Path) -> None:
-    [search, read] = make_messages_tools()
+    [search, read, _send] = make_messages_tools()
     result = await search.handler({"query": "late"}, ToolContext())
     assert result.is_error is False
     assert "running late" in result.content
@@ -176,8 +179,149 @@ async def test_tool_handler_errors_when_db_missing(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("PILK_APPLE_MESSAGES_DB", str(tmp_path / "nope.db"))
-    [search, _read] = make_messages_tools()
+    [search, _read, _send] = make_messages_tools()
     out = await search.handler({"query": "x"}, ToolContext())
     # Missing DB → empty results, not a crash.
     assert out.is_error is False
     assert "No messages match" in out.content
+
+
+# ── messages_send ─────────────────────────────────────────────────────
+
+
+def _seed_chat_handle_join(db: Path) -> None:
+    """Populate chat_handle_join so the send path can resolve
+    chat_id → handle. The fixture builds the rest of the schema."""
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            "INSERT INTO chat_handle_join(chat_id, handle_id) "
+            "VALUES (?, ?)",
+            (10, 1),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.mark.asyncio
+async def test_send_requires_recipient(fake_db: Path) -> None:
+    [_s, _r, send] = make_messages_tools()
+    out = await send.handler({"text": "hi"}, ToolContext())
+    assert out.is_error
+    assert "chat_id" in out.content or "phone_number" in out.content
+
+
+@pytest.mark.asyncio
+async def test_send_requires_text(fake_db: Path) -> None:
+    [_s, _r, send] = make_messages_tools()
+    out = await send.handler(
+        {"phone_number": "+14155551234"}, ToolContext(),
+    )
+    assert out.is_error
+    assert "text" in out.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_send_rejects_both_chat_id_and_phone(fake_db: Path) -> None:
+    [_s, _r, send] = make_messages_tools()
+    out = await send.handler(
+        {"chat_id": 10, "phone_number": "+14155551234", "text": "hi"},
+        ToolContext(),
+    )
+    assert out.is_error
+    assert "not both" in out.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_send_caps_text_length(fake_db: Path) -> None:
+    from core.integrations.apple.messages import MAX_OUTBOUND_CHARS
+
+    [_s, _r, send] = make_messages_tools()
+    out = await send.handler(
+        {"phone_number": "+14155551234", "text": "x" * (MAX_OUTBOUND_CHARS + 1)},
+        ToolContext(),
+    )
+    assert out.is_error
+    assert "too long" in out.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_send_refuses_group_chat(fake_db: Path) -> None:
+    [_s, _r, send] = make_messages_tools()
+    out = await send.handler(
+        {"chat_id": 11, "text": "hey fam"}, ToolContext(),
+    )
+    assert out.is_error
+    assert "group" in out.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_send_by_phone_number_hits_osascript(
+    fake_db: Path, monkeypatch,
+) -> None:
+    """Happy path with an explicit phone_number. We stub osascript so
+    the test runs on any platform; verify the recipient + text reach
+    the helper via argv."""
+    from core.integrations.apple import messages as msg_mod
+
+    calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def fake_osascript(script: str, *args: str) -> str:
+        calls.append((script, args))
+        return ""
+
+    monkeypatch.setattr(msg_mod, "_run_osascript", fake_osascript)
+    [_s, _r, send] = make_messages_tools()
+    out = await send.handler(
+        {"phone_number": "+14155551234", "text": "hello there"},
+        ToolContext(),
+    )
+    assert not out.is_error
+    assert calls, "osascript was never invoked"
+    _script, args = calls[0]
+    # argv order: recipient, text — locks in the contract the
+    # AppleScript relies on.
+    assert args == ("+14155551234", "hello there")
+
+
+@pytest.mark.asyncio
+async def test_send_by_chat_id_resolves_handle(
+    fake_db: Path, monkeypatch,
+) -> None:
+    """chat_id → handle lookup → osascript send. Ensures the DB join
+    is wired correctly + that the right handle comes out."""
+    from core.integrations.apple import messages as msg_mod
+
+    _seed_chat_handle_join(fake_db)
+    captured: dict = {}
+
+    def fake_osascript(script: str, *args: str) -> str:
+        captured["args"] = args
+        return ""
+
+    monkeypatch.setattr(msg_mod, "_run_osascript", fake_osascript)
+    [_s, _r, send] = make_messages_tools()
+    out = await send.handler({"chat_id": 10, "text": "reply"}, ToolContext())
+    assert not out.is_error
+    assert captured["args"] == ("+14155551234", "reply")
+
+
+@pytest.mark.asyncio
+async def test_send_surfaces_osascript_error_cleanly(
+    fake_db: Path, monkeypatch,
+) -> None:
+    from core.integrations.apple import messages as msg_mod
+
+    def fake_osascript(script: str, *args: str) -> str:
+        raise msg_mod.MessagesSendError(
+            "macOS refused Automation access."
+        )
+
+    monkeypatch.setattr(msg_mod, "_run_osascript", fake_osascript)
+    [_s, _r, send] = make_messages_tools()
+    out = await send.handler(
+        {"phone_number": "+14155551234", "text": "hey"}, ToolContext(),
+    )
+    assert out.is_error
+    assert "Automation" in out.content
