@@ -502,6 +502,15 @@ class Orchestrator:
                 cache_control=True,
             )
 
+            # Extract the turn's assistant text before finishing the step
+            # so Tasks UI can render PILK's reply from the step output.
+            # (Previously only stop_reason + usage were persisted, which
+            # is why the session log showed blank PILK bubbles.)
+            turn_text_blocks = [
+                b.text for b in response.content if getattr(b, "type", None) == "text"
+            ]
+            turn_text = "\n".join(turn_text_blocks)
+
             usage = UsageSnapshot.from_anthropic(response.usage)
             usd = await self.ledger.record_llm(
                 plan_id=plan_id,
@@ -514,6 +523,7 @@ class Orchestrator:
                 step["id"], status="done", cost_usd=usd,
                 output={
                     "stop_reason": response.stop_reason,
+                    "content": turn_text,
                     "usage": {
                         "input_tokens": usage.input_tokens,
                         "output_tokens": usage.output_tokens,
@@ -548,11 +558,8 @@ class Orchestrator:
                     )
             messages.append({"role": "assistant", "content": assistant_blocks})
 
-            text_blocks = [
-                b.text for b in response.content if getattr(b, "type", None) == "text"
-            ]
-            if text_blocks:
-                final_text = "\n".join(text_blocks)
+            if turn_text:
+                final_text = turn_text
 
             if response.stop_reason == "end_turn":
                 break

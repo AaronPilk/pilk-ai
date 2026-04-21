@@ -148,3 +148,15 @@ async def test_orchestrator_runs_tool_and_completes() -> None:
     # Cost ledger received two LLM calls
     summary = await ledger.summary()
     assert summary["total_usd"] > 0
+
+    # LLM step output includes the assistant text, so the Tasks UI can
+    # render PILK's reply without relying on the (ephemeral)
+    # chat.assistant WS event.
+    plan_id = plan_event["id"]
+    persisted = await plans.get_plan(plan_id)
+    llm_steps = [s for s in persisted["steps"] if s["kind"] == "llm"]
+    assert llm_steps, "expected at least one persisted llm step"
+    # First turn had only a tool_use block — content should be empty
+    # string (not missing). Final turn had the text response.
+    assert llm_steps[0]["output"]["content"] == ""
+    assert llm_steps[-1]["output"]["content"] == "Wrote report.txt. Done."
