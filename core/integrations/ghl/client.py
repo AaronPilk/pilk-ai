@@ -375,6 +375,127 @@ class GHLClient:
             f"/opportunities/{opportunity_id}"
         )
 
+    # ── conversations (SMS + email + inbound history) ─────────
+    #
+    # GHL unifies SMS, email, WhatsApp, Facebook Messenger, Instagram
+    # DMs, and Google Business chat under one "conversations" surface.
+    # We expose two channel-specific senders (SMS, email) because they
+    # cover the operator's day-to-day and the channel rules differ
+    # enough that a single ``send(type=...)`` would hide real differences
+    # (email needs subject + HTML; SMS doesn't). The other channels can
+    # ride the generic send path via ``_send_conversation_message`` when
+    # a tool lands for them.
+
+    async def _send_conversation_message(
+        self,
+        *,
+        message_type: str,
+        contact_id: str,
+        location_id: str,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Single POST that every channel funnels through.
+        Shared by ``send_sms`` + ``send_email`` (and future
+        ``send_whatsapp`` / ``send_ig_dm`` etc.)."""
+        payload: dict[str, Any] = {
+            "type": message_type,
+            "contactId": contact_id,
+            "locationId": location_id,
+            **body,
+        }
+        return await self._post("/conversations/messages", json=payload)
+
+    async def conversations_send_sms(
+        self,
+        *,
+        contact_id: str,
+        location_id: str,
+        message: str,
+        from_number: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"message": message}
+        if from_number:
+            body["fromNumber"] = from_number
+        return await self._send_conversation_message(
+            message_type="SMS",
+            contact_id=contact_id,
+            location_id=location_id,
+            body=body,
+        )
+
+    async def conversations_send_email(
+        self,
+        *,
+        contact_id: str,
+        location_id: str,
+        subject: str,
+        html: str | None = None,
+        text: str | None = None,
+        from_email: str | None = None,
+        reply_to: str | None = None,
+    ) -> dict[str, Any]:
+        """Send an email to a contact through GHL's email channel.
+
+        Either ``html`` or ``text`` must be set — GHL accepts one or
+        both. Passing both is fine and lets GHL pick per-recipient
+        preferences.
+        """
+        body: dict[str, Any] = {"subject": subject}
+        if html:
+            body["html"] = html
+        if text:
+            body["message"] = text
+        if from_email:
+            body["emailFrom"] = from_email
+        if reply_to:
+            body["replyTo"] = reply_to
+        return await self._send_conversation_message(
+            message_type="Email",
+            contact_id=contact_id,
+            location_id=location_id,
+            body=body,
+        )
+
+    async def conversations_search(
+        self,
+        *,
+        location_id: str,
+        contact_id: str | None = None,
+        last_message_type: str | None = None,
+        limit: int = 25,
+    ) -> dict[str, Any]:
+        """Search conversation threads in a location.
+
+        ``contact_id`` narrows to one contact's threads — the common
+        path when the planner already has a contact and wants
+        "what's the conversation history with them?".
+        ``last_message_type`` filters by the last message's channel
+        (SMS / Email / …) so the planner can answer "any unread
+        SMS?" without paging through email-only threads.
+        """
+        params: dict[str, Any] = {
+            "locationId": location_id,
+            "limit": int(limit),
+        }
+        if contact_id:
+            params["contactId"] = contact_id
+        if last_message_type:
+            params["lastMessageType"] = last_message_type
+        return await self._get(
+            "/conversations/search", params=params,
+        )
+
+    async def conversations_get_messages(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return await self._get(
+            f"/conversations/{conversation_id}/messages",
+            params={"limit": int(limit)},
+        )
+
     # ── meta (agency + directory reads) ───────────────────────
 
     async def locations_list(
