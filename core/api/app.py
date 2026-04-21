@@ -69,9 +69,11 @@ from core.integrations.apple import (
 )
 from core.integrations.client_secrets import load_client
 from core.integrations.ghl import (
+    make_ghl_calendar_tools,
     make_ghl_contact_tools,
     make_ghl_conversation_tools,
     make_ghl_pipeline_tools,
+    make_ghl_workflow_tools,
 )
 from core.integrations.google import (
     ROLES,
@@ -577,6 +579,25 @@ async def lifespan(app: FastAPI):
         "ghl_conversation_tools_registered",
         tools=[t.name for t in ghl_conversation_tools],
     )
+
+    # Calendars + appointments + workflows + tasks + tag reads.
+    # Two sibling factories (calendar + workflow) so a scheduling
+    # issue can't take down the automation surface and vice versa.
+    ghl_calendar_tools = make_ghl_calendar_tools()
+    for t in ghl_calendar_tools:
+        registry.register(t)
+    log.info(
+        "ghl_calendar_tools_registered",
+        tools=[t.name for t in ghl_calendar_tools],
+    )
+    ghl_workflow_tools = make_ghl_workflow_tools()
+    for t in ghl_workflow_tools:
+        registry.register(t)
+    log.info(
+        "ghl_workflow_tools_registered",
+        tools=[t.name for t in ghl_workflow_tools],
+    )
+
 
     # Apple Messages + Contacts — local macOS integrations (not OAuth).
     # Tools always register; handlers surface a clean error when the
