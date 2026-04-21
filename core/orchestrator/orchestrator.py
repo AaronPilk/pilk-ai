@@ -149,6 +149,11 @@ class RunContext:
     sandbox_root: Path | None
     sandbox_capabilities: frozenset[str]
     metadata: dict[str, Any]
+    # Manifest-level tier pin. None = classify per goal as usual;
+    # "light"/"standard"/"premium" force that tier regardless of the
+    # classifier. Lets cheap-and-capable specialist agents stay on
+    # the subscription-backed LIGHT provider across all their turns.
+    preferred_tier: str | None = None
 
 
 class Orchestrator:
@@ -310,6 +315,7 @@ class Orchestrator:
             sandbox_id=sandbox.description.id,
             sandbox_root=sandbox.description.workspace,
             sandbox_capabilities=capabilities,
+            preferred_tier=manifest.preferred_tier,
             metadata={
                 "agent": manifest.name,
                 "agent_version": manifest.version,
@@ -411,7 +417,12 @@ class Orchestrator:
         # user can escalate-for-this-task with a single click instead of
         # silently getting Balanced.
         if self.governor is not None:
-            tier_choice = self.governor.pick(rc.goal)
+            # Manifest pin (if any) overrides the classifier — the agent
+            # author knows the playbook and has picked a tier. The pin
+            # is passed to the governor as an explicit override so the
+            # downgrade-on-premium-gate path stays consistent.
+            _override = rc.preferred_tier if rc.preferred_tier else None
+            tier_choice = self.governor.pick(rc.goal, override=_override)
             if tier_choice.gated and self.gateway.approvals is not None:
                 decision = await self._request_premium_escalation(
                     plan_id=plan_id, rc=rc, tier_choice=tier_choice

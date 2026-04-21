@@ -49,3 +49,27 @@ def test_shipped_agents_parse() -> None:
             Manifest.load(manifest)
             parsed += 1
     assert parsed >= 1, "no first-party agents shipped"
+
+
+def test_preferred_tier_defaults_to_none(tmp_path: Path) -> None:
+    """Legacy manifests without the pin must keep working — governor
+    picks by classifier when preferred_tier is None."""
+    path = tmp_path / "manifest.yaml"
+    path.write_text(MINIMAL)
+    m = Manifest.load(path)
+    assert m.preferred_tier is None
+
+
+def test_preferred_tier_accepts_valid_values(tmp_path: Path) -> None:
+    for tier in ("light", "standard", "premium"):
+        path = tmp_path / f"{tier}.yaml"
+        path.write_text(MINIMAL + f"preferred_tier: {tier}\n")
+        m = Manifest.load(path)
+        assert m.preferred_tier == tier
+
+
+def test_preferred_tier_rejects_invalid_value(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.yaml"
+    path.write_text(MINIMAL + "preferred_tier: ultra\n")
+    with pytest.raises(ValidationError):
+        Manifest.load(path)
