@@ -1,14 +1,17 @@
 """Brain-ingest tools — pull content from outside the vault into it.
 
-Two tools cover the V1 ingestion surface:
+Three tools cover the V1 ingestion surface:
 
-    brain_ingest_claude_code    READ + WRITE_LOCAL
-    brain_ingest_chatgpt        READ + WRITE_LOCAL
+    brain_ingest_claude_code    READ + WRITE_LOCAL    ~/.claude/projects/
+    brain_ingest_chatgpt        READ + WRITE_LOCAL    workspace zip/json
+    brain_ingest_gmail          NET_READ + WRITE_LOCAL  user's Gmail inbox
 
 Each reads from a specific, well-known location (not arbitrary paths):
 
 - Claude Code: ``~/.claude/projects/`` (set by the CLI, not us).
 - ChatGPT: an operator-supplied zip path inside the workspace.
+- Gmail: the operator's own user-role Google OAuth, scoped to their
+  inbox. Same account the inbox_triage_agent reads.
 
 Each writes normalised markdown to the brain vault under
 ``ingested/<source>/``. Re-running is idempotent — the note at the
@@ -17,20 +20,23 @@ always reflects the current state of the source.
 
 Risk model:
 
-* Read side is benign — these paths are the operator's own artefacts.
-* Write side is WRITE_LOCAL — standard approval flow.
+* Claude Code + ChatGPT reads are benign — paths are the operator's
+  own artefacts.
+* Gmail reads hit the network, so risk class is NET_READ.
+* All writes go to the brain vault = WRITE_LOCAL.
 
 We deliberately DON'T classify these as IRREVERSIBLE just because
 they touch $HOME. The scope is narrow (one specific subdirectory per
-ingester), the content is the operator's own chat logs, and the
-output goes straight to their brain vault. Treating these like
-file-system-wide reads would push every brain-load into the
-approval queue for no real safety gain.
+ingester), the content is the operator's own chat/email logs, and
+the output goes straight to their brain vault. Treating these like
+file-system-wide reads would push every brain-load into the approval
+queue for no real safety gain.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from core.brain import Vault
 from core.config import get_settings
@@ -46,9 +52,18 @@ from core.integrations.ingesters.claude_code import (
     render_project_note,
     scan_projects,
 )
+from core.integrations.ingesters.gmail import (
+    DEFAULT_MAX_THREADS,
+    DEFAULT_QUERY,
+    render_thread_note,
+    scan_threads,
+)
 from core.logging import get_logger
 from core.policy.risk import RiskClass
 from core.tools.registry import Tool, ToolContext, ToolOutcome
+
+if TYPE_CHECKING:
+    from core.identity import AccountsStore
 
 log = get_logger("pilkd.tools.brain_ingest")
 
@@ -276,15 +291,170 @@ def _chatgpt_ingest_tool(vault: Vault) -> Tool:
     )
 
 
-def make_brain_ingest_tools(vault: Vault) -> list[Tool]:
+def _gmail_ingest_tool(
+    vault: Vault, accounts: AccountsStore | None,
+) -> Tool:
+    async def _handler(args: dict, _ctx: ToolContext) -> ToolOutcome:
+        if accounts is None:
+            return ToolOutcome(
+                content=(
+                    "brain_ingest_gmail requires the Google account store. "
+                    "Daemon booted without identity wiring — this is a "
+                    "PILK config problem, not a user fix."
+                ),
+                is_error=True,
+            )
+        creds, account = _load_user_gmail_creds(accounts)
+        if creds is None:
+            return ToolOutcome(
+                content=(
+                    "Your Google account isn't connected as the 'user' "
+                    "role yet. Open Settings → Connected accounts and "
+                    "link your personal Google account with Gmail "
+                    "read-only scope. The inbox_triage_agent uses the "
+                    "same binding — linking once unlocks both."
+                ),
+                is_error=True,
+            )
+        query = str(args.get("query") or DEFAULT_QUERY).strip() or DEFAULT_QUERY
+        try:
+            max_threads = int(args.get("max_threads") or DEFAULT_MAX_THREADS)
+        except (TypeError, ValueError):
+            max_threads = DEFAULT_MAX_THREADS
+        max_threads = max(1, min(max_threads, 500))
+        try:
+            import asyncio
+            threads = await asyncio.to_thread(
+                scan_threads, creds, query=query, max_threads=max_threads,
+            )
+        except Exception as e:
+            log.exception("brain_ingest_gmail_scan_failed", error=str(e))
+            return ToolOutcome(
+                content=f"Gmail scan failed: {type(e).__name__}: {e}",
+                is_error=True,
+            )
+        if not threads:
+            return ToolOutcome(
+                content=(
+                    f"Gmail query {query!r} matched zero threads. "
+                    "Try a wider filter (e.g. 'newer_than:90d')."
+                ),
+                data={"query": query, "threads": 0, "written": []},
+            )
+        written: list[dict] = []
+        errors: list[str] = []
+        for thread in threads:
+            note = render_thread_note(thread)
+            try:
+                abs_path = vault.write(note.path, note.body)
+            except (OSError, ValueError) as e:
+                errors.append(f"{thread.thread_id}: {e}")
+                continue
+            written.append(
+                {
+                    "path": abs_path.relative_to(vault.root).as_posix(),
+                    "thread_id": thread.thread_id,
+                    "subject": thread.subject,
+                    "messages": len(thread.messages),
+                }
+            )
+        summary = (
+            f"Ingested {len(written)}/{len(threads)} Gmail thread(s) "
+            f"from account {account.email if account else '?'} into "
+            "`ingested/gmail/`."
+        )
+        if errors:
+            summary += f" {len(errors)} failure(s): {errors[:3]}"
+        return ToolOutcome(
+            content=summary,
+            data={
+                "query": query,
+                "threads_scanned": len(threads),
+                "written": written,
+                "errors": errors,
+            },
+        )
+
+    return Tool(
+        name="brain_ingest_gmail",
+        description=(
+            "Pull the operator's Gmail inbox into the brain vault. "
+            "One markdown note per thread under `ingested/gmail/` "
+            "named `YYYY-MM-DD-<subject-slug>.md`. Reuses the same "
+            "user-role Google OAuth the inbox_triage_agent holds. "
+            "Default query is `newer_than:30d`; pass a narrower or "
+            "broader Gmail search (e.g. `from:aaron@skyway.media`, "
+            "`is:starred`, `newer_than:6m`) to target specific slices."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Gmail search operators. Default "
+                        f"`{DEFAULT_QUERY}`."
+                    ),
+                },
+                "max_threads": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500,
+                    "description": (
+                        "Cap on threads per run (default "
+                        f"{DEFAULT_MAX_THREADS})."
+                    ),
+                },
+            },
+        },
+        risk=RiskClass.NET_READ,
+        handler=_handler,
+    )
+
+
+def _load_user_gmail_creds(
+    accounts: AccountsStore,
+) -> tuple[Any, Any]:
+    """Resolve + decrypt the user-role Google token. Mirrors the
+    private helper inside make_gmail_tools so we don't have to plumb
+    a second creds-loader through the ingester."""
+    from core.identity.accounts import AccountBinding
+    from core.integrations.google.oauth import credentials_from_blob
+
+    binding = AccountBinding(provider="google", role="user")
+    account = accounts.resolve_binding(binding)
+    if account is None:
+        return None, None
+    tokens = accounts.load_tokens(account.account_id)
+    if tokens is None:
+        return None, account
+    blob = {
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
+        "client_id": tokens.client_id,
+        "client_secret": tokens.client_secret,
+        "scopes": tokens.scopes,
+        "token_uri": tokens.token_uri,
+        "email": account.email,
+    }
+    return credentials_from_blob(blob), account
+
+
+def make_brain_ingest_tools(
+    vault: Vault, accounts: AccountsStore | None = None,
+) -> list[Tool]:
     """Factory: build the ingest tools bound to the given brain vault.
 
     Called at app startup — mirrors `make_brain_tools` so the brain
-    wiring has a single, obvious home."""
-    return [
+    wiring has a single, obvious home. Pass the AccountsStore to
+    enable Gmail ingest; omit for a minimal brain setup without
+    OAuth."""
+    tools: list[Tool] = [
         _claude_code_ingest_tool(vault),
         _chatgpt_ingest_tool(vault),
     ]
+    tools.append(_gmail_ingest_tool(vault, accounts))
+    return tools
 
 
 __all__ = ["make_brain_ingest_tools"]
