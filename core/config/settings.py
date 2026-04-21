@@ -143,6 +143,16 @@ class Settings(BaseSettings):
             "PILK_GEMINI_API_KEY",
         ),
     )
+    # Notion integration token. Create an internal integration at
+    # https://www.notion.com/my-integrations → copy the "Internal
+    # Integration Secret". Share each page you want PILK to access
+    # with the integration (⋯ menu on the page → Add connections).
+    notion_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "NOTION_API_KEY", "PILK_NOTION_API_KEY"
+        ),
+    )
     # Higgsfield Cloud API key for cinematic text→video / image→video.
     # Dashboard: https://cloud.higgsfield.ai. Tokens are short-lived;
     # rotate via the dashboard-paste flow rather than baking long-lived
