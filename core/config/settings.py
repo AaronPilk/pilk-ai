@@ -228,6 +228,21 @@ class Settings(BaseSettings):
             "TELEGRAM_CHAT_ID", "PILK_TELEGRAM_CHAT_ID",
         ),
     )
+    # Bidirectional chat bridge: when on (default), pilkd long-polls
+    # Telegram getUpdates for inbound messages from the configured
+    # chat_id and feeds each one into the orchestrator's free-chat
+    # path, mirroring the assistant reply back over Telegram. Off =
+    # Telegram stays push-only (the tool family still works for
+    # notifications, but inbound messages are ignored). Auto-disables
+    # itself when either telegram_bot_token or telegram_chat_id is
+    # missing so a partially-configured bot doesn't spam error logs.
+    telegram_chat_bridge_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "PILK_TELEGRAM_CHAT_BRIDGE_ENABLED",
+            "TELEGRAM_CHAT_BRIDGE_ENABLED",
+        ),
+    )
 
     # ── Apify (ugc_scout_agent — IG / TikTok / Facebook scraper) ─
     # Apify personal API token from console.apify.com → Settings →

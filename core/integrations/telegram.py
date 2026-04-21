@@ -99,6 +99,48 @@ class TelegramClient:
             r = await c.post(self._url("sendMessage"), json=payload)
         return _decode(r, "sendMessage")
 
+    async def get_updates(
+        self,
+        *,
+        offset: int | None = None,
+        timeout: int = 25,
+        allowed_updates: list[str] | None = None,
+        request_timeout: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Long-poll Telegram for new updates.
+
+        ``timeout`` is the server-side long-poll window in seconds —
+        Telegram holds the connection open that long waiting for new
+        activity and only then returns. ``request_timeout`` is the
+        client-side HTTP timeout; it must be strictly larger than
+        ``timeout`` or httpx cuts the call off before Telegram is
+        ready to answer.
+
+        Returns the raw list of update objects. The caller is
+        responsible for advancing ``offset`` past the last update_id
+        seen so Telegram doesn't redeliver them.
+        """
+        params: dict[str, Any] = {"timeout": int(timeout)}
+        if offset is not None:
+            params["offset"] = int(offset)
+        if allowed_updates is not None:
+            # Telegram expects this as a JSON-encoded string, not an
+            # array in form-data. httpx json-encodes when we pass the
+            # whole dict as `json=`, so we keep it as a list.
+            params["allowed_updates"] = allowed_updates
+        http_timeout = request_timeout if request_timeout is not None else (
+            float(timeout) + 10.0
+        )
+        async with httpx.AsyncClient(timeout=http_timeout) as c:
+            r = await c.post(self._url("getUpdates"), json=params)
+        result = _decode(r, "getUpdates")
+        # ``getUpdates`` returns an array in ``result``; ``_decode``
+        # hands back whatever ``result`` is (list here rather than
+        # dict). Normalize defensively.
+        if isinstance(result, list):
+            return result
+        return []
+
     async def send_document(
         self,
         path: Path,

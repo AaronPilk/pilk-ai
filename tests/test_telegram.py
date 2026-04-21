@@ -165,6 +165,42 @@ async def test_send_message_surfaces_non_2xx() -> None:
     assert "Unauthorized" in exc.value.message
 
 
+# ── Client: getUpdates ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_updates_forwards_offset_and_timeout() -> None:
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        import json as _json
+        seen["url"] = str(req.url)
+        seen["body"] = _json.loads(req.content.decode())
+        return httpx.Response(200, json=_ok_result([]))
+
+    _install_transport(handler)
+    result = await _client().get_updates(offset=42, timeout=10)
+    assert result == []
+    assert seen["url"].endswith("/getUpdates")
+    assert seen["body"]["offset"] == 42
+    assert seen["body"]["timeout"] == 10
+
+
+@pytest.mark.asyncio
+async def test_get_updates_returns_message_list() -> None:
+    payload = [
+        {"update_id": 1, "message": {"chat": {"id": 123}, "text": "hi"}},
+        {"update_id": 2, "message": {"chat": {"id": 123}, "text": "yo"}},
+    ]
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok_result(payload))
+
+    _install_transport(handler)
+    result = await _client().get_updates()
+    assert result == payload
+
+
 # ── Client: sendDocument ────────────────────────────────────────
 
 
