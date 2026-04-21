@@ -831,6 +831,43 @@ async def lifespan(app: FastAPI):
     app.state.oauth_providers = oauth_providers
     app.state.oauth_flow = oauth_flow
 
+    # Telegram chat bridge — long-polls getUpdates and feeds inbound
+    # messages into the orchestrator. Only starts when both bot token
+    # and chat_id are available AND the operator hasn't opted out via
+    # PILK_TELEGRAM_CHAT_BRIDGE_ENABLED=false. Resolves both values
+    # via ``resolve_secret`` so a runtime update through Settings →
+    # API Keys is picked up on the next daemon restart without
+    # needing an env-var change.
+    telegram_bridge = None
+    if settings.telegram_chat_bridge_enabled and orchestrator is not None:
+        from core.integrations.telegram import TelegramConfig
+        from core.io import TelegramBridge
+        from core.secrets import resolve_secret
+
+        _tg_token = resolve_secret("telegram_bot_token", settings.telegram_bot_token)
+        _tg_chat_id = resolve_secret("telegram_chat_id", settings.telegram_chat_id)
+        if _tg_token and _tg_chat_id:
+            telegram_bridge = TelegramBridge(
+                config=TelegramConfig(bot_token=_tg_token, chat_id=_tg_chat_id),
+                orchestrator=orchestrator,
+                hub=hub,
+                state_path=home / "state" / "telegram-bridge.json",
+            )
+            await telegram_bridge.start()
+            log.info("telegram_bridge_ready", chat_id=_tg_chat_id)
+        else:
+            log.info(
+                "telegram_bridge_inactive",
+                reason="bot_token or chat_id missing",
+            )
+    else:
+        log.info(
+            "telegram_bridge_disabled",
+            enabled=settings.telegram_chat_bridge_enabled,
+            orchestrator=orchestrator is not None,
+        )
+    app.state.telegram_bridge = telegram_bridge
+
     # Supabase foundation — stays None-like when unconfigured. Nothing
     # in the runtime path depends on it yet; only GET /supabase/health
     # reads it.
@@ -849,6 +886,8 @@ async def lifespan(app: FastAPI):
         # Sentinel shuts down first so its scan task won't race teardown.
         hub.unsubscribe(sentinel.on_event)
         await sentinel.stop()
+        if telegram_bridge is not None:
+            await telegram_bridge.stop()
         if browser_sessions is not None:
             await browser_sessions.close_all()
         if client is not None:

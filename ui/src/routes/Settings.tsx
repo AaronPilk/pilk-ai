@@ -1966,8 +1966,14 @@ function TelegramConnectSection(): JSX.Element {
   const [chatDraft, setChatDraft] = useState("");
   const [chatSaving, setChatSaving] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [chatSavedId, setChatSavedId] = useState<string | null>(null);
   const [detectBusy, setDetectBusy] = useState(false);
   const [detectHint, setDetectHint] = useState<string | null>(null);
+
+  // Token save success (bot verification is authoritative — once
+  // saveToken returns, we flip a transient flag so the step renders
+  // a visible tick even before the bot-info refresh completes).
+  const [tokenSaved, setTokenSaved] = useState(false);
 
   // Bot info from the backend (drives verify + open-bot link).
   const [botInfo, setBotInfo] = useState<{
@@ -2015,9 +2021,15 @@ function TelegramConnectSection(): JSX.Element {
     }
     setTokenSaving(true);
     setTokenError(null);
+    setTokenSaved(false);
     try {
       await setIntegrationSecret("telegram_bot_token", trimmed);
+      // Clear the pasted token so it doesn't sit on-screen as
+      // plaintext, but raise a transient "saved" flag so the
+      // operator gets an obvious visual confirmation even if the
+      // follow-up getMe call takes a second to return.
       setTokenDraft("");
+      setTokenSaved(true);
       await refreshBotInfo();
     } catch (e) {
       setTokenError(e instanceof Error ? e.message : String(e));
@@ -2036,7 +2048,10 @@ function TelegramConnectSection(): JSX.Element {
     setChatError(null);
     try {
       await setIntegrationSecret("telegram_chat_id", trimmed);
-      setChatDraft("");
+      // Keep the value on-screen and track what we last saved — the
+      // previous UX cleared the field and the operator had no idea
+      // whether the save landed. Now they see "✓ Saved: 12345".
+      setChatSavedId(trimmed);
       setDetectHint(null);
     } catch (e) {
       setChatError(e instanceof Error ? e.message : String(e));
@@ -2185,6 +2200,11 @@ function TelegramConnectSection(): JSX.Element {
           {tokenError && (
             <div className="telegram-step-err">{tokenError}</div>
           )}
+          {tokenSaved && !tokenError && !tokenValid && (
+            <div className="telegram-step-hint">
+              Saved. Verifying with Telegram…
+            </div>
+          )}
         </li>
 
         <li
@@ -2265,6 +2285,12 @@ function TelegramConnectSection(): JSX.Element {
           </div>
           {detectHint && (
             <div className="telegram-step-hint">{detectHint}</div>
+          )}
+          {chatSavedId && !chatError && (
+            <div className="telegram-step-ok">
+              ✓ Saved chat_id <code>{chatSavedId}</code>. Send yourself
+              a test below to confirm the round-trip.
+            </div>
           )}
           {chatError && (
             <div className="telegram-step-err">{chatError}</div>
