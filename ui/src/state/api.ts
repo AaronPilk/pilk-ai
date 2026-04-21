@@ -1188,3 +1188,56 @@ export async function sendTelegramTest(): Promise<TelegramTestResult> {
   if (!r.ok) throw new Error(await detail(r));
   return r.json();
 }
+
+// ── Triggers ─────────────────────────────────────────────────────
+
+export type TriggerScheduleKind = "cron" | "event";
+
+export interface TriggerSchedule {
+  kind: TriggerScheduleKind;
+  // cron
+  expression?: string;
+  // event
+  event_type?: string;
+  filter?: Record<string, unknown>;
+}
+
+export interface TriggerRow {
+  name: string;
+  description: string;
+  agent_name: string;
+  goal: string;
+  schedule: TriggerSchedule;
+  enabled: boolean;
+  last_fired_at: string | null;
+}
+
+export async function fetchTriggers(): Promise<{ triggers: TriggerRow[] }> {
+  const r = await apiFetch(`/triggers`);
+  if (!r.ok) throw new Error(`GET /triggers failed: ${r.status}`);
+  return r.json();
+}
+
+export async function setTriggerEnabled(
+  name: string,
+  enabled: boolean,
+): Promise<{ name: string; enabled: boolean }> {
+  const action = enabled ? "enable" : "disable";
+  const r = await apiFetch(
+    `/triggers/${encodeURIComponent(name)}/${action}`,
+    { method: "POST" },
+  );
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function fireTrigger(
+  name: string,
+): Promise<{ name: string; status: string; fired_at?: string; reason?: string; error?: string }> {
+  const r = await apiFetch(
+    `/triggers/${encodeURIComponent(name)}/fire`,
+    { method: "POST" },
+  );
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}

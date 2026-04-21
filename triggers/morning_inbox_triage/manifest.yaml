@@ -1,0 +1,12 @@
+name: morning_inbox_triage
+description: Daily digest — triage the inbox before the operator opens email.
+agent_name: inbox_triage_agent
+goal: |
+  Review every message that arrived in the last 24 hours. Summarize
+  anything that looks actionable (replies needed, meetings to confirm,
+  time-sensitive requests) in a short bulleted brief. Skip newsletters
+  and automated notifications unless they look urgent.
+enabled: false
+schedule:
+  kind: cron
+  expression: "0 7 * * *"

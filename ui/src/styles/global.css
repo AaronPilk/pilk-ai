@@ -6384,3 +6384,66 @@ body {
   color: var(--text-faint);
   font-style: italic;
 }
+
+/* ── Settings → Triggers ─────────────────────────────────────── */
+.triggers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.triggers-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.triggers-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.triggers-row-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.triggers-row-desc {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.triggers-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.triggers-row-meta strong {
+  color: var(--text);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.triggers-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.triggers-row-msg {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-left: 6px;
+}

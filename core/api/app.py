@@ -43,6 +43,7 @@ from core.api.routes.sentinel import router as sentinel_router
 from core.api.routes.supabase import router as supabase_router
 from core.api.routes.system_status import router as system_status_router
 from core.api.routes.telegram import router as telegram_router
+from core.api.routes.triggers import router as triggers_router
 from core.api.routes.voice import router as voice_router
 from core.api.routes.xauusd_settings import router as xauusd_settings_router
 from core.api.ws import router as ws_router
@@ -137,6 +138,7 @@ from core.trading.xauusd.settings_store import (
     XAUUSDSettingsStore,
     set_xauusd_settings_store,
 )
+from core.triggers import TriggerRegistry, TriggerScheduler
 from core.voice import StubSTT, StubTTS, VoicePipeline, VoiceStateMachine
 from core.voice.drivers import STTDriver, TTSDriver
 from core.voice.elevenlabs_driver import ElevenLabsTTS
@@ -145,6 +147,7 @@ from core.voice.openai_driver import OpenAISTT, OpenAITTS
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / "agents"
 CLIENTS_DIR = REPO_ROOT / "clients"
+TRIGGERS_DIR = REPO_ROOT / "triggers"
 
 # Cap the number of unacked incidents that get prepended to a planner
 # system prompt. More than a handful and the brief becomes noise; if
@@ -766,6 +769,34 @@ async def lifespan(app: FastAPI):
     await sentinel.start()
     log.info("sentinel_ready", rules=len(sentinel._rules))
 
+    # Trigger registry + scheduler. Walks ``triggers/`` at boot, mirrors
+    # enabled-state in SQLite, and runs one background task that ticks
+    # every ~30s for cron triggers + subscribes to the hub for event
+    # triggers. Only starts when the orchestrator is live — a scheduler
+    # without an orchestrator to call would just log + drop fires.
+    triggers = TriggerRegistry(manifests_dir=TRIGGERS_DIR, db_path=settings.db_path)
+    installed_triggers = await triggers.discover_and_install()
+    log.info(
+        "triggers_discovered",
+        names=installed_triggers,
+        count=len(installed_triggers),
+    )
+    trigger_scheduler: TriggerScheduler | None = None
+    if orchestrator is not None:
+        trigger_scheduler = TriggerScheduler(
+            registry=triggers,
+            hub=hub,
+            agent_run=orchestrator.agent_run,
+            broadcast=broadcast,
+        )
+        await trigger_scheduler.start()
+        log.info("trigger_scheduler_ready")
+    else:
+        log.info(
+            "trigger_scheduler_inactive",
+            reason="orchestrator offline — cannot fire triggers",
+        )
+
     voice_state = VoiceStateMachine(broadcast=broadcast)
     stt: STTDriver = (
         OpenAISTT(settings.openai_api_key) if settings.openai_api_key else StubSTT()
@@ -826,6 +857,8 @@ async def lifespan(app: FastAPI):
     app.state.sentinel = sentinel
     app.state.sentinel_heartbeats = sentinel_heartbeats
     app.state.sentinel_incidents = sentinel_incidents
+    app.state.triggers = triggers
+    app.state.trigger_scheduler = trigger_scheduler
     # Expose the broadcast callable to routes that emit their own events
     # (e.g. `sentinel.incident.acked`). Nothing else needs this; routes
     # that already had a direct handle (orchestrator, approvals) still
@@ -917,6 +950,8 @@ async def lifespan(app: FastAPI):
         # Sentinel shuts down first so its scan task won't race teardown.
         hub.unsubscribe(sentinel.on_event)
         await sentinel.stop()
+        if trigger_scheduler is not None:
+            await trigger_scheduler.stop()
         if telegram_bridge is not None:
             await telegram_bridge.stop()
         if telegram_approvals_bridge is not None:
@@ -960,6 +995,7 @@ def create_app() -> FastAPI:
     app.include_router(approvals_router)
     app.include_router(voice_router)
     app.include_router(telegram_router)
+    app.include_router(triggers_router)
     app.include_router(browser_router)
     app.include_router(governor_router)
     app.include_router(integrations_router)

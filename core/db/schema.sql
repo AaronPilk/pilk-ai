@@ -158,3 +158,19 @@ CREATE TABLE IF NOT EXISTS memory_entries (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_kind ON memory_entries(kind);
 CREATE INDEX IF NOT EXISTS idx_memory_created ON memory_entries(created_at);
+
+-- Proactive triggers. Rows are seeded by the registry on every boot
+-- from ``triggers/<name>/manifest.yaml``; the ``enabled`` column is
+-- operator-mutable at runtime (Settings → Triggers) and overrides the
+-- manifest default on subsequent boots. Manifests are the source of
+-- truth for schedule / agent / goal — those fields are not mirrored
+-- here because editing them in-DB would silently diverge from the
+-- file the operator can eyeball on disk.
+CREATE TABLE IF NOT EXISTS triggers (
+    name           TEXT PRIMARY KEY,
+    manifest_path  TEXT NOT NULL,
+    enabled        INTEGER NOT NULL,            -- 0|1
+    last_fired_at  TEXT,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL
+);
