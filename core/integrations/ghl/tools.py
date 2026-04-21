@@ -1523,4 +1523,431 @@ def make_ghl_contact_tools() -> list[Tool]:
     ]
 
 
-__all__ = ["make_ghl_contact_tools", "make_ghl_pipeline_tools"]
+# ── conversations (PR #75d) ──────────────────────────────────────
+#
+# Four tools covering the operator's day-to-day outbound +
+# inbound conversation surface: send SMS, send email, search
+# conversations, read a thread.
+#
+# Risk classes: sends are COMMS (every outbound message lands in
+# the approval queue by default — same posture as gmail_send_as_me
+# and telegram_notify). Reads are NET_READ.
+
+
+def _send_sms_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        contact_id = str(args.get("contact_id") or "").strip()
+        message = str(args.get("message") or "").strip()
+        if not contact_id:
+            return ToolOutcome(
+                content="ghl_send_sms requires 'contact_id'.",
+                is_error=True,
+            )
+        if not message:
+            return ToolOutcome(
+                content=(
+                    "ghl_send_sms requires a non-empty 'message'."
+                ),
+                is_error=True,
+            )
+        if len(message) > 1600:
+            # GHL segments past ~160 chars; past 1600 the operator is
+            # almost certainly not composing an SMS. Cut early to
+            # avoid an accidental 10-segment charge.
+            return ToolOutcome(
+                content=(
+                    f"ghl_send_sms message too long ({len(message)} "
+                    "chars). SMS splits at 160-char boundaries; past "
+                    "1600 chars use email or a document link."
+                ),
+                is_error=True,
+            )
+        loc, err = _unwrap_location(args, "ghl_send_sms")
+        if err:
+            return err
+        from_number_raw = args.get("from_number")
+        from_number = (
+            str(from_number_raw).strip()
+            if isinstance(from_number_raw, str) and from_number_raw.strip()
+            else None
+        )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_send_sms")
+        try:
+            result = await client.conversations_send_sms(
+                contact_id=contact_id,
+                location_id=loc,
+                message=message,
+                from_number=from_number,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_send_sms")
+        conv_id = result.get("conversationId") or ""
+        msg_id = result.get("messageId") or ""
+        return ToolOutcome(
+            content=(
+                f"Sent SMS to contact {contact_id[:12]}… "
+                f"({len(message)} chars). "
+                f"conv={conv_id[:12]}… msg={msg_id[:12]}…"
+            ),
+            data={
+                "contact_id": contact_id,
+                "conversation_id": conv_id,
+                "message_id": msg_id,
+                "chars": len(message),
+            },
+        )
+
+    return Tool(
+        name="ghl_send_sms",
+        description=(
+            "Send an SMS to a GHL contact through the location's "
+            "configured phone number. Body goes out verbatim — GHL "
+            "handles segmentation (160-char splits) but the operator "
+            "is billed per segment. Optional 'from_number' overrides "
+            "the location default when the sub-account has multiple "
+            "numbers. COMMS risk — every send queues for approval "
+            "by default."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+                "message": {
+                    "type": "string",
+                    "description": (
+                        "SMS body. Hard cap 1600 chars (10 segments)."
+                    ),
+                },
+                "from_number": {
+                    "type": "string",
+                    "description": (
+                        "E.164 phone number owned by the location. "
+                        "Omit to use the sub-account default."
+                    ),
+                },
+                "location_id": {"type": "string"},
+            },
+            "required": ["contact_id", "message"],
+        },
+        risk=RiskClass.COMMS,
+        handler=handler,
+    )
+
+
+def _send_email_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        contact_id = str(args.get("contact_id") or "").strip()
+        subject = str(args.get("subject") or "").strip()
+        html = args.get("html")
+        text = args.get("text")
+        html_str = html.strip() if isinstance(html, str) else ""
+        text_str = text.strip() if isinstance(text, str) else ""
+        if not contact_id:
+            return ToolOutcome(
+                content="ghl_send_email requires 'contact_id'.",
+                is_error=True,
+            )
+        if not subject:
+            return ToolOutcome(
+                content="ghl_send_email requires a 'subject'.",
+                is_error=True,
+            )
+        if not (html_str or text_str):
+            return ToolOutcome(
+                content=(
+                    "ghl_send_email requires at least one of 'html' "
+                    "or 'text' (both is fine — GHL picks per-recipient "
+                    "preferences)."
+                ),
+                is_error=True,
+            )
+        loc, err = _unwrap_location(args, "ghl_send_email")
+        if err:
+            return err
+        from_email_raw = args.get("from_email")
+        from_email = (
+            str(from_email_raw).strip()
+            if isinstance(from_email_raw, str) and from_email_raw.strip()
+            else None
+        )
+        reply_to_raw = args.get("reply_to")
+        reply_to = (
+            str(reply_to_raw).strip()
+            if isinstance(reply_to_raw, str) and reply_to_raw.strip()
+            else None
+        )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_send_email")
+        try:
+            result = await client.conversations_send_email(
+                contact_id=contact_id,
+                location_id=loc,
+                subject=subject,
+                html=html_str or None,
+                text=text_str or None,
+                from_email=from_email,
+                reply_to=reply_to,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_send_email")
+        conv_id = result.get("conversationId") or ""
+        msg_id = result.get("messageId") or ""
+        return ToolOutcome(
+            content=(
+                f"Sent email to contact {contact_id[:12]}… "
+                f"(subject: {subject}). "
+                f"conv={conv_id[:12]}… msg={msg_id[:12]}…"
+            ),
+            data={
+                "contact_id": contact_id,
+                "conversation_id": conv_id,
+                "message_id": msg_id,
+                "subject": subject,
+            },
+        )
+
+    return Tool(
+        name="ghl_send_email",
+        description=(
+            "Send an email to a GHL contact through the location's "
+            "email channel. Requires subject + at least one of html "
+            "/ text (both is fine). Optional from_email + reply_to "
+            "override the sub-account default sending identity. "
+            "COMMS risk — every send queues for approval by default. "
+            "Use this when the operator wants an email tracked in "
+            "the GHL timeline; use gmail_send_as_me when the email "
+            "should land from their personal Gmail instead."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+                "subject": {"type": "string"},
+                "html": {
+                    "type": "string",
+                    "description": "HTML body. At least one of html/text required.",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Plain-text body. At least one of html/text required.",
+                },
+                "from_email": {"type": "string"},
+                "reply_to": {"type": "string"},
+                "location_id": {"type": "string"},
+            },
+            "required": ["contact_id", "subject"],
+        },
+        risk=RiskClass.COMMS,
+        handler=handler,
+    )
+
+
+def _conversation_search_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        loc, err = _unwrap_location(args, "ghl_conversation_search")
+        if err:
+            return err
+        try:
+            limit = int(args.get("limit") or 25)
+        except (TypeError, ValueError):
+            limit = 25
+        limit = max(1, min(limit, 100))
+        contact_id_raw = args.get("contact_id")
+        contact_id = (
+            str(contact_id_raw).strip()
+            if isinstance(contact_id_raw, str) and contact_id_raw.strip()
+            else None
+        )
+        last_type_raw = args.get("last_message_type")
+        last_type = (
+            str(last_type_raw).strip()
+            if isinstance(last_type_raw, str) and last_type_raw.strip()
+            else None
+        )
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_conversation_search")
+        try:
+            result = await client.conversations_search(
+                location_id=loc,
+                contact_id=contact_id,
+                last_message_type=last_type,
+                limit=limit,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_conversation_search")
+        conversations = result.get("conversations") or []
+        lines = []
+        for c in conversations:
+            ts = c.get("lastMessageDate") or ""
+            snippet = (c.get("lastMessageBody") or "")[:80]
+            kind = c.get("lastMessageType") or "?"
+            cid = c.get("id") or ""
+            lines.append(
+                f"- [{kind}] {ts[:16]} "
+                f"({cid[:12]}…): {snippet}"
+            )
+        body = "\n".join(lines) if lines else "No conversations match."
+        return ToolOutcome(
+            content=f"{len(conversations)} conversation(s):\n{body}",
+            data={
+                "conversations": conversations,
+                "location_id": loc,
+                "total": result.get("total"),
+            },
+        )
+
+    return Tool(
+        name="ghl_conversation_search",
+        description=(
+            "Search conversation threads in a GHL location. Narrow "
+            "by contact_id for 'history with this person', or by "
+            "last_message_type ('SMS' | 'Email' | 'WhatsApp' | "
+            "'FB' | 'IG' | 'GMB') for 'any unread <channel>?'. "
+            "Returns threads sorted by last-message-date with a "
+            "snippet of the most recent message. limit 1-100, "
+            "default 25. NET_READ."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+                "last_message_type": {
+                    "type": "string",
+                    "description": (
+                        "Channel filter: 'SMS' | 'Email' | "
+                        "'WhatsApp' | 'FB' | 'IG' | 'GMB'."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+                "location_id": {"type": "string"},
+            },
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def _conversation_get_messages_tool() -> Tool:
+    async def handler(
+        args: dict[str, Any], _ctx: ToolContext,
+    ) -> ToolOutcome:
+        conv_id = str(args.get("conversation_id") or "").strip()
+        if not conv_id:
+            return ToolOutcome(
+                content=(
+                    "ghl_conversation_get_messages requires "
+                    "'conversation_id'."
+                ),
+                is_error=True,
+            )
+        try:
+            limit = int(args.get("limit") or 50)
+        except (TypeError, ValueError):
+            limit = 50
+        limit = max(1, min(limit, 100))
+        try:
+            client = client_from_settings()
+        except GHLNotConfiguredError:
+            return _not_configured("ghl_conversation_get_messages")
+        try:
+            result = await client.conversations_get_messages(
+                conv_id, limit=limit,
+            )
+        except GHLError as e:
+            return _surface(e, "ghl_conversation_get_messages")
+        raw_messages = result.get("messages")
+        # GHL nests under {"messages": {"messages": [...], ...}} on
+        # some endpoints; flatten defensively.
+        if isinstance(raw_messages, dict):
+            messages = raw_messages.get("messages") or []
+        elif isinstance(raw_messages, list):
+            messages = raw_messages
+        else:
+            messages = []
+        lines = []
+        for m in messages:
+            ts = m.get("dateAdded") or ""
+            kind = m.get("type") or "?"
+            direction = (
+                "→" if m.get("direction") == "outbound" else "←"
+            )
+            body_text = (m.get("body") or "").replace("\n", " ")[:120]
+            lines.append(
+                f"{ts[:16]} {direction} [{kind}] {body_text}"
+            )
+        rendered = "\n".join(lines) if lines else "(no messages)"
+        return ToolOutcome(
+            content=(
+                f"{len(messages)} message(s) in conversation "
+                f"{conv_id[:12]}…:\n\n{rendered}"
+            ),
+            data={
+                "conversation_id": conv_id,
+                "messages": messages,
+            },
+        )
+
+    return Tool(
+        name="ghl_conversation_get_messages",
+        description=(
+            "Fetch the last N messages in one conversation thread. "
+            "Returns each message's timestamp, direction (inbound / "
+            "outbound), channel, and body. Use after "
+            "ghl_conversation_search to drill into a thread. "
+            "limit 1-100, default 50. NET_READ."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "conversation_id": {"type": "string"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+            },
+            "required": ["conversation_id"],
+        },
+        risk=RiskClass.NET_READ,
+        handler=handler,
+    )
+
+
+def make_ghl_conversation_tools() -> list[Tool]:
+    """Four conversation tools — SMS + email senders, search, thread read.
+
+    PR #75d ships these alongside the existing pipeline + contact
+    surfaces. Future channels (WhatsApp, Instagram DM, Messenger, GMB)
+    can add sibling senders without restructuring the factory — each
+    rides the same ``_send_conversation_message`` path on the client.
+    """
+    return [
+        _send_sms_tool(),
+        _send_email_tool(),
+        _conversation_search_tool(),
+        _conversation_get_messages_tool(),
+    ]
+
+
+__all__ = [
+    "make_ghl_contact_tools",
+    "make_ghl_conversation_tools",
+    "make_ghl_pipeline_tools",
+]

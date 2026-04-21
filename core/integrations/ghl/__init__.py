@@ -41,6 +41,7 @@ from core.integrations.ghl.client import (
 )
 from core.integrations.ghl.tools import (
     make_ghl_contact_tools,
+    make_ghl_conversation_tools,
     make_ghl_pipeline_tools,
 )
 
@@ -52,6 +53,7 @@ __all__ = [
     "GHLNotConfiguredError",
     "client_from_settings",
     "make_ghl_contact_tools",
+    "make_ghl_conversation_tools",
     "make_ghl_pipeline_tools",
     "resolve_location_id",
 ]
