@@ -477,6 +477,136 @@ body {
 .chat-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── Chat composer: drop zone + draft attachments ──────────────
+   The composer is the drop target for file uploads. The
+   `--dragover` modifier tints the border + background so the drop
+   intent reads without pulling in a full modal. */
+.chat-composer--dragover {
+  background: rgba(139, 167, 255, 0.08);
+  box-shadow: inset 0 0 0 2px rgba(139, 167, 255, 0.4);
+}
+
+.chat-drafts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chat-draft {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  max-width: 260px;
+}
+
+.chat-draft-thumb {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.chat-draft-icon {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.chat-draft-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.chat-draft-name {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.chat-draft-size {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.chat-draft-remove {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.chat-draft-remove:hover {
+  color: var(--text);
+  background: var(--surface-active, rgba(255, 255, 255, 0.06));
+}
+
+.chat-upload-error {
+  color: #ff9e9e;
+  font-size: 12px;
+  padding: 4px 2px;
+}
+
+.msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.msg-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  max-width: 240px;
+}
+
+.msg-attachment-kind {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.msg-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.msg-attachment-size {
+  color: var(--text-faint);
 }
 
 .btn {

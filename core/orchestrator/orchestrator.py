@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -163,6 +163,27 @@ class RunContext:
     # classifier. Lets cheap-and-capable specialist agents stay on
     # the subscription-backed LIGHT provider across all their turns.
     preferred_tier: str | None = None
+    # Attachments the user dropped into the chat composer. Resolved
+    # from disk by the WS handler so the orchestrator doesn't depend
+    # on the attachment store. An image in this list forces the
+    # tier choice up to at least STANDARD (the LIGHT tier runs through
+    # the Claude Code CLI, which has no vision surface).
+    attachments: list["ChatAttachment"] = field(default_factory=list)
+
+
+@dataclass
+class ChatAttachment:
+    """Orchestrator-side view of one uploaded file.
+
+    Kept separate from ``core.chat.Attachment`` so this module has no
+    import cycle risk — the WS handler translates between them.
+    """
+
+    id: str
+    kind: str  # "image" | "document" | "text"
+    mime: str
+    filename: str
+    path: Path
 
 
 class Orchestrator:
@@ -290,7 +311,12 @@ class Orchestrator:
 
     # ── Entry points ─────────────────────────────────────────────────
 
-    async def run(self, goal: str) -> None:
+    async def run(
+        self,
+        goal: str,
+        *,
+        attachments: list[ChatAttachment] | None = None,
+    ) -> None:
         """Free chat path. No agent; shared workspace."""
         ctx = RunContext(
             goal=goal,
@@ -301,6 +327,7 @@ class Orchestrator:
             sandbox_root=None,
             sandbox_capabilities=frozenset(),
             metadata={},
+            attachments=list(attachments or []),
         )
         await self._execute(ctx)
 
@@ -400,7 +427,12 @@ class Orchestrator:
 
     async def _drive(self, plan_id: str, rc: RunContext) -> None:
         tools = self.registry.anthropic_schemas(allow=rc.allowed_tools)
-        messages: list[dict[str, Any]] = [{"role": "user", "content": rc.goal}]
+        # Compose the first user turn. With no attachments the content
+        # stays a plain string (keeps the happy path unchanged); with
+        # attachments we promote it to a list of Anthropic content blocks
+        # so images / documents travel through the Messages API directly.
+        first_content = _build_user_content(rc.goal, rc.attachments)
+        messages: list[dict[str, Any]] = [{"role": "user", "content": first_content}]
         final_text: str = ""
 
         # Sentinel situational brief: if any unacked incidents exist,
@@ -431,6 +463,14 @@ class Orchestrator:
             # is passed to the governor as an explicit override so the
             # downgrade-on-premium-gate path stays consistent.
             _override = rc.preferred_tier if rc.preferred_tier else None
+            # If the user dropped an image into the composer, the LIGHT
+            # tier can't handle it — it's backed by the Claude Code CLI
+            # which has no vision surface. Bump to STANDARD unless the
+            # caller already pinned something higher.
+            if _override in (None, "light") and any(
+                a.kind == "image" for a in rc.attachments
+            ):
+                _override = "standard"
             tier_choice = self.governor.pick(rc.goal, override=_override)
             if tier_choice.gated and self.gateway.approvals is not None:
                 decision = await self._request_premium_escalation(
@@ -644,3 +684,77 @@ def _tool_risk(registry: ToolRegistry, name: str) -> str:
 def _short_args(args: dict, limit: int = 80) -> str:
     rendered = json.dumps(args, ensure_ascii=False, sort_keys=True)
     return rendered if len(rendered) <= limit else rendered[: limit - 1] + "…"
+
+
+def _build_user_content(
+    goal: str, attachments: list[ChatAttachment]
+) -> str | list[dict[str, Any]]:
+    """Compose the first user turn.
+
+    Returns a plain string when there are no attachments — the common
+    case — so Anthropic prompt-caching behaviour stays identical to the
+    pre-upload code path. When attachments are present we emit a list
+    of Anthropic content blocks: the goal text first, then one block
+    per file.
+
+    Text attachments are inlined as additional text blocks rather than
+    binary-encoded so Claude reads their contents directly. Images and
+    PDFs become base64-encoded source blocks — the Messages API accepts
+    both shapes natively.
+    """
+    import base64  # local import: only hit when an attachment is present
+
+    if not attachments:
+        return goal
+    blocks: list[dict[str, Any]] = [{"type": "text", "text": goal}]
+    for att in attachments:
+        try:
+            raw = att.path.read_bytes()
+        except OSError as e:
+            log.warning(
+                "chat_attachment_read_failed",
+                id=att.id,
+                path=str(att.path),
+                error=str(e),
+            )
+            continue
+        if att.kind == "image":
+            blocks.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": att.mime,
+                        "data": base64.b64encode(raw).decode("ascii"),
+                    },
+                }
+            )
+        elif att.kind == "document":
+            blocks.append(
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": att.mime,
+                        "data": base64.b64encode(raw).decode("ascii"),
+                    },
+                    # Filename is rendered as the citation source; PDFs
+                    # without this show as "Untitled".
+                    "title": att.filename,
+                }
+            )
+        elif att.kind == "text":
+            try:
+                text = raw.decode("utf-8", errors="replace")
+            except Exception:
+                text = ""
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"[Attached file: {att.filename}]\n"
+                        f"```\n{text}\n```"
+                    ),
+                }
+            )
+    return blocks

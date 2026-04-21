@@ -1069,6 +1069,41 @@ export async function clearIntegrationSecret(
   return r.json();
 }
 
+// ── Chat attachments (file uploads) ──────────────────────────────
+
+export type ChatAttachmentKind = "image" | "document" | "text";
+
+export interface ChatAttachment {
+  id: string;
+  kind: ChatAttachmentKind;
+  mime: string;
+  filename: string;
+  size: number;
+  created_at: string;
+}
+
+export async function uploadChatAttachment(
+  file: File,
+): Promise<ChatAttachment> {
+  const form = new FormData();
+  form.append("file", file);
+  const r = await apiFetch(`/chat/uploads`, {
+    method: "POST",
+    // Don't set Content-Type — fetch sets the correct multipart
+    // boundary automatically when body is a FormData.
+    body: form,
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  const data: { attachment: ChatAttachment } = await r.json();
+  return data.attachment;
+}
+
+export async function deleteChatAttachment(id: string): Promise<void> {
+  await apiFetch(`/chat/uploads/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  }).catch(() => {});
+}
+
 // ── XAU/USD runtime settings ────────────────────────────────────
 
 export type XAUUSDExecutionMode = "approve" | "autonomous";

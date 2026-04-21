@@ -28,6 +28,7 @@ from core.api.routes.apple import router as apple_router
 from core.api.routes.approvals import router as approvals_router
 from core.api.routes.brain import router as brain_router
 from core.api.routes.browser import router as browser_router
+from core.api.routes.chat_uploads import router as chat_uploads_router
 from core.api.routes.coding import router as coding_http_router
 from core.api.routes.cost import router as cost_router
 from core.api.routes.governor import router as governor_router
@@ -108,6 +109,7 @@ from core.secrets import (
     IntegrationSecretsStore,
     set_integration_secrets_store,
 )
+from core.chat import AttachmentStore
 from core.sentinel import HeartbeatStore, IncidentStore, Supervisor
 from core.sentinel.notify import Notifier as SentinelNotifier
 from core.sentinel.remediate import RemediationResult
@@ -995,6 +997,13 @@ async def lifespan(app: FastAPI):
     app.state.oauth_providers = oauth_providers
     app.state.oauth_flow = oauth_flow
 
+    # Chat attachments — disk-backed store under PILK_HOME/temp/chat-uploads.
+    # Wired here so the orchestrator can resolve attachment IDs on the
+    # first turn without a dependency on the HTTP route's closure.
+    chat_attachments = AttachmentStore(home)
+    chat_attachments.ensure_layout()
+    app.state.chat_attachments = chat_attachments
+
     # Telegram chat bridge — long-polls getUpdates and feeds inbound
     # messages into the orchestrator. Only starts when both bot token
     # and chat_id are available AND the operator hasn't opted out via
@@ -1132,6 +1141,7 @@ def create_app() -> FastAPI:
     app.include_router(brain_router)
     app.include_router(migration_router)
     app.include_router(integration_secrets_router)
+    app.include_router(chat_uploads_router)
     app.include_router(xauusd_settings_router)
     app.include_router(logs_router)
     app.include_router(sentinel_router)
