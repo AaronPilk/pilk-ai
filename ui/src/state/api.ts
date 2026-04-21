@@ -1033,7 +1033,9 @@ export interface IntegrationSecretEntry {
   name: string;
   label: string;
   description: string;
-  env: string;
+  // Pattern-matched and legacy entries have no paired env-var; the
+  // backend returns null for those and the UI skips the `env:` badge.
+  env: string | null;
   configured: boolean;
   updated_at: string | null;
 }
