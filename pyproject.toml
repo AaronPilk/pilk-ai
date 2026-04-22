@@ -29,6 +29,8 @@ dependencies = [
     "google-auth-oauthlib>=1.2",
     "google-api-python-client>=2.140",
     "pyjwt[crypto]>=2.9",
+    "pypdf>=5.0",
+    "python-docx>=1.1",
 ]
 
 [project.optional-dependencies]

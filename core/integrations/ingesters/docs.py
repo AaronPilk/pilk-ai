@@ -43,10 +43,10 @@ log = get_logger("pilkd.ingest.docs")
 
 # ── limits ──────────────────────────────────────────────────────────
 
-MAX_FILE_BYTES = 5 * 1024 * 1024        # 5 MiB per file
+MAX_FILE_BYTES = 10 * 1024 * 1024       # 10 MiB per file
 MAX_NOTE_BODY_CHARS = 200_000           # clamp enormous logs in-note
-DEFAULT_MAX_FILES = 1_000
-HARD_MAX_FILES = 10_000
+DEFAULT_MAX_FILES = 5_000
+HARD_MAX_FILES = 50_000                 # enough for a full $HOME walk
 DEFAULT_EXTENSIONS: tuple[str, ...] = (
     ".md",
     ".markdown",
@@ -60,6 +60,67 @@ DEFAULT_EXTENSIONS: tuple[str, ...] = (
     ".json",
     ".yaml",
     ".yml",
+    # Office formats (best-effort text extraction).
+    ".pdf",
+    ".docx",
+)
+
+# Folder names we never descend into, even when scanning under $HOME.
+# These are system / cache / build outputs that would flood the vault
+# with machine-generated text and pin the walker for minutes. Keep
+# the set conservative — the operator can always point at a specific
+# subfolder inside one of these if they explicitly want the content.
+IGNORED_DIR_NAMES: frozenset[str] = frozenset(
+    {
+        # macOS / user system
+        "Library",
+        "Pictures",
+        "Music",
+        "Movies",
+        # Trash / system bookkeeping
+        ".Trash",
+        ".cache",
+        ".local",
+        ".npm",
+        ".yarn",
+        ".pnpm-store",
+        ".gradle",
+        ".m2",
+        ".rustup",
+        ".cargo",
+        ".pyenv",
+        ".nvm",
+        # Repo / build artefacts
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".env",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+        ".turbo",
+        ".next",
+        ".vite",
+        "dist",
+        "dist-ssr",
+        "build",
+        "out",
+        ".parcel-cache",
+        ".vercel",
+        ".netlify",
+        # Version control internals
+        ".git",
+        ".svn",
+        ".hg",
+        # IDE / tooling caches
+        ".idea",
+        ".vscode",
+        ".DS_Store",
+        # PILK's own vault — don't recursively ingest yourself.
+        "PILK-brain",
+        "PILK",
+    }
 )
 
 # ── value types ─────────────────────────────────────────────────────
@@ -187,15 +248,35 @@ def _walk(root: Path, *, recursive: bool):
 
 def _iter_recursive(root: Path):
     # os.walk is faster than Path.rglob on huge trees and we can
-    # prune dotfile directories inline rather than post-filtering.
+    # prune dotfile + ignored directories inline rather than
+    # post-filtering.
     for base, dirs, files in os.walk(root, followlinks=False):
-        # Mutating `dirs` in place prunes the traversal.
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        # Mutating `dirs` in place prunes the traversal. Skip dotfiles,
+        # known system / cache / build directories, and anything the
+        # IGNORED_DIR_NAMES set catches by name (case-insensitive).
+        dirs[:] = [
+            d
+            for d in dirs
+            if not d.startswith(".") and d not in IGNORED_DIR_NAMES
+        ]
         for name in files:
             yield os.path.join(base, name)
 
 
 def _read_text(path: Path) -> str | None:
+    """Decode a text / rich-document source into plain text.
+
+    Plain formats go through utf-8 → latin-1 fallback. PDFs + docx
+    get text-extracted via pypdf / python-docx when those deps are
+    importable; if not, the file is treated as undecodable (the
+    caller logs + skips). Returns ``None`` when the source genuinely
+    can't be turned into text.
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        return _read_pdf(path)
+    if suffix == ".docx":
+        return _read_docx(path)
     try:
         raw = path.read_bytes()
     except OSError as e:
@@ -207,6 +288,62 @@ def _read_text(path: Path) -> str | None:
         except UnicodeDecodeError:
             continue
     return None
+
+
+def _read_pdf(path: Path) -> str | None:
+    """Extract text from a PDF via pypdf.
+
+    Encrypted / scanned / image-only PDFs return empty strings — the
+    ingester still writes a stub note with the frontmatter + filename
+    so the file isn't silently lost. OCR is a follow-up.
+    """
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        log.warning("docs_ingest_pdf_dep_missing", path=str(path))
+        return None
+    try:
+        reader = PdfReader(str(path))
+    except Exception as e:
+        log.warning("docs_ingest_pdf_open_failed", path=str(path), error=str(e))
+        return None
+    parts: list[str] = []
+    for page in reader.pages:
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            continue
+        if text.strip():
+            parts.append(text)
+        # Stay under the per-file ceiling even for massive PDFs.
+        if sum(len(p) for p in parts) >= MAX_NOTE_BODY_CHARS:
+            break
+    return "\n\n".join(parts)
+
+
+def _read_docx(path: Path) -> str | None:
+    """Extract paragraph + table text from a .docx via python-docx."""
+    try:
+        import docx  # python-docx
+    except ImportError:
+        log.warning("docs_ingest_docx_dep_missing", path=str(path))
+        return None
+    try:
+        doc = docx.Document(str(path))
+    except Exception as e:
+        log.warning("docs_ingest_docx_open_failed", path=str(path), error=str(e))
+        return None
+    parts: list[str] = []
+    for para in doc.paragraphs:
+        text = (para.text or "").strip()
+        if text:
+            parts.append(text)
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells if cell.text]
+            if cells:
+                parts.append(" | ".join(cells))
+    return "\n\n".join(parts)
 
 
 def _safe_relative(path: Path, root: Path) -> Path:

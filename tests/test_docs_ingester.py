@@ -68,7 +68,7 @@ def test_scan_skips_hidden_dirs_and_files(tmp_path: Path) -> None:
 
 def test_scan_skips_oversized_files(tmp_path: Path) -> None:
     _mk(tmp_path, "small.md", "tiny")
-    _mk(tmp_path, "big.md", "x" * (6 * 1024 * 1024))  # 6 MiB, over cap
+    _mk(tmp_path, "big.md", "x" * (11 * 1024 * 1024))  # 11 MiB, over cap
     scan = scan_docs(tmp_path, home=tmp_path)
     names = [d.abs_path.name for d in scan.found]
     assert names == ["small.md"]
@@ -117,10 +117,15 @@ def test_scan_handles_undecodable_bytes(tmp_path: Path) -> None:
 
 
 def test_scan_uses_default_extension_set(tmp_path: Path) -> None:
-    for suffix in DEFAULT_EXTENSIONS:
+    # Plain-text extensions round-trip through the default config.
+    # PDF / docx need a real binary structure, so they're covered by
+    # the dedicated pypdf / python-docx tests below.
+    binary_exts = {".pdf", ".docx"}
+    text_exts = [e for e in DEFAULT_EXTENSIONS if e not in binary_exts]
+    for suffix in text_exts:
         _mk(tmp_path, f"file{suffix}", "body")
     scan = scan_docs(tmp_path, home=tmp_path)
-    assert len(scan.found) == len(DEFAULT_EXTENSIONS)
+    assert len(scan.found) == len(text_exts)
 
 
 # ── render_doc_note ─────────────────────────────────────────────────
@@ -179,3 +184,92 @@ def test_render_slugs_each_path_segment(tmp_path: Path) -> None:
     note = render_doc_note(scan.found[0], scan_root=scan.root)
     # Spaces become dashes; casing folds; suffix preserved.
     assert note.path == "ingested/docs/client-files/my-notes.md"
+
+
+# ── IGNORED_DIR_NAMES + wide walk ────────────────────────────────────
+
+
+def test_scan_prunes_known_cache_folders(tmp_path: Path) -> None:
+    # The walker must skip Library / node_modules / .git etc. even
+    # when they contain text files — otherwise a home walk drowns
+    # in machine-generated junk.
+    _mk(tmp_path, "project/src.md", "kept")
+    _mk(tmp_path, "project/node_modules/react/package.json", "{}")
+    _mk(tmp_path, "Library/Caches/whatever/log.txt", "noise")
+    _mk(tmp_path, ".git/config", "secret")
+    _mk(tmp_path, "dist/bundle.json", "{}")
+    scan = scan_docs(tmp_path, home=tmp_path)
+    kept_paths = {str(d.abs_path) for d in scan.found}
+    # The one legit file lands.
+    assert any(p.endswith("src.md") for p in kept_paths)
+    # Everything under a pruned dir is absent.
+    for bad in ("node_modules", "Library", ".git", "dist"):
+        assert not any(bad in p for p in kept_paths), bad
+
+
+def test_scan_ignores_pilk_brain_itself(tmp_path: Path) -> None:
+    # The operator's vault name. Walking it recursively would copy
+    # the vault into the vault, over and over.
+    _mk(tmp_path, "user-note.md", "kept")
+    _mk(tmp_path, "PILK-brain/ingested/docs/already.md", "loop")
+    scan = scan_docs(tmp_path, home=tmp_path)
+    kept_paths = {str(d.abs_path) for d in scan.found}
+    assert any(p.endswith("user-note.md") for p in kept_paths)
+    assert not any("PILK-brain" in p for p in kept_paths)
+
+
+# ── PDF + docx support ──────────────────────────────────────────────
+
+
+def test_scan_picks_up_pdf_when_pypdf_available(tmp_path: Path) -> None:
+    # pypdf transitively imports `cryptography`, which can blow up via
+    # a Rust-level panic on some sandboxed interpreters (missing
+    # `_cffi_backend`). Catch BaseException so the panic counts as a
+    # skip, not a failure.
+    try:
+        from pypdf import PdfWriter
+    except BaseException as e:
+        pytest.skip(f"pypdf unavailable in this env: {e}")
+
+    try:
+        writer = PdfWriter()
+        writer.add_blank_page(width=612, height=792)
+        pdf_path = tmp_path / "invoice.pdf"
+        with pdf_path.open("wb") as fh:
+            writer.write(fh)
+    except BaseException as e:
+        pytest.skip(f"pypdf write failed in this env: {e}")
+    scan = scan_docs(tmp_path, home=tmp_path)
+    paths = [d.abs_path.name for d in scan.found]
+    assert "invoice.pdf" in paths
+
+
+def test_scan_picks_up_docx_when_python_docx_available(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("docx")
+    import docx
+
+    docx_path = tmp_path / "proposal.docx"
+    doc = docx.Document()
+    doc.add_paragraph("First paragraph of the proposal.")
+    doc.add_paragraph("Second paragraph with more content.")
+    doc.save(str(docx_path))
+
+    scan = scan_docs(tmp_path, home=tmp_path)
+    found = [d for d in scan.found if d.abs_path.name == "proposal.docx"]
+    assert found, "docx wasn't picked up"
+    body = found[0].text
+    assert "First paragraph" in body
+    assert "Second paragraph" in body
+
+
+# ── cap bump ────────────────────────────────────────────────────────
+
+
+def test_hard_max_files_supports_full_home_walk() -> None:
+    # Sanity-check the constant so nobody silently lowers it back to
+    # 10K and re-breaks the "ingest my whole home" use case.
+    from core.integrations.ingesters.docs import HARD_MAX_FILES
+
+    assert HARD_MAX_FILES >= 50_000
