@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from "react";
 import {
   fetchBrainBacklinks,
@@ -14,20 +15,12 @@ import {
   type BrainNote,
   type BrainSearchHit,
 } from "../state/api";
-import { BrainGraph } from "./BrainGraph";
-import { ErrorBoundary } from "../components/ErrorBoundary";
 
-type Tab = "list" | "graph";
-
-/** Brain — browser for the Obsidian vault at
- * ~/PILK-brain/ (override via PILK_BRAIN_VAULT_PATH). This session
- * adds three things on top of the earlier v1 list view:
- *
- *   - Tabs (List / Graph) — the graph view is a force-directed
- *     rendering of every note and their `[[wiki-link]]` edges.
- *   - Nested folder tree with expand/collapse + counts.
- *   - Live search as you type (debounced), backlinks on the note
- *     view's right rail, tighter typography.
+/** Brain — browser for the Obsidian vault at ~/PILK-brain/ (override
+ * via PILK_BRAIN_VAULT_PATH). Presents every note as a card in a
+ * responsive grid, filterable by top-level folder and searchable
+ * across body text. Clicking a card opens the full note in an overlay
+ * with markdown rendering + backlinks rail.
  *
  * Writes still happen inside the agent loop via `brain_note_write`;
  * this view stays read-only.
@@ -38,18 +31,17 @@ export default function Brain() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [selected, setSelected] = useState<string | null>(null);
-  const [body, setBody] = useState<string | null>(null);
-  const [bodyLoading, setBodyLoading] = useState(false);
-
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<BrainSearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
 
-  const [tab, setTab] = useState<Tab>("list");
-  const [expanded, setExpanded] = useState<Set<string>>(new Set([""]));
+  const [folderFilter, setFolderFilter] = useState<string>("");
 
-  const [backlinks, setBacklinks] = useState<BrainBacklink[] | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedBody, setSelectedBody] = useState<string | null>(null);
+  const [selectedBacklinks, setSelectedBacklinks] =
+    useState<BrainBacklink[] | null>(null);
+  const [bodyLoading, setBodyLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -57,62 +49,18 @@ export default function Brain() {
       setNotes(r.notes);
       setRoot(r.root);
       setErr(null);
-      if (r.notes.length > 0 && selected === null) {
-        setSelected(r.notes[0].path);
-      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [selected]);
+  }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  // Body loader.
-  useEffect(() => {
-    if (selected === null) {
-      setBody(null);
-      return;
-    }
-    setBodyLoading(true);
-    fetchBrainNote(selected)
-      .then((r) => setBody(r.body))
-      .catch((e: unknown) => {
-        setBody(
-          `# ${selected}\n\n> Couldn't load — ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        );
-      })
-      .finally(() => setBodyLoading(false));
-  }, [selected]);
-
-  // Backlinks loader — fires alongside the body so the rail is live
-  // by the time the reader finishes the first paragraph.
-  useEffect(() => {
-    if (selected === null) {
-      setBacklinks(null);
-      return;
-    }
-    let cancelled = false;
-    fetchBrainBacklinks(selected)
-      .then((r) => {
-        if (!cancelled) setBacklinks(r.links);
-      })
-      .catch(() => {
-        if (!cancelled) setBacklinks([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selected]);
-
-  // Debounced live search — 200 ms after the last keystroke, refresh
-  // results. Short queries (< 2 chars) clear the result list rather
-  // than firing an empty search.
+  // Debounced live search.
   const debounceRef = useRef<number | null>(null);
   useEffect(() => {
     if (debounceRef.current !== null) {
@@ -143,17 +91,98 @@ export default function Brain() {
     };
   }, [q]);
 
-  const folderTree = useMemo(() => buildFolderTree(notes), [notes]);
+  // Note body + backlinks loader — fires whenever a card is opened.
+  useEffect(() => {
+    if (selectedPath === null) {
+      setSelectedBody(null);
+      setSelectedBacklinks(null);
+      return;
+    }
+    let cancelled = false;
+    setBodyLoading(true);
+    setSelectedBody(null);
+    setSelectedBacklinks(null);
+
+    fetchBrainNote(selectedPath)
+      .then((r) => {
+        if (!cancelled) setSelectedBody(r.body);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setSelectedBody(
+          `# ${selectedPath}\n\n> Couldn't load — ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setBodyLoading(false);
+      });
+
+    fetchBrainBacklinks(selectedPath)
+      .then((r) => {
+        if (!cancelled) setSelectedBacklinks(r.links);
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedBacklinks([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPath]);
+
+  // Dismiss overlay on Escape.
+  useEffect(() => {
+    if (selectedPath === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectedPath(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedPath]);
+
+  // Top-level folder chips derived from loaded notes.
+  const folderChips = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const n of notes) {
+      const top = n.folder.split("/", 1)[0] || "(root)";
+      counts.set(top, (counts.get(top) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([folder, count]) => ({ folder, count }));
+  }, [notes]);
+
+  // Filter cards by selected folder + sort by mtime (freshest first).
+  const cards = useMemo(() => {
+    const filtered = folderFilter
+      ? notes.filter((n) => {
+          const top = n.folder.split("/", 1)[0] || "(root)";
+          return top === folderFilter;
+        })
+      : notes;
+    return [...filtered].sort((a, b) => {
+      if (!a.mtime && !b.mtime) return a.stem.localeCompare(b.stem);
+      if (!a.mtime) return 1;
+      if (!b.mtime) return -1;
+      return b.mtime.localeCompare(a.mtime);
+    });
+  }, [notes, folderFilter]);
 
   const clearSearch = () => {
     setQ("");
     setHits(null);
   };
 
-  const openNote = useCallback((path: string) => {
-    setSelected(path);
-    setTab("list");
-  }, []);
+  const noteByPath = useMemo(() => {
+    const m = new Map<string, BrainNote>();
+    for (const n of notes) m.set(n.path, n);
+    return m;
+  }, [notes]);
+
+  const selectedNote =
+    selectedPath !== null ? noteByPath.get(selectedPath) ?? null : null;
 
   return (
     <div className="brain-page">
@@ -169,34 +198,13 @@ export default function Brain() {
           <div className="brain-head-count">
             {notes.length} {notes.length === 1 ? "note" : "notes"}
           </div>
-          {root && <div className="brain-head-root" title={root}>{root}</div>}
+          {root && (
+            <div className="brain-head-root" title={root}>
+              {root}
+            </div>
+          )}
         </div>
       </header>
-
-      <div className="brain-tabs" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "list"}
-          className={
-            tab === "list" ? "brain-tab brain-tab--active" : "brain-tab"
-          }
-          onClick={() => setTab("list")}
-        >
-          List
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "graph"}
-          className={
-            tab === "graph" ? "brain-tab brain-tab--active" : "brain-tab"
-          }
-          onClick={() => setTab("graph")}
-        >
-          Graph
-        </button>
-      </div>
 
       <div className="brain-search-row">
         <input
@@ -225,90 +233,233 @@ export default function Brain() {
 
       {err && <div className="brain-error">{err}</div>}
 
-      {tab === "graph" ? (
-        <div className="brain-graph-wrap">
-          <ErrorBoundary
-            fallback={(err, reset) => (
-              <div className="brain-graph-empty brain-graph-error">
-                Graph crashed: {err.message}
-                <button type="button" className="btn" onClick={reset}>
-                  Try again
-                </button>
-              </div>
-            )}
+      {hits === null && (
+        <div className="brain-chip-row" role="tablist">
+          <button
+            type="button"
+            className={
+              folderFilter === ""
+                ? "brain-chip brain-chip--active"
+                : "brain-chip"
+            }
+            onClick={() => setFolderFilter("")}
           >
-            <BrainGraph
-              enabled={tab === "graph"}
-              selected={selected}
-              onSelect={openNote}
-            />
-          </ErrorBoundary>
+            All <span className="brain-chip-count">{notes.length}</span>
+          </button>
+          {folderChips.map((c) => (
+            <button
+              type="button"
+              key={c.folder}
+              className={
+                folderFilter === c.folder
+                  ? "brain-chip brain-chip--active"
+                  : "brain-chip"
+              }
+              onClick={() => setFolderFilter(c.folder)}
+              style={{ "--chip-color": folderColor(c.folder) } as CSSProperties}
+            >
+              {c.folder}
+              <span className="brain-chip-count">{c.count}</span>
+            </button>
+          ))}
         </div>
-      ) : (
-        <div className="brain-body">
-          <aside className="brain-tree">
-            {loading ? (
-              <div className="brain-empty">Reading vault…</div>
-            ) : hits !== null ? (
-              <SearchResults hits={hits} onOpen={(p) => openNote(p)} />
-            ) : notes.length === 0 ? (
-              <div className="brain-empty">
-                Vault's empty. Once PILK starts writing notes (daily
-                journal entries, long-form workspace knowledge), they
-                show up here.
-              </div>
-            ) : (
-              <FolderTree
-                tree={folderTree}
-                expanded={expanded}
-                toggleFolder={(path) =>
-                  setExpanded((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(path)) next.delete(path);
-                    else next.add(path);
-                    return next;
-                  })
-                }
-                selected={selected}
-                onSelect={openNote}
+      )}
+
+      <div className="brain-grid-wrap">
+        {loading ? (
+          <div className="brain-empty">Reading vault…</div>
+        ) : hits !== null ? (
+          <SearchResults
+            hits={hits}
+            notesByPath={noteByPath}
+            onOpen={(p) => setSelectedPath(p)}
+          />
+        ) : cards.length === 0 ? (
+          <div className="brain-empty">
+            {folderFilter
+              ? `Nothing in ${folderFilter} yet.`
+              : "Vault's empty. Once PILK starts writing notes, they show up here."}
+          </div>
+        ) : (
+          <div className="brain-card-grid">
+            {cards.map((n) => (
+              <NoteCard
+                key={n.path}
+                note={n}
+                onClick={() => setSelectedPath(n.path)}
               />
-            )}
-          </aside>
+            ))}
+          </div>
+        )}
+      </div>
 
-          <main className="brain-view">
-            {selected === null ? (
-              <div className="brain-empty">Select a note from the list.</div>
-            ) : bodyLoading ? (
-              <div className="brain-empty">Loading {selected}…</div>
+      {selectedPath !== null && (
+        <NoteOverlay
+          path={selectedPath}
+          note={selectedNote}
+          body={selectedBody}
+          bodyLoading={bodyLoading}
+          backlinks={selectedBacklinks}
+          onClose={() => setSelectedPath(null)}
+          onOpenOther={(p) => setSelectedPath(p)}
+          notesByPath={noteByPath}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Card ───────────────────────────────────────────────────────────
+
+function NoteCard({
+  note,
+  onClick,
+}: {
+  note: BrainNote;
+  onClick: () => void;
+}) {
+  const topFolder = note.folder.split("/", 1)[0] || "(root)";
+  return (
+    <button type="button" className="brain-card" onClick={onClick}>
+      <div className="brain-card-head">
+        <span
+          className="brain-card-folder"
+          style={{ "--chip-color": folderColor(topFolder) } as CSSProperties}
+        >
+          {note.folder || "(root)"}
+        </span>
+        <span className="brain-card-time">
+          {note.mtime ? relativeTime(note.mtime) : ""}
+        </span>
+      </div>
+      <div className="brain-card-title">{note.stem}</div>
+      <div className="brain-card-foot">
+        <span className="brain-card-path">{note.path}</span>
+        <span className="brain-card-size">{formatSize(note.size)}</span>
+      </div>
+    </button>
+  );
+}
+
+// ── Search results (flat card list with snippets) ──────────────────
+
+function SearchResults({
+  hits,
+  notesByPath,
+  onOpen,
+}: {
+  hits: BrainSearchHit[];
+  notesByPath: Map<string, BrainNote>;
+  onOpen: (path: string) => void;
+}) {
+  if (hits.length === 0) {
+    return <div className="brain-empty">No matches. Try shorter terms.</div>;
+  }
+  return (
+    <div className="brain-card-grid">
+      {hits.map((h, i) => {
+        const n = notesByPath.get(h.path);
+        const topFolder =
+          (n?.folder ?? "").split("/", 1)[0] || "(root)";
+        return (
+          <button
+            type="button"
+            key={`${h.path}-${h.line}-${i}`}
+            className="brain-card brain-card--hit"
+            onClick={() => onOpen(h.path)}
+          >
+            <div className="brain-card-head">
+              <span
+                className="brain-card-folder"
+                style={{ "--chip-color": folderColor(topFolder) } as CSSProperties}
+              >
+                {n?.folder || "(root)"}
+              </span>
+              <span className="brain-card-time">L{h.line}</span>
+            </div>
+            <div className="brain-card-title">{n?.stem ?? h.path}</div>
+            <div className="brain-card-snippet">{h.snippet}</div>
+            <div className="brain-card-foot">
+              <span className="brain-card-path">{h.path}</span>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Overlay (full-note modal) ──────────────────────────────────────
+
+function NoteOverlay({
+  path,
+  note,
+  body,
+  bodyLoading,
+  backlinks,
+  onClose,
+  onOpenOther,
+  notesByPath,
+}: {
+  path: string;
+  note: BrainNote | null;
+  body: string | null;
+  bodyLoading: boolean;
+  backlinks: BrainBacklink[] | null;
+  onClose: () => void;
+  onOpenOther: (p: string) => void;
+  notesByPath: Map<string, BrainNote>;
+}) {
+  const handleWikilink = useCallback(
+    (target: string) => {
+      const lower = target.toLowerCase();
+      for (const [p, n] of notesByPath) {
+        if (n.stem.toLowerCase() === lower || p.toLowerCase() === `${lower}.md`) {
+          onOpenOther(p);
+          return;
+        }
+      }
+    },
+    [notesByPath, onOpenOther],
+  );
+
+  return (
+    <div
+      className="brain-overlay"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="brain-overlay-dialog" role="dialog" aria-modal="true">
+        <header className="brain-overlay-head">
+          <div className="brain-overlay-title">
+            <div className="brain-overlay-stem">{note?.stem ?? path}</div>
+            <div className="brain-overlay-path">{path}</div>
+          </div>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            Close
+          </button>
+        </header>
+
+        <div className="brain-overlay-body">
+          <article className="brain-overlay-article">
+            {bodyLoading ? (
+              <div className="brain-empty">Loading…</div>
             ) : body === null ? (
-              <div className="brain-empty">Couldn't load {selected}.</div>
+              <div className="brain-empty">Couldn't load {path}.</div>
             ) : (
-              <article className="brain-note">
-                <div className="brain-note-path">{selected}</div>
-                <MarkdownBody
-                  source={body}
-                  onWikilinkClick={(target) => {
-                    const hit = notes.find(
-                      (n) =>
-                        n.stem.toLowerCase() === target.toLowerCase() ||
-                        n.path.toLowerCase() ===
-                          `${target.toLowerCase()}.md`,
-                    );
-                    if (hit) openNote(hit.path);
-                    else setQ(target);
-                  }}
-                />
-              </article>
+              <MarkdownBody source={body} onWikilinkClick={handleWikilink} />
             )}
-          </main>
+          </article>
 
-          <aside className="brain-backlinks">
+          <aside className="brain-overlay-backlinks">
             <div className="brain-backlinks-head">Backlinks</div>
-            {selected === null ? (
-              <div className="brain-backlinks-empty">
-                Open a note to see who links to it.
-              </div>
-            ) : backlinks === null ? (
+            {backlinks === null ? (
               <div className="brain-backlinks-empty">Checking…</div>
             ) : backlinks.length === 0 ? (
               <div className="brain-backlinks-empty">
@@ -321,7 +472,7 @@ export default function Brain() {
                     <button
                       type="button"
                       className="brain-backlink-btn"
-                      onClick={() => openNote(b.path)}
+                      onClick={() => onOpenOther(b.path)}
                     >
                       <span className="brain-backlink-path">{b.path}</span>
                       <span className="brain-backlink-snippet">
@@ -334,218 +485,50 @@ export default function Brain() {
             )}
           </aside>
         </div>
-      )}
-    </div>
-  );
-}
-
-// ── Folder tree ────────────────────────────────────────────────────
-
-
-interface TreeNode {
-  name: string;           // display segment (e.g. "docs")
-  path: string;           // full folder path (e.g. "ingested/docs")
-  children: TreeNode[];
-  notes: BrainNote[];
-}
-
-function buildFolderTree(notes: BrainNote[]): TreeNode {
-  const root: TreeNode = { name: "", path: "", children: [], notes: [] };
-  for (const n of notes) {
-    if (!n.folder) {
-      root.notes.push(n);
-      continue;
-    }
-    const parts = n.folder.split("/");
-    let cursor = root;
-    let acc = "";
-    for (const part of parts) {
-      acc = acc ? `${acc}/${part}` : part;
-      let child = cursor.children.find((c) => c.name === part);
-      if (!child) {
-        child = { name: part, path: acc, children: [], notes: [] };
-        cursor.children.push(child);
-      }
-      cursor = child;
-    }
-    cursor.notes.push(n);
-  }
-  // Sort each level: daily first, then alphabetical folders, then
-  // individual notes alphabetically.
-  const sort = (node: TreeNode) => {
-    node.children.sort((a, b) => {
-      if (a.name === "daily") return -1;
-      if (b.name === "daily") return 1;
-      return a.name.localeCompare(b.name);
-    });
-    node.notes.sort((a, b) => a.stem.localeCompare(b.stem));
-    node.children.forEach(sort);
-  };
-  sort(root);
-  return root;
-}
-
-function countDescendants(node: TreeNode): number {
-  return (
-    node.notes.length +
-    node.children.reduce((acc, c) => acc + countDescendants(c), 0)
-  );
-}
-
-function FolderTree({
-  tree,
-  expanded,
-  toggleFolder,
-  selected,
-  onSelect,
-}: {
-  tree: TreeNode;
-  expanded: Set<string>;
-  toggleFolder: (path: string) => void;
-  selected: string | null;
-  onSelect: (path: string) => void;
-}) {
-  return (
-    <div className="brain-tree-inner">
-      {tree.notes.length > 0 && (
-        <FolderBlock
-          node={{ name: "(root)", path: "", children: [], notes: tree.notes }}
-          expanded={expanded}
-          toggleFolder={toggleFolder}
-          selected={selected}
-          onSelect={onSelect}
-          depth={0}
-        />
-      )}
-      {tree.children.map((child) => (
-        <FolderBlock
-          key={child.path}
-          node={child}
-          expanded={expanded}
-          toggleFolder={toggleFolder}
-          selected={selected}
-          onSelect={onSelect}
-          depth={0}
-        />
-      ))}
-    </div>
-  );
-}
-
-function FolderBlock({
-  node,
-  expanded,
-  toggleFolder,
-  selected,
-  onSelect,
-  depth,
-}: {
-  node: TreeNode;
-  expanded: Set<string>;
-  toggleFolder: (path: string) => void;
-  selected: string | null;
-  onSelect: (path: string) => void;
-  depth: number;
-}) {
-  const isOpen = expanded.has(node.path);
-  const count = countDescendants(node);
-  return (
-    <div
-      className="brain-folder"
-      style={{ paddingLeft: `${depth * 8}px` }}
-    >
-      <button
-        type="button"
-        className="brain-folder-head brain-folder-head--btn"
-        onClick={() => toggleFolder(node.path)}
-        aria-expanded={isOpen}
-      >
-        <span className="brain-folder-chev">{isOpen ? "▾" : "▸"}</span>
-        <span className="brain-folder-name">{node.name || "(root)"}</span>
-        <span className="brain-folder-count">{count}</span>
-      </button>
-      {isOpen && (
-        <>
-          <ul className="brain-folder-list">
-            {node.notes.map((n) => (
-              <li key={n.path}>
-                <button
-                  type="button"
-                  className={
-                    selected === n.path
-                      ? "brain-note-btn brain-note-btn--active"
-                      : "brain-note-btn"
-                  }
-                  onClick={() => onSelect(n.path)}
-                >
-                  <span className="brain-note-stem">{n.stem}</span>
-                  <span className="brain-note-meta">
-                    {n.mtime ? relativeTime(n.mtime) : ""}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {node.children.map((child) => (
-            <FolderBlock
-              key={child.path}
-              node={child}
-              expanded={expanded}
-              toggleFolder={toggleFolder}
-              selected={selected}
-              onSelect={onSelect}
-              depth={depth + 1}
-            />
-          ))}
-        </>
-      )}
-    </div>
-  );
-}
-
-function SearchResults({
-  hits,
-  onOpen,
-}: {
-  hits: BrainSearchHit[];
-  onOpen: (path: string) => void;
-}) {
-  if (hits.length === 0) {
-    return (
-      <div className="brain-empty">No matches. Try shorter terms.</div>
-    );
-  }
-  return (
-    <div className="brain-search-results">
-      <div className="brain-folder-head">
-        <span className="brain-folder-name">Matches</span>
-        <span className="brain-folder-count">{hits.length}</span>
       </div>
-      <ul className="brain-folder-list">
-        {hits.map((h, i) => (
-          <li key={`${h.path}-${h.line}-${i}`}>
-            <button
-              type="button"
-              className="brain-note-btn brain-search-hit"
-              onClick={() => onOpen(h.path)}
-            >
-              <span className="brain-note-stem">{h.path}</span>
-              <span className="brain-search-line">L{h.line}</span>
-              <span className="brain-search-snippet">{h.snippet}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
 
-// ── Markdown renderer (unchanged from v1) ──────────────────────────
+// ── Formatting helpers ─────────────────────────────────────────────
 
+function folderColor(folder: string): string {
+  const palette: Record<string, string> = {
+    daily: "#8ba7ff",
+    inbox: "#ffb872",
+    ingested: "#65d19b",
+    "standing-instructions": "#ffd166",
+    ugc_runs: "#ff7acc",
+    creative_briefs: "#ffb872",
+    "(root)": "#9aa5b1",
+  };
+  if (folder in palette) return palette[folder];
+  let h = 0;
+  for (let i = 0; i < folder.length; i++) {
+    h = (h * 31 + folder.charCodeAt(i)) >>> 0;
+  }
+  return `hsl(${h % 360}, 55%, 65%)`;
+}
 
-/** Tiny markdown renderer for the vault view. Obsidian notes are
- * mostly plain text + headings + lists + wikilinks, so we ship a
- * minimal parser instead of pulling in react-markdown. */
+function formatSize(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function relativeTime(iso: string): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+  const secs = Math.max(0, (Date.now() - then) / 1000);
+  if (secs < 60) return "just now";
+  if (secs < 3600) return `${Math.round(secs / 60)}m`;
+  if (secs < 86400) return `${Math.round(secs / 3600)}h`;
+  if (secs < 86400 * 30) return `${Math.round(secs / 86400)}d`;
+  return iso.slice(0, 10);
+}
+
+// ── Markdown renderer (unchanged) ──────────────────────────────────
+
 function MarkdownBody({
   source,
   onWikilinkClick,
@@ -586,7 +569,7 @@ function parseMarkdown(src: string): Block[] {
         buf.push(lines[i]);
         i++;
       }
-      i++; // consume closing fence (if present)
+      i++;
       blocks.push({ kind: "pre", text: buf.join("\n") });
       continue;
     }
@@ -598,7 +581,7 @@ function parseMarkdown(src: string): Block[] {
     const h = line.match(/^(#{1,3})\s+(.*)$/);
     if (h) {
       const level = h[1].length as 1 | 2 | 3;
-      blocks.push({ kind: (`h${level}` as "h1" | "h2" | "h3"), text: h[2] });
+      blocks.push({ kind: `h${level}` as "h1" | "h2" | "h3", text: h[2] });
       i++;
       continue;
     }
@@ -694,8 +677,6 @@ function renderInline(
       parts.push(text.slice(last, match.index));
     }
     if (match[1]) {
-      // Strip any `|display` suffix from the wikilink target so
-      // the button label matches Obsidian's visible text.
       const raw = match[2];
       const [target, display] = raw.split("|", 2);
       parts.push(
@@ -731,15 +712,4 @@ function renderInline(
   }
   if (last < text.length) parts.push(text.slice(last));
   return parts;
-}
-
-function relativeTime(iso: string): string {
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return "";
-  const secs = Math.max(0, (Date.now() - then) / 1000);
-  if (secs < 60) return "just now";
-  if (secs < 3600) return `${Math.round(secs / 60)}m`;
-  if (secs < 86400) return `${Math.round(secs / 3600)}h`;
-  if (secs < 86400 * 30) return `${Math.round(secs / 86400)}d`;
-  return iso.slice(0, 10);
 }
