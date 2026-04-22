@@ -29,10 +29,12 @@ from typing import Any
 
 import anthropic
 
+from core.brain import Vault
 from core.governor import Tier
 from core.governor.providers import PlannerProvider, PlannerResponse
 from core.ledger import Ledger, UsageSnapshot
 from core.logging import get_logger
+from core.memory import MemoryStore, extract_topics, hydrate
 from core.orchestrator.plans import PlanStore
 from core.policy.risk import RiskClass
 from core.registry import AgentRegistry
@@ -203,6 +205,8 @@ class Orchestrator:
         governor: Any = None,
         providers: dict[str, PlannerProvider] | None = None,
         sentinel_context_fn: Callable[[], Awaitable[str]] | None = None,
+        memory: MemoryStore | None = None,
+        vault: Vault | None = None,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -221,6 +225,12 @@ class Orchestrator:
         # before the first planner turn. ``None`` keeps the legacy
         # behaviour of a perfectly silent orchestrator→sentinel link.
         self.sentinel_context_fn = sentinel_context_fn
+        # Memory hydration sources. Both optional so tests + the cold
+        # boot path still work. When both are set we build a
+        # ``memory_context`` block on every turn and prepend it to the
+        # system prompt ahead of the sentinel brief.
+        self.memory = memory
+        self.vault = vault
         self._lock = asyncio.Lock()
         self._running_plan_id: str | None = None
         self._cancel_event: asyncio.Event | None = None
@@ -425,6 +435,60 @@ class Orchestrator:
         )
         await self.broadcast("plan.completed", {**final, "cancelled_reason": reason})
 
+    async def _append_completion_to_daily(
+        self,
+        *,
+        goal: str,
+        agent_name: str | None,
+        reply: str,
+    ) -> None:
+        """Append a one-line entry to ``daily/YYYY-MM-DD.md``.
+
+        Format: ``HH:MM — <summary>``. Summary is the first sentence
+        of the reply when available (capped at 160 chars), otherwise
+        a truncation of the original goal. Silent-fail on every vault
+        error — the user-facing success path must never hinge on the
+        journaling side-channel.
+        """
+        if self.vault is None:
+            return
+        summary = _extract_summary(reply) or _extract_summary(goal)
+        if not summary:
+            return
+        if _is_throwaway(goal, summary):
+            return
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        rel = f"daily/{now.strftime('%Y-%m-%d')}.md"
+        prefix = f"{now.strftime('%H:%M')} —"
+        line = (
+            f"- {prefix} [{agent_name}] {summary}"
+            if agent_name
+            else f"- {prefix} {summary}"
+        )
+        try:
+            exists = True
+            try:
+                self.vault.read(rel)
+            except FileNotFoundError:
+                exists = False
+            if exists:
+                await asyncio.to_thread(
+                    self.vault.write, rel, line, append=True
+                )
+            else:
+                header = f"# Daily — {now.strftime('%Y-%m-%d')}\n\n"
+                await asyncio.to_thread(
+                    self.vault.write, rel, header + line
+                )
+        except Exception as e:
+            log.warning(
+                "orchestrator_daily_append_failed",
+                path=rel,
+                error=str(e),
+            )
+
     async def _drive(self, plan_id: str, rc: RunContext) -> None:
         tools = self.registry.anthropic_schemas(allow=rc.allowed_tools)
         # Compose the first user turn. With no attachments the content
@@ -449,6 +513,27 @@ class Orchestrator:
             if brief:
                 effective_system_prompt = (
                     f"{brief}\n\n{rc.system_prompt}"
+                )
+
+        # Cross-session memory hydration. Builds a compact
+        # memory_context block from structured memory + the last week
+        # of daily notes and prepends it to the system prompt so PILK
+        # starts every plan already knowing the operator's standing
+        # rules, recent exchanges, and relevant brain notes.
+        if self.memory is not None:
+            try:
+                topics = extract_topics([rc.goal])
+                hydrated = await hydrate(
+                    store=self.memory,
+                    vault=self.vault,
+                    topic_hints=topics,
+                )
+            except Exception as e:  # never block a run on hydration
+                log.warning("memory_hydrate_failed", error=str(e))
+                hydrated = None
+            if hydrated is not None and not hydrated.is_empty():
+                effective_system_prompt = (
+                    f"{hydrated.body}\n\n{effective_system_prompt}"
                 )
 
         # The Governor picks the tier for the whole plan based on the
@@ -558,6 +643,9 @@ class Orchestrator:
                 agent_name=rc.agent_name,
                 model=planner_model,
                 usage=usage,
+                tier=tier_meta.get("tier"),
+                tier_reason=tier_meta.get("reason"),
+                tier_provider=tier_meta.get("effective_provider"),
             )
             step = await self.plans.finish_step(
                 step["id"], status="done", cost_usd=usd,
@@ -681,6 +769,64 @@ class Orchestrator:
             {"text": final_text or "(no response)", "plan_id": plan_id},
         )
         await self.broadcast("plan.completed", final)
+        # Auto-journal this completion to the daily note. Best-effort
+        # so a vault hiccup never surfaces to the operator after a
+        # successful plan. Skipped for trivially-short turns that are
+        # just acknowledgements ("ok", "thanks"); the heuristic is
+        # coarse but good enough to avoid journaling small talk.
+        await self._append_completion_to_daily(
+            goal=rc.goal,
+            agent_name=rc.agent_name,
+            reply=final_text,
+        )
+
+
+# Short phrases we treat as pure chit-chat — not worth journaling.
+# Matching is lowercase substring; the goal is 1:1 with how the
+# orchestrator's existing router treats "ok" / "thanks" / "hi".
+_THROWAWAY_PATTERNS = (
+    "ok", "okay", "thanks", "thank you", "cheers", "cool", "got it",
+    "sounds good", "yep", "yes", "nope", "no", "hi", "hello", "hey",
+    "good morning", "good night",
+)
+
+
+def _extract_summary(text: str | None, *, limit: int = 160) -> str:
+    """Pull a one-sentence summary out of a reply or goal.
+
+    First non-blank sentence, stripped of newlines, capped at
+    ``limit`` chars. Returns an empty string when there's nothing
+    worth journaling.
+    """
+    if not text:
+        return ""
+    body = " ".join(text.strip().splitlines()).strip()
+    if not body:
+        return ""
+    # First sentence — period/?/! or whole string if none.
+    for sep in (". ", "! ", "? "):
+        pos = body.find(sep)
+        if 0 < pos < limit:
+            return body[: pos + 1].strip()
+    if len(body) <= limit:
+        return body
+    return body[: limit - 1].rstrip() + "…"
+
+
+def _is_throwaway(goal: str, summary: str) -> bool:
+    """True when the exchange looks like chit-chat not worth journaling.
+
+    Goal is compared stripped + lowercased against the known-ignored
+    phrase set. Summary is checked too so PILK's own "Done." / "Ok."
+    style acknowledgements drop out.
+    """
+    g = (goal or "").strip().lower().rstrip(".!?")
+    s = (summary or "").strip().lower().rstrip(".!?")
+    if g in _THROWAWAY_PATTERNS:
+        return True
+    if s in _THROWAWAY_PATTERNS:
+        return True
+    return len(g) < 6 and len(s) < 6
 
 
 def _tool_risk(registry: ToolRegistry, name: str) -> str:

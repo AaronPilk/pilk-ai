@@ -1,0 +1,17 @@
+name: morning_brief
+description: |
+  08:00 chief-of-staff briefing. Pulls today's calendar, due GHL
+  tasks, the top three unread Gmail threads, and open Sentinel
+  incidents, then ships one Telegram message to the operator.
+agent_name: daily_brief_agent
+goal: |
+  It's 8am. Compose and send the morning brief to the operator via
+  Telegram. Follow the system prompt's format exactly — calendar,
+  tasks due today, three unread inbox threads, and any open Sentinel
+  incidents. Keep it scannable; Aaron wants to read it in thirty
+  seconds before his first coffee. Append a one-line entry to
+  today's daily note when shipped.
+enabled: true
+schedule:
+  kind: cron
+  expression: "0 8 * * *"

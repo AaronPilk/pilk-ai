@@ -152,9 +152,18 @@ def test_prompt_requires_single_batched_append(manifest: Manifest) -> None:
     ), "prompt must forbid per-row append loops"
 
 
-def test_prompt_forbids_outreach(manifest: Manifest) -> None:
-    """Scope guard — if the prompt starts mentioning sending emails
-    to prospects or filling contact forms, the agent is bleeding into
-    sales_ops_agent's territory."""
+def test_prompt_forbids_sending_outreach(manifest: Manifest) -> None:
+    """Scope guard — prospector may *draft* personalised cold outreach
+    for the top-ranked leads (via ``gmail_draft_save_as_me``), but it
+    must never SEND. If the prompt starts mentioning
+    ``gmail_send_as_me`` / form-fill / real sends, the agent is
+    bleeding into sales_ops_agent's territory."""
     sp = (manifest.system_prompt or "").lower()
-    assert "no outreach" in sp or "don't email prospects" in sp
+    assert (
+        "drafts only" in sp
+        or "do not call gmail_send_as_me" in sp
+        or "never call gmail_send_as_me" in sp
+    ), (
+        "prompt must explicitly forbid calls to gmail_send_as_me / "
+        "any real send — drafts only"
+    )

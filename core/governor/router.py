@@ -4,11 +4,18 @@ Produces a Tier choice from a user goal without calling an LLM. Simple
 keyword + length heuristics — fast, deterministic, zero cost. An
 LLM-assisted classifier can replace this later without changing the
 Governor/Orchestrator contract.
+
+``classify_tier`` is the cheap default used by the Governor on every
+plan. ``tier_classifier`` is a richer variant that also considers
+``complexity_hint`` and ``expected_tool_calls`` when the caller has
+them — used by agent playbooks that know up-front whether a run
+really needs heavy reasoning.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from core.governor.tiers import Tier
 
@@ -73,3 +80,121 @@ def classify_tier(goal: str) -> Tier:
     if len(g) < 40:
         return Tier.LIGHT
     return Tier.STANDARD
+
+
+@dataclass(frozen=True)
+class TierDecision:
+    """Rich classification output with scoring telemetry.
+
+    Kept separate from the bare :func:`classify_tier` return value so
+    the governor contract stays a plain ``Tier`` — the richer shape
+    feeds the ledger / audit log when a caller wants to record WHY
+    the decision happened, not just WHAT was picked.
+    """
+
+    tier: Tier
+    reason: str
+    score: int
+    signals: dict[str, int]
+
+    def to_public(self) -> dict:
+        return {
+            "tier": self.tier.value,
+            "reason": self.reason,
+            "score": self.score,
+            "signals": dict(self.signals),
+        }
+
+
+# Thresholds turn the accumulated score into a tier. They're kept
+# loose so the signal mix can evolve without churning the enum.
+SCORE_LIGHT_MAX = 2
+SCORE_STANDARD_MAX = 6
+
+
+def tier_classifier(
+    goal: str,
+    *,
+    expected_tool_calls: int = 0,
+    complexity_hint: int = 0,
+    has_attachments: bool = False,
+) -> TierDecision:
+    """Richer classifier — message length + tool calls + complexity.
+
+    Returns a :class:`TierDecision` carrying the chosen tier, the
+    dominant reason string, and the signal-by-signal score breakdown.
+    Signals are additive:
+
+    * ``premium_keyword`` — +7  (e.g. "refactor", "build an agent")
+    * ``light_opener``    — -3  ("hi", "thanks")
+    * ``len_long``        — +2  (goal > 240 chars)
+    * ``len_medium``      — +1  (goal > 80 chars)
+    * ``len_very_short``  — -2  (goal < 40 chars)
+    * ``tool_calls``      — +min(expected, 5) (one point per expected call)
+    * ``complexity_hint`` — +max(0, min(hint, 5))
+    * ``attachments``     — +1  (forces at least STANDARD via orchestrator)
+
+    Score → tier:
+      score ≤ SCORE_LIGHT_MAX      → LIGHT
+      score ≤ SCORE_STANDARD_MAX   → STANDARD
+      score >  SCORE_STANDARD_MAX  → PREMIUM
+    """
+    signals: dict[str, int] = {}
+    reason = "length_heuristic"
+    g = (goal or "").strip()
+
+    # Hard-short-circuit on premium keywords so the explicit signal
+    # always wins even when the message is short.
+    for rx in _PREMIUM_RE:
+        if rx.search(g):
+            signals["premium_keyword"] = 7
+            reason = "premium_keyword"
+            break
+
+    if reason != "premium_keyword":
+        for rx in _LIGHT_RE:
+            if rx.match(g):
+                signals["light_opener"] = -3
+                reason = "light_opener"
+                break
+
+    if len(g) > 240:
+        signals["len_long"] = 2
+    elif len(g) > 80:
+        signals["len_medium"] = 1
+    elif len(g) < 40:
+        signals["len_very_short"] = -2
+
+    if expected_tool_calls > 0:
+        signals["tool_calls"] = min(int(expected_tool_calls), 5)
+    if complexity_hint > 0:
+        signals["complexity_hint"] = max(0, min(int(complexity_hint), 5))
+    if has_attachments:
+        signals["attachments"] = 1
+
+    score = sum(signals.values())
+    if score <= SCORE_LIGHT_MAX:
+        tier = Tier.LIGHT
+    elif score <= SCORE_STANDARD_MAX:
+        tier = Tier.STANDARD
+    else:
+        tier = Tier.PREMIUM
+    # When a deterministic keyword fired we keep that as the reason;
+    # otherwise the final driver was the score math.
+    if reason == "length_heuristic" and score > 0:
+        reason = "score"
+    return TierDecision(
+        tier=tier,
+        reason=reason,
+        score=score,
+        signals=signals,
+    )
+
+
+__all__ = [
+    "SCORE_LIGHT_MAX",
+    "SCORE_STANDARD_MAX",
+    "TierDecision",
+    "classify_tier",
+    "tier_classifier",
+]

@@ -50,7 +50,19 @@ class Ledger:
         agent_name: str | None,
         model: str,
         usage: UsageSnapshot,
+        tier: str | None = None,
+        tier_reason: str | None = None,
+        tier_provider: str | None = None,
     ) -> float:
+        """Persist one LLM call's cost row.
+
+        ``tier`` / ``tier_reason`` / ``tier_provider`` are optional so
+        legacy callers that haven't been updated still work. When set,
+        they land in ``metadata_json`` alongside the cache-token stats
+        so the Cost tab can pivot spend by tier + reason and the
+        operator can see whether they're bleeding dollars because the
+        classifier keeps picking PREMIUM.
+        """
         usd = price_usage(
             model,
             input_tokens=usage.input_tokens,
@@ -58,10 +70,16 @@ class Ledger:
             cache_creation_input_tokens=usage.cache_creation_input_tokens,
             cache_read_input_tokens=usage.cache_read_input_tokens,
         )
-        meta = {
+        meta: dict[str, Any] = {
             "cache_creation_input_tokens": usage.cache_creation_input_tokens,
             "cache_read_input_tokens": usage.cache_read_input_tokens,
         }
+        if tier is not None:
+            meta["tier"] = tier
+        if tier_reason is not None:
+            meta["tier_reason"] = tier_reason
+        if tier_provider is not None:
+            meta["tier_provider"] = tier_provider
         async with connect(self.db_path) as conn:
             await conn.execute(
                 """

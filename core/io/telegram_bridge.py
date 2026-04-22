@@ -112,7 +112,15 @@ HISTORY_MAX_TURNS = 12
 # paste earlier in the thread — full text still lands in the vault.
 HISTORY_TURN_CHAR_CAP = 2000
 # Where auto-archived Telegram exchanges land inside the vault.
+# Two sibling paths:
+#   - ``chats/telegram/YYYY-MM-DD.md`` — daily digest view the operator
+#     opens in Obsidian when reviewing "what did I talk about today?".
+#   - ``ingested/telegram/YYYY-MM-DD-HH.md`` — per-hour file the brain
+#     ingestion scanners pick up the same way they do ``ingested/
+#     claude-code/`` notes, so the hydration pass surfaces recent
+#     Telegram exchanges as topical context on the next turn.
 CHAT_LOG_FOLDER = "chats/telegram"
+INGEST_LOG_FOLDER = "ingested/telegram"
 
 
 class TelegramBridge:
@@ -427,37 +435,77 @@ class TelegramBridge:
     async def _persist_exchange(
         self, user_text: str, assistant_text: str
     ) -> None:
-        """Append one exchange to ``chats/telegram/YYYY-MM-DD.md``.
+        """Persist one exchange to the vault in two shapes.
 
-        Silent-fail by design — a vault write error should never crash
+        * ``chats/telegram/YYYY-MM-DD.md`` — daily digest the
+          operator browses in Obsidian.
+        * ``ingested/telegram/YYYY-MM-DD-HH.md`` — per-hour file
+          the memory hydration + brain search layers pick up as
+          recent context on subsequent turns.
+
+        Silent-fail by design — a vault write error must never crash
         the bridge or block the reply the operator is waiting on.
         """
         if self._vault is None:
             return
         now = datetime.now(UTC)
-        rel = f"{CHAT_LOG_FOLDER}/{now.strftime('%Y-%m-%d')}.md"
         block = (
             f"## {now.strftime('%H:%M UTC')}\n\n"
             f"**Me:** {user_text}\n\n"
             f"**PILK:** {assistant_text}\n"
         )
+        day_rel = f"{CHAT_LOG_FOLDER}/{now.strftime('%Y-%m-%d')}.md"
+        hour_rel = (
+            f"{INGEST_LOG_FOLDER}/{now.strftime('%Y-%m-%d-%H')}.md"
+        )
         try:
-            exists = True
-            try:
-                self._vault.read(rel)
-            except Exception:
-                exists = False
-            if exists:
-                await asyncio.to_thread(
-                    self._vault.write, rel, block, append=True
-                )
-            else:
-                header = f"# Telegram — {now.strftime('%Y-%m-%d')}\n\n"
-                await asyncio.to_thread(
-                    self._vault.write, rel, header + block
-                )
+            await self._append_or_create(
+                day_rel,
+                block,
+                header=f"# Telegram — {now.strftime('%Y-%m-%d')}\n\n",
+            )
         except Exception as e:
             log.warning("telegram_bridge_chatlog_failed", error=str(e))
+        try:
+            await self._append_or_create(
+                hour_rel,
+                block,
+                header=(
+                    f"# Telegram — {now.strftime('%Y-%m-%d %H:00 UTC')}\n\n"
+                ),
+            )
+        except Exception as e:
+            log.warning("telegram_bridge_ingestlog_failed", error=str(e))
+
+    async def _append_or_create(
+        self, rel: str, block: str, *, header: str,
+    ) -> None:
+        """Idempotently append ``block`` to ``rel`` in the vault.
+
+        Reads first to learn if the file exists; the vault's ``read``
+        raises FileNotFoundError when the file is missing, which we
+        turn into a fresh write with the given ``header`` as a
+        preamble. Subsequent writes append to the same file.
+        """
+        assert self._vault is not None
+        exists = True
+        try:
+            self._vault.read(rel)
+        except FileNotFoundError:
+            exists = False
+        except Exception:
+            # Unknown read error — skip the idempotency probe and
+            # force a write. Worst case the header duplicates, which
+            # is harmless.
+            exists = False
+        if exists:
+            await asyncio.to_thread(
+                self._vault.write, rel, block, append=True,
+            )
+        else:
+            await asyncio.to_thread(
+                self._vault.write, rel, header + block,
+            )
 
     async def _safe_send(self, text: str) -> None:
         # The client already truncates at TELEGRAM_MESSAGE_MAX_CHARS;
@@ -554,6 +602,7 @@ __all__ = [
     "DEFAULT_REQUEST_TIMEOUT_S",
     "HISTORY_MAX_TURNS",
     "HISTORY_TURN_CHAR_CAP",
+    "INGEST_LOG_FOLDER",
     "ORCHESTRATOR_WAIT_TIMEOUT_S",
     "RETRY_BACKOFF_S",
     "TelegramBridge",

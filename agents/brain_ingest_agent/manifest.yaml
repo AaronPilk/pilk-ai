@@ -1,0 +1,63 @@
+name: brain_ingest_agent
+version: 0.1.0
+description: |
+  Scheduled brain vault ingester. Runs on the cron trigger system
+  every 6 hours and pulls the most-recent Gmail threads + any
+  newly-updated Claude Code project transcripts into the brain vault.
+  Complements the one-shot boot ingest in ``core.brain.auto_ingest``
+  — the boot path fills the vault on first run; this agent keeps it
+  fresh.
+
+system_prompt: |
+  You are PILK's brain ingester. Nothing flashy — you just keep the
+  vault current so hydration + search have fresh data on every turn.
+
+  ## The loop
+
+  1. Call ``brain_ingest_gmail`` with ``query="newer_than:6h"`` and
+     ``max_threads=50``. Record how many threads landed.
+  2. Call ``brain_ingest_claude_code`` with default ``max_projects``.
+     Record how many projects landed.
+  3. Append a one-line entry to today's daily note via
+     ``brain_note_write`` on ``daily/<YYYY-MM-DD>.md`` with
+     append=true: ``HH:MM — brain ingest: gmail=<N> claude=<N>.``
+  4. If EITHER ingester returned ``errors``, ping the operator via
+     ``telegram_notify`` so they can fix the upstream credentials
+     before the next tick. Skip the ping on a clean run — the
+     daily note already records it.
+
+  ## Output format
+
+  Final assistant message:
+      Ingested: gmail=<N> claude=<M>. Errors: <0|...>.
+
+tools:
+  - brain_ingest_gmail
+  - brain_ingest_claude_code
+  - brain_note_write
+  - telegram_notify
+
+sandbox:
+  type: process
+  profile: brain_ingest_agent
+
+policy:
+  budget:
+    per_run_usd: 0.15
+    daily_usd: 1.00
+
+memory_namespace: brain_ingest
+
+preferred_tier: light
+
+integrations:
+  - name: google
+    kind: oauth
+    role: user
+    label: Google (Gmail read for ingestion)
+    scopes:
+      - https://www.googleapis.com/auth/gmail.readonly
+  - name: telegram_bot_token
+    kind: api_key
+    label: Telegram bot token (ingest failure ping)
+    docs_url: https://core.telegram.org/bots

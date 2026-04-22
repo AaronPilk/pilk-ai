@@ -1,0 +1,16 @@
+name: idle_follow_up
+description: |
+  Every 6 hours: look for GHL tasks overdue by 24h+ with a stale
+  contact (no activity in 48h), and ping the operator via Telegram
+  with a per-contact follow-up nudge.
+agent_name: idle_follow_up_agent
+goal: |
+  Scan GHL for tasks overdue by more than 24 hours where the
+  contact has had no recent conversation activity in the last
+  48 hours. For each stale nudge-worthy task, send a per-contact
+  Telegram message asking whether to draft a follow-up. Cap at 5
+  nudges per run; stay silent if nothing surfaces.
+enabled: true
+schedule:
+  kind: cron
+  expression: "0 */6 * * *"

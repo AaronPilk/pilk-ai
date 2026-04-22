@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import anthropic
 from fastapi import FastAPI
@@ -796,6 +797,8 @@ async def lifespan(app: FastAPI):
             governor=governor,
             providers=providers,
             sentinel_context_fn=sentinel_context_fn,
+            memory=memory,
+            vault=brain,
         )
         log.info(
             "orchestrator_ready",
@@ -983,6 +986,75 @@ async def lifespan(app: FastAPI):
         orchestrator=orchestrator is not None,
     )
 
+    # Local wake-word bridge — runs alongside the daemon so "Hey PILK"
+    # works without the UI open. Only activates when the operator has
+    # explicitly enabled it AND the hardware libs (``pvporcupine``,
+    # ``sounddevice``) are importable on the host. Headless Railway
+    # deploys stay off by default.
+    voice_bridge = None
+    if settings.voice_bridge_enabled and orchestrator is not None:
+        from core.voice.voice_bridge import VoiceBridge, VoiceBridgeConfig
+
+        async def _voice_transcribe(wav_bytes: bytes):
+            # Reuse the pipeline's STT driver so provider swaps (OpenAI /
+            # faster-whisper / stub) propagate here without a second
+            # wiring pass.
+            return await stt.transcribe(
+                audio=wav_bytes,
+                mime_type="audio/wav",
+            )
+
+        async def _voice_dispatch(text: str) -> str:
+            captured: dict[str, str] = {}
+
+            async def listener(event_type: str, payload: dict[str, Any]):
+                if event_type != "chat.assistant":
+                    return
+                captured.setdefault("text", payload.get("text") or "")
+
+            hub.subscribe(listener)
+            try:
+                await orchestrator.run(text)
+            finally:
+                hub.unsubscribe(listener)
+            return captured.get("text") or ""
+
+        async def _voice_speak(_audio_request: bytes, _mime: str) -> None:
+            # The bridge hands us a text reply; we synthesize here and
+            # drive sounddevice for playback.
+            reply_text = _audio_request.decode("utf-8", errors="replace")
+            spoken = await tts.synthesize(
+                text=reply_text, voice=settings.tts_voice,
+            )
+            try:
+                import numpy as _np
+                import sounddevice as sd
+
+                # Prefer to hand playback through sounddevice when it's
+                # importable; otherwise we fall back to writing the
+                # synthesized audio to a temp file for the OS to handle.
+                sd.play(
+                    _np.frombuffer(spoken.audio_bytes, dtype=_np.int16),
+                    samplerate=16000,
+                )
+                sd.wait()
+            except Exception:
+                log.warning("voice_bridge_playback_unavailable")
+
+        wake_path = (
+            Path(settings.voice_wake_keyword_path)
+            if settings.voice_wake_keyword_path
+            else None
+        )
+        voice_bridge = VoiceBridge(
+            transcriber=_voice_transcribe,
+            dispatcher=_voice_dispatch,
+            speaker=_voice_speak,
+            config=VoiceBridgeConfig(wake_keyword_path=wake_path),
+        )
+        await voice_bridge.start()
+    app.state.voice_bridge = voice_bridge
+
     app.state.hub = hub
     app.state.ledger = ledger
     app.state.plans = plans
@@ -1080,17 +1152,35 @@ async def lifespan(app: FastAPI):
                 chat_id=_tg_chat_id,
                 approvals_forwarded=True,
             )
+            # Sentinel → Telegram alert bridge. Subscribes to
+            # ``sentinel.incident`` events and pushes a short card to
+            # the operator's phone when severity ≥ HIGH. Uses its own
+            # TelegramClient instance so a stuck getUpdates poll on the
+            # bridge can't starve the alert path.
+            from core.sentinel.telegram_alert import SentinelTelegramAlert
+            sentinel_telegram_alert = SentinelTelegramAlert(
+                client=TelegramClient(_tg_cfg),
+                hub=hub,
+            )
+            sentinel_telegram_alert.start()
+            app.state.sentinel_telegram_alert = sentinel_telegram_alert
+            log.info(
+                "sentinel_telegram_alert_ready",
+                chat_id=_tg_chat_id,
+            )
         else:
             log.info(
                 "telegram_bridge_inactive",
                 reason="bot_token or chat_id missing",
             )
+            app.state.sentinel_telegram_alert = None
     else:
         log.info(
             "telegram_bridge_disabled",
             enabled=settings.telegram_chat_bridge_enabled,
             orchestrator=orchestrator is not None,
         )
+        app.state.sentinel_telegram_alert = None
     app.state.telegram_bridge = telegram_bridge
     app.state.telegram_approvals = telegram_approvals_bridge
 
@@ -1112,9 +1202,13 @@ async def lifespan(app: FastAPI):
         # Sentinel shuts down first so its scan task won't race teardown.
         hub.unsubscribe(sentinel.on_event)
         await sentinel.stop()
+        if getattr(app.state, "sentinel_telegram_alert", None) is not None:
+            app.state.sentinel_telegram_alert.stop()
         if trigger_scheduler is not None:
             await trigger_scheduler.stop()
         await timer_daemon.stop()
+        if getattr(app.state, "voice_bridge", None) is not None:
+            await app.state.voice_bridge.stop()
         if telegram_bridge is not None:
             await telegram_bridge.stop()
         if telegram_approvals_bridge is not None:

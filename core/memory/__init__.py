@@ -13,6 +13,14 @@ Vector/semantic memory and auto-extraction from conversations are
 out of scope here and live on the phase roadmap.
 """
 
+from core.memory.hydration import HydratedContext, extract_topics, hydrate
 from core.memory.store import MemoryEntry, MemoryKind, MemoryStore
 
-__all__ = ["MemoryEntry", "MemoryKind", "MemoryStore"]
+__all__ = [
+    "HydratedContext",
+    "MemoryEntry",
+    "MemoryKind",
+    "MemoryStore",
+    "extract_topics",
+    "hydrate",
+]
