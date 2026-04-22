@@ -140,6 +140,10 @@ from core.tools.builtin import (
     make_memory_delete_tool,
     make_memory_list_tool,
     make_memory_remember_tool,
+    make_pilk_deploy_status_tool,
+    make_pilk_open_prs_tool,
+    make_pilk_recent_changes_tool,
+    make_pilk_registered_tools_tool,
     make_sentinel_tools,
     make_timer_set_tool,
     make_xauusd_take_over_tool,
@@ -906,6 +910,16 @@ async def lifespan(app: FastAPI):
     # closure so runtime secret updates land without a daemon restart.
     timers = TimerStore(settings.db_path)
     registry.register(make_timer_set_tool(timers))
+
+    # Self-introspection: PILK can look at its own registered tools,
+    # recent git activity, open PRs, and deploy status. All read-only
+    # and cheap. `pilk_registered_tools` closes over `registry` so it
+    # reflects later additions (e.g. dynamically registered agent
+    # tools) as well as the static set.
+    registry.register(make_pilk_registered_tools_tool(registry))
+    registry.register(make_pilk_recent_changes_tool(REPO_ROOT))
+    registry.register(make_pilk_open_prs_tool())
+    registry.register(make_pilk_deploy_status_tool())
 
     def _timer_telegram_client():
         from core.integrations.telegram import TelegramClient, TelegramConfig
