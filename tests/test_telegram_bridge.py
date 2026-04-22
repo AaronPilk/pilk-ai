@@ -25,10 +25,12 @@ from core.integrations.telegram import TelegramConfig
 from core.io.telegram_bridge import (
     CHAT_LOG_FOLDER,
     DEFAULT_LONGPOLL_S,
+    SESSION_LOG_FOLDER,
     TelegramBridge,
+    _ChatSession,
     _compose_prompt,
-    _read_offset,
-    _write_offset,
+    _read_state,
+    _write_state,
 )
 from core.orchestrator.orchestrator import OrchestratorBusyError
 
@@ -313,24 +315,36 @@ async def test_handle_update_text_message_enqueues(
     assert bridge._queue.get_nowait() == "ingest gmail please"
 
 
-# ── offset persistence ──────────────────────────────────────────
+# ── bridge state persistence ────────────────────────────────────
 
 
-def test_offset_round_trip(tmp_path: Path) -> None:
+def test_state_round_trip(tmp_path: Path) -> None:
     p = tmp_path / "state" / "bridge.json"
-    assert _read_offset(p) is None
-    _write_offset(p, 42)
-    assert _read_offset(p) == 42
+    assert _read_state(p) == {}
+    _write_state(p, {"offset": 42, "session": {"id": "tg-test"}})
+    state = _read_state(p)
+    assert state["offset"] == 42
+    assert state["session"]["id"] == "tg-test"
 
 
-def test_offset_missing_file_is_none(tmp_path: Path) -> None:
-    assert _read_offset(tmp_path / "never.json") is None
+def test_state_missing_file_is_empty(tmp_path: Path) -> None:
+    assert _read_state(tmp_path / "never.json") == {}
 
 
-def test_offset_malformed_is_none(tmp_path: Path) -> None:
+def test_state_malformed_is_empty(tmp_path: Path) -> None:
     p = tmp_path / "bad.json"
     p.write_text("not json at all", encoding="utf-8")
-    assert _read_offset(p) is None
+    assert _read_state(p) == {}
+
+
+def test_state_back_compat_offset_only(tmp_path: Path) -> None:
+    """Pre-session state files only had ``{"offset": N}``. Loading one
+    must not crash and session state should fall back to fresh init."""
+    p = tmp_path / "legacy.json"
+    p.write_text(_json.dumps({"offset": 77}), encoding="utf-8")
+    state = _read_state(p)
+    assert state.get("offset") == 77
+    assert "session" not in state
 
 
 # ── run loop advances offset ────────────────────────────────────
@@ -398,8 +412,8 @@ async def test_run_loop_advances_offset_past_seen_updates(
     # update you touch."
     assert bridge._queue.qsize() == 2
     assert bridge._offset == 102
-    persisted = _read_offset(tmp_path / "state" / "bridge.json")
-    assert persisted == 102
+    persisted = _read_state(tmp_path / "state" / "bridge.json")
+    assert persisted.get("offset") == 102
 
 
 # ── rolling conversation history ─────────────────────────────────
@@ -450,6 +464,60 @@ async def test_history_window_is_bounded(tmp_path: Path) -> None:
         await bridge._dispatch(f"msg-{i}")
     # Each turn is 2 entries (user + assistant).
     assert len(bridge._history) == HISTORY_MAX_TURNS * 2
+
+
+@pytest.mark.asyncio
+async def test_history_survives_daemon_restart(tmp_path: Path) -> None:
+    """A restart mid-conversation must not wipe PILK's short-term
+    memory: the second bridge's deque has to rehydrate from disk and
+    see the first bridge's exchanges."""
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub_a = Hub()
+    orch_a = _FakeOrchestrator(hub_a, reply_text="first-reply")
+    bridge_a, _ = _bridge(orch_a, tmp_path=tmp_path, hub=hub_a)
+    await bridge_a._dispatch("do you remember this line?")
+
+    # Simulate a daemon restart — fresh bridge, same state path, same
+    # everything else. We drive the rehydration path directly via
+    # ``_load_state`` rather than ``start()`` so the test doesn't have
+    # to spin up the network-polling background tasks.
+    hub_b = Hub()
+    orch_b = _FakeOrchestrator(hub_b, reply_text="still here")
+    bridge_b, _ = _bridge(orch_b, tmp_path=tmp_path, hub=hub_b)
+    bridge_b._load_state()
+    assert len(bridge_b._history) == 2
+
+    await bridge_b._dispatch("do you?")
+
+    # On the second dispatch the preamble must carry the prior turn —
+    # that's the entire point of persisting history.
+    assert "do you remember this line?" in orch_b.calls[-1]
+    assert "first-reply" in orch_b.calls[-1]
+
+
+def test_state_history_truncates_oversized_turns(tmp_path: Path) -> None:
+    """Entries larger than ``HISTORY_TURN_CHAR_CAP`` get truncated on
+    the way to disk so the state file can't grow unbounded when the
+    operator pastes a 50 KB message mid-thread."""
+    from core.io.telegram_bridge import HISTORY_TURN_CHAR_CAP
+
+    _install_transport(lambda _: httpx.Response(200, json=_ok({})))
+    hub = Hub()
+    orch = _FakeOrchestrator(hub, reply_text="ack")
+    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub)
+    big = "x" * (HISTORY_TURN_CHAR_CAP + 500)
+    bridge._history.append(("user", big))
+    bridge._history.append(("assistant", "ok"))
+    bridge._save_state()
+    state = _read_state(bridge._state_path)
+    persisted = state["history"]
+    assert persisted[0]["role"] == "user"
+    assert len(persisted[0]["text"]) == HISTORY_TURN_CHAR_CAP
+    assert persisted[1]["text"] == "ok"
 
 
 # ── coalesce window ───────────────────────────────────────────────
@@ -646,3 +714,83 @@ def test_compose_prompt_truncates_overlong_turns() -> None:
     prompt = _compose_prompt([("user", big)], "short")
     assert "[truncated]" in prompt
     assert len(prompt) < 2 * HISTORY_TURN_CHAR_CAP
+
+
+# ── session boundary tracking ────────────────────────────────────
+
+
+def test_chat_session_first_tick_opens_new_session() -> None:
+    from datetime import UTC, datetime
+
+    s = _ChatSession(idle_gap_s=900.0)
+    sid, is_new = s.tick(datetime(2026, 4, 22, 13, 3, 0, tzinfo=UTC))
+    assert is_new is True
+    assert sid.startswith("tg-20260422-1303")
+
+
+def test_chat_session_within_gap_stays_same() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    s = _ChatSession(idle_gap_s=900.0)
+    t0 = datetime(2026, 4, 22, 13, 0, 0, tzinfo=UTC)
+    sid_a, new_a = s.tick(t0)
+    sid_b, new_b = s.tick(t0 + timedelta(minutes=10))
+    assert new_a is True and new_b is False
+    assert sid_a == sid_b
+
+
+def test_chat_session_after_gap_opens_new() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    s = _ChatSession(idle_gap_s=900.0)
+    t0 = datetime(2026, 4, 22, 13, 0, 0, tzinfo=UTC)
+    sid_a, _ = s.tick(t0)
+    sid_b, new_b = s.tick(t0 + timedelta(minutes=20))
+    assert new_b is True
+    assert sid_a != sid_b
+
+
+def test_chat_session_state_round_trip() -> None:
+    from datetime import UTC, datetime
+
+    s = _ChatSession(idle_gap_s=900.0)
+    s.tick(datetime(2026, 4, 22, 13, 0, 0, tzinfo=UTC))
+    state = s.as_state()
+    s2 = _ChatSession(idle_gap_s=900.0)
+    s2.load_state(state)
+    assert s2.session_id == s.session_id
+    assert s2.started_at == s.started_at
+
+
+@pytest.mark.asyncio
+async def test_dispatch_writes_per_session_vault_file(
+    tmp_path: Path,
+) -> None:
+    """Every dispatch writes an append to a per-session file under
+    ``sessions/telegram/``. Two dispatches within the idle gap both
+    land in the same file, keeping a conversation together."""
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    vault_root = tmp_path / "vault"
+    vault = Vault(vault_root)
+    vault.ensure_initialized()
+    hub = Hub()
+    orch = _FakeOrchestrator(hub, reply_text="noted")
+    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub, vault=vault)
+
+    await bridge._dispatch("msg one")
+    await bridge._dispatch("msg two")
+
+    session_dir = vault_root / SESSION_LOG_FOLDER
+    files = list(session_dir.iterdir())
+    assert len(files) == 1, f"expected one session file, got {files!r}"
+    body = files[0].read_text(encoding="utf-8")
+    # Header written once, on session open.
+    assert body.count("# Session ") == 1
+    assert "**Channel:** Telegram" in body
+    # Both exchanges persisted under the session header.
+    assert "msg one" in body and "msg two" in body
+    assert body.count("**PILK:** noted") == 2

@@ -106,8 +106,11 @@ async def test_approval_created_emits_card_with_buttons() -> None:
     assert len(sends) == 1
     payload = sends[0]
     assert payload["chat_id"] == "999"
-    assert "prospector" in payload["text"]
-    assert "net_fetch" in payload["text"]
+    # Agent name is rendered in human-readable Title Case ("Prospector"),
+    # not the raw snake_case from the tool layer. Tool name is
+    # humanized into the fallback sentence ("net fetch").
+    assert "Prospector" in payload["text"]
+    assert "net fetch" in payload["text"]
     assert "https://example.com" in payload["text"]
     markup = payload["reply_markup"]
     buttons = markup["inline_keyboard"][0]
@@ -466,3 +469,125 @@ async def test_bridge_allows_callback_updates_in_getupdates(
     assert seen_allowed, "getUpdates was never called"
     assert "message" in seen_allowed[0]
     assert "callback_query" in seen_allowed[0]
+
+
+# ── _format_request: plain-English card ──────────────────────────
+
+
+def test_format_request_reads_as_plain_english() -> None:
+    """The specific case from the operator's screenshot: the card
+    must read like someone texting them, not like a raw tool dump.
+    No risk class jargon, no ISO timestamps, no tool name in the
+    body, no contact IDs without context."""
+    from core.io.telegram_approvals import _format_request
+
+    out = _format_request({
+        "agent_name": "lead_qualifier_agent",
+        "tool_name": "ghl_task_create",
+        "risk_class": "NET_WRITE",
+        "reason": "NET_WRITE: requires approval",
+        "args": {
+            "contact_id": "location_id",
+            "title": "Set ghl_default_location_id",
+            "body": "Please set the default location ID in GHL settings.",
+            "due_date": "2026-04-23T09:00:00",
+        },
+    })
+    # Header phrasing.
+    assert "PILK wants your approval" in out
+    # Plain-English sentence, CRM instead of "GHL".
+    assert "Create a task in your CRM" in out
+    assert '"Set ghl_default_location_id"' in out
+    # ISO timestamp is translated to a human phrase.
+    assert "Thursday" in out
+    assert "Apr 23" in out
+    assert "9:00 AM" in out
+    # Raw ISO string must NOT appear verbatim.
+    assert "2026-04-23T09:00:00" not in out
+    # Jargon that the user complained about MUST be gone.
+    assert "NET_WRITE" not in out
+    assert "ghl_task_create" not in out
+    assert "Tool:" not in out
+    assert "Risk:" not in out
+    assert "requires approval" not in out
+    # Agent attribution shows up as a human name, not snake_case.
+    assert "Lead Qualifier" in out
+    assert "lead_qualifier_agent" not in out
+
+
+def test_format_request_gmail_send_is_plain_english() -> None:
+    from core.io.telegram_approvals import _format_request
+
+    out = _format_request({
+        "agent_name": "inbox_triage_agent",
+        "tool_name": "gmail_send_as_pilk",
+        "risk_class": "COMMS",
+        "reason": "",
+        "args": {
+            "to": "alice@example.com",
+            "subject": "Quick question",
+            "body": "Hey Alice, …",
+        },
+    })
+    assert "Send an email to alice@example.com" in out
+    assert '"Quick question"' in out
+    assert "Inbox Triage" in out
+    # No tool/risk metadata.
+    assert "COMMS" not in out
+    assert "gmail_send_as_pilk" not in out
+
+
+def test_format_request_shell_spells_it_out() -> None:
+    """Shell exec is one of the scariest approvals — the card needs
+    to make obvious that PILK wants to run a command on the
+    operator's machine."""
+    from core.io.telegram_approvals import _format_request
+
+    out = _format_request({
+        "agent_name": "some_agent",
+        "tool_name": "shell_exec",
+        "risk_class": "EXEC_LOCAL",
+        "reason": "",
+        "args": {"command": "rm -rf /tmp/foo"},
+    })
+    assert "Run this command on your computer" in out
+    assert "rm -rf /tmp/foo" in out
+
+
+def test_format_request_unknown_tool_falls_back_gracefully() -> None:
+    """Tools without a bespoke summary still render something the
+    operator can read, even if not as polished."""
+    from core.io.telegram_approvals import _format_request
+
+    out = _format_request({
+        "agent_name": "some_agent",
+        "tool_name": "brand_new_tool_nobody_has_seen",
+        "risk_class": "NET_WRITE",
+        "reason": "",
+        "args": {"payload": "hello world"},
+    })
+    assert "PILK wants your approval" in out
+    # Tool name appears in the fallback sentence, humanized.
+    assert "brand new tool nobody has seen" in out
+    # Bare string, not repr('hello world').
+    assert "hello world" in out
+    assert "'hello world'" not in out
+    # Arg label is capitalized English, not snake_case.
+    assert "Payload:" in out
+
+
+def test_format_request_non_boilerplate_reason_surfaces() -> None:
+    """A meaningful agent-provided reason still shows up — we only
+    filter out the policy-layer boilerplate that echoes the risk
+    class."""
+    from core.io.telegram_approvals import _format_request
+
+    out = _format_request({
+        "agent_name": "lead_qualifier_agent",
+        "tool_name": "ghl_send_email",
+        "risk_class": "COMMS",
+        "reason": "Client hasn't replied in 10 days; nudging.",
+        "args": {"contact_id": "abc123", "subject": "Following up"},
+    })
+    assert "Client hasn't replied in 10 days" in out
+    assert "Why:" in out

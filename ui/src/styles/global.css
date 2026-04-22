@@ -6675,6 +6675,705 @@ body {
 }
 
 /* ─────────────────────────────────────────────────────────────
+   Brain v2 — CRM-style knowledge manager
+   Apple Settings sidebar + Notion-ish list + detail pane.
+───────────────────────────────────────────────────────────── */
+
+.brain2 {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 228px 1fr;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.brain2-sidebar {
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
+  padding: 24px 12px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.brain2-sidebar-head {
+  padding: 0 12px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.brain2-cat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.brain2-cat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.brain2-cat:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.brain2-cat--active,
+.brain2-cat--active:hover {
+  background: var(--surface-active);
+  color: var(--accent-strong);
+  box-shadow: inset 0 0 0 1px rgba(139, 167, 255, 0.14);
+}
+
+.brain2-cat-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brain2-cat-count {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.brain2-cat--active .brain2-cat-count {
+  color: var(--accent-strong);
+}
+
+.brain2-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.brain2-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brain2-search {
+  flex: 1;
+  padding: 9px 14px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.brain2-search:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.brain2-upload-btn {
+  flex-shrink: 0;
+}
+
+.brain2-error {
+  margin: 10px 24px 0;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+
+.brain2-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) 1fr;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.brain2-list-col {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  min-height: 0;
+  min-width: 0;
+}
+
+.brain2-list-head {
+  padding: 16px 18px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.brain2-list-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.brain2-list-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+.brain2-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px 24px;
+}
+
+.brain2-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.brain2-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.brain2-row:hover {
+  background: var(--surface-hover);
+}
+
+.brain2-row--active,
+.brain2-row--active:hover {
+  background: var(--surface-active);
+  color: var(--accent-strong);
+}
+
+.brain2-row-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brain2-row-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.brain2-row-cat {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brain2-row-time {
+  flex-shrink: 0;
+}
+
+.brain2-empty {
+  padding: 36px 20px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+
+.brain2-detail-col {
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.brain2-detail-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-faint);
+  padding: 40px;
+  text-align: center;
+}
+
+.brain2-detail-empty-mark {
+  font-size: 34px;
+  color: var(--text-faint);
+  opacity: 0.6;
+}
+
+.brain2-detail-empty-title {
+  font-size: 14px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.brain2-detail-empty-sub {
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+
+.brain2-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.brain2-detail-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 28px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
+}
+
+.brain2-detail-title-wrap {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.brain2-detail-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brain2-detail-meta {
+  display: flex;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.brain2-detail-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.brain2-detail-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 4px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+
+.brain2-danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.brain2-danger:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.brain2-detail-body {
+  padding: 22px 28px 32px;
+  flex: 1;
+}
+
+.brain2-detail-editor {
+  width: 100%;
+  min-height: 320px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.brain2-detail-editor:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.brain2-detail-backlinks {
+  padding: 14px 28px 28px;
+  border-top: 1px solid var(--border);
+}
+
+.brain2-backlinks-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-bottom: 8px;
+}
+
+.brain2-backlinks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.brain2-backlinks-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.brain2-backlink-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.brain2-backlink-snippet {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+/* ── Modal (upload + confirm) ─────────────────────────────── */
+
+.brain2-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 110;
+  animation: brain2-fade-in 0.14s ease-out;
+}
+
+@keyframes brain2-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.brain2-modal {
+  width: min(520px, 100%);
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.brain2-modal--small {
+  width: min(420px, 100%);
+}
+
+.brain2-modal-head {
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brain2-modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.brain2-modal-sub {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+.brain2-modal-body {
+  padding: 16px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.brain2-modal-foot {
+  padding: 14px 22px 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.brain2-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.brain2-field-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.brain2-input,
+.brain2-select,
+.brain2-file-input {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.brain2-input:focus,
+.brain2-select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.brain2-file-input {
+  padding: 7px 10px;
+  font-size: 12.5px;
+}
+
+.brain2-file-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.brain2-file-size {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.brain2-confirm-msg {
+  font-size: 13.5px;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+/* ── Toast ───────────────────────────────────────────────── */
+
+.brain2-toast {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 12.5px;
+  z-index: 120;
+  animation: brain2-toast-in 0.18s ease-out;
+}
+
+@keyframes brain2-toast-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ── Markdown typography (Brain v2) ──────────────────────── */
+
+.brain2-markdown h1 {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 14px 0;
+  color: var(--text);
+}
+
+.brain2-markdown h2 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 22px 0 10px 0;
+  color: var(--text);
+}
+
+.brain2-markdown h3 {
+  font-size: 14.5px;
+  font-weight: 600;
+  margin: 18px 0 8px 0;
+  color: var(--text);
+}
+
+.brain2-markdown p {
+  margin: 0 0 12px 0;
+  line-height: 1.65;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.brain2-markdown ul,
+.brain2-markdown ol {
+  margin: 0 0 12px 0;
+  padding-left: 22px;
+  line-height: 1.65;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.brain2-markdown li {
+  margin-bottom: 4px;
+}
+
+.brain2-markdown blockquote {
+  margin: 0 0 14px 0;
+  padding: 8px 14px;
+  border-left: 3px solid var(--accent-soft);
+  color: var(--text-dim);
+  font-style: italic;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.brain2-markdown code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.brain2-markdown pre {
+  margin: 0 0 14px 0;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+
+.brain2-markdown pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 12px;
+}
+
+.brain2-markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 22px 0;
+}
+
+.brain2-link {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.brain2-wikilink {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  font-size: 12.5px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(139, 167, 255, 0.24);
+  color: var(--accent-strong);
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+/* Compact layout for narrow screens — list stacks above detail. */
+@media (max-width: 900px) {
+  .brain2 {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .brain2-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 12px 14px;
+  }
+  .brain2-sidebar-head { display: none; }
+  .brain2-cat-list { flex-direction: row; }
+  .brain2-cat { padding: 6px 12px; }
+  .brain2-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(180px, 240px) 1fr;
+  }
+  .brain2-list-col {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
    Settings → Telegram — step-through connect card.
 ───────────────────────────────────────────────────────────── */
 

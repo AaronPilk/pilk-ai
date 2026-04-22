@@ -7,14 +7,17 @@
                                       wiki-links — feeds the dashboard
                                       force-directed graph view.
   GET    /brain/backlinks?path=…      which other notes link to this one
+  POST   /brain/upload                multipart PDF/.txt → new note
+  PATCH  /brain/note                  {path, content} overwrite body
+  DELETE /brain/note?path=…           remove a note from the vault
 
 The vault is a plain folder of markdown files under
 ``PILK_BRAIN_VAULT_PATH`` (default ``~/PILK-brain``). Opening the same
 folder in Obsidian gives graph + backlink navigation on exactly the
-same files the dashboard reads through here. The endpoints are all
-read-only — writing happens via the `brain_note_write` tool inside the
-agent loop, which flows through the same Vault object and therefore
-the same safety checks (path escape guards, size caps, atomic writes).
+same files the dashboard reads through here. Writes from the agent
+loop still go through `brain_note_write` — these HTTP write endpoints
+share the same Vault object and therefore the same safety checks
+(path escape guards, size caps, atomic writes).
 
 We keep this route thin on purpose: pagination and fancy tree
 construction live on the client. The server returns:
@@ -34,7 +37,8 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from pydantic import BaseModel, Field
 
 from core.brain import Vault
 from core.logging import get_logger
@@ -314,3 +318,208 @@ async def backlinks(
                 }
             )
     return {"target": target_rel, "links": out}
+
+
+# ── write endpoints (upload / edit / delete) ─────────────────────────
+
+# Cap on accepted PDF/.txt uploads. We extract to utf-8 markdown anyway,
+# so the raw bytes ceiling can be generous — the vault's own
+# MAX_WRITE_BYTES will reject oversized extracted bodies downstream.
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MiB
+
+# We use pypdf (already in pyproject.toml via the ingester pipeline)
+# rather than pulling in a new dependency. The inline import below
+# degrades gracefully if pypdf isn't installed in some slim env.
+_SUPPORTED_UPLOAD_SUFFIXES = (".pdf", ".txt")
+
+
+class NotePatch(BaseModel):
+    path: str = Field(..., min_length=1, max_length=400)
+    content: str = Field(..., max_length=1024 * 1024)
+
+
+def _slugify_for_filename(raw: str) -> str:
+    """Turn an arbitrary label or filename into something the Vault's
+    strict path regex will accept. The Vault allows letters, digits,
+    spaces, `_-./()'`; anything else we collapse to a dash."""
+    cleaned = re.sub(r"[^A-Za-z0-9 _\-().']+", "-", (raw or "").strip())
+    cleaned = re.sub(r"-{2,}", "-", cleaned).strip("-. ")
+    return cleaned or "untitled"
+
+
+def _unique_note_path(vault: Vault, folder: str, stem: str) -> str:
+    """Pick a vault-relative path that doesn't collide with an existing
+    note. Returns ``folder/stem.md`` (or with an ``-N`` suffix if taken).
+    ``folder`` may be empty for a root-level note."""
+    folder_clean = (folder or "").strip("/ ")
+    base_stem = _slugify_for_filename(stem)
+    candidate = f"{folder_clean}/{base_stem}" if folder_clean else base_stem
+    try:
+        resolved = vault.resolve(candidate)
+    except ValueError:
+        # Fall back to a known-safe stem if slug still rejected.
+        base_stem = _slugify_for_filename(base_stem + " upload")
+        candidate = f"{folder_clean}/{base_stem}" if folder_clean else base_stem
+        resolved = vault.resolve(candidate)
+    if not resolved.exists():
+        return resolved.relative_to(vault.root).as_posix()
+    for i in range(2, 1000):
+        suffixed = f"{candidate} {i}"
+        resolved = vault.resolve(suffixed)
+        if not resolved.exists():
+            return resolved.relative_to(vault.root).as_posix()
+    raise HTTPException(status_code=409, detail="cannot allocate unique note path")
+
+
+def _extract_pdf_text(payload: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail="pypdf is not installed; cannot extract PDF text",
+        ) from e
+    from io import BytesIO
+
+    try:
+        reader = PdfReader(BytesIO(payload))
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"could not open PDF: {e}",
+        ) from e
+    parts: list[str] = []
+    for page in reader.pages:
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            continue
+        text = text.strip()
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts)
+
+
+@router.post("/upload")
+async def upload_note(
+    request: Request,
+    file: UploadFile = File(...),  # noqa: B008 — FastAPI dependency pattern
+    label: str = Form(...),
+    folder: str = Form(""),
+) -> dict[str, Any]:
+    """Accept a PDF or .txt file, extract its text, and write it to the
+    vault as a new markdown note. Returns the new note's descriptor so
+    the UI can reopen it without refetching the whole list.
+
+    * ``label`` becomes the note title (and file stem).
+    * ``folder`` is a vault-relative folder (``playbooks``,
+      ``clients``, …). Empty string writes to the root.
+    """
+    vault = _vault(request)
+    filename = (file.filename or "").strip()
+    suffix_ok = filename.lower().endswith(_SUPPORTED_UPLOAD_SUFFIXES)
+    mime = (file.content_type or "").lower()
+    mime_ok = mime in {"application/pdf", "text/plain", "text/markdown"}
+    if not (suffix_ok or mime_ok):
+        raise HTTPException(
+            status_code=415,
+            detail="unsupported file type — upload a PDF or .txt file",
+        )
+    payload = await file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="empty upload")
+    if len(payload) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"upload exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MiB cap",
+        )
+
+    # Extract body text. .txt/.md → decode; .pdf → pypdf.
+    if filename.lower().endswith(".pdf") or mime == "application/pdf":
+        body_text = _extract_pdf_text(payload)
+        if not body_text.strip():
+            # Still write a stub so the operator sees their upload landed
+            # and can add context manually. Matches the docs ingester's
+            # behaviour for image-only PDFs.
+            body_text = "_(PDF text extraction produced no content — file may be scanned / image-only.)_"
+    else:
+        body_text = None
+        for encoding in ("utf-8", "latin-1"):
+            try:
+                body_text = payload.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if body_text is None:
+            raise HTTPException(
+                status_code=400, detail="text file is not utf-8 or latin-1"
+            )
+
+    clean_label = (label or "").strip() or (
+        filename.rsplit(".", 1)[0] if filename else "upload"
+    )
+    rel_path = _unique_note_path(vault, folder, clean_label)
+
+    source_note = (
+        f"> Uploaded from **{filename or 'upload'}** "
+        f"on {datetime.now(tz=UTC).strftime('%Y-%m-%d')}."
+    )
+    markdown = f"# {clean_label}\n\n{source_note}\n\n{body_text.rstrip()}\n"
+
+    try:
+        vault.write(rel_path, markdown)
+    except (OSError, ValueError) as e:
+        log.warning("brain_upload_write_failed", path=rel_path, error=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    log.info(
+        "brain_upload_saved",
+        path=rel_path,
+        bytes=len(markdown.encode("utf-8")),
+        source_kind="pdf" if filename.lower().endswith(".pdf") else "text",
+    )
+    return {"note": _list_row(vault, rel_path)}
+
+
+@router.patch("/note")
+async def update_note(request: Request, patch: NotePatch) -> dict[str, Any]:
+    """Overwrite the body of an existing note. The UI sends the full
+    new body (not a diff) — matches how the agent's write tool works
+    and keeps the vault side stateless."""
+    vault = _vault(request)
+    try:
+        resolved = vault.resolve(patch.path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail=f"note not found: {patch.path}")
+    try:
+        vault.write(patch.path, patch.content)
+    except (OSError, ValueError) as e:
+        log.warning("brain_patch_failed", path=patch.path, error=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        rel = resolved.relative_to(vault.root).as_posix()
+    except ValueError:
+        rel = patch.path
+    return {"note": _list_row(vault, rel)}
+
+
+@router.delete("/note")
+async def delete_note(
+    request: Request, path: str = Query(..., min_length=1, max_length=400)
+) -> dict[str, Any]:
+    vault = _vault(request)
+    try:
+        resolved = vault.resolve(path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail=f"note not found: {path}")
+    try:
+        resolved.unlink()
+    except OSError as e:
+        log.warning("brain_delete_failed", path=path, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    log.info("brain_note_deleted", path=path)
+    return {"deleted": True, "path": path}
