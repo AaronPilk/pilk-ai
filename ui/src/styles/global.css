@@ -7721,6 +7721,20 @@ body {
   word-break: break-word;
 }
 
+/* Secondary line under the title — surfaces the raw filename stem
+   when the backend gave us a richer title from the body. Helps the
+   operator still recognize "2026-04-22" when the card title is the
+   first heading of the daily note. */
+.brain3-card-subtitle {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: -4px;
+}
+
 .brain3-card-foot {
   margin-top: auto;
   display: flex;

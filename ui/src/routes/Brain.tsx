@@ -63,10 +63,12 @@ const MEMORY_KIND_LABEL: Record<MemoryKind, string> = {
 };
 
 function memoryToNote(entry: MemoryEntry): BrainNote {
+  const label = entry.title || MEMORY_KIND_LABEL[entry.kind];
   return {
     path: memoryVirtualPath(entry.id),
     folder: "memory",
-    stem: entry.title || MEMORY_KIND_LABEL[entry.kind],
+    stem: label,
+    title: label,
     size: (entry.body || "").length,
     mtime: entry.updated_at || entry.created_at || null,
   };
@@ -115,6 +117,15 @@ const CATEGORIES: Category[] = [
 
 function topFolder(path: string): string {
   return path.split("/", 1)[0] || "";
+}
+
+/** Display title for a card / reader header. Backend-derived `title`
+ * (first heading / first prose line) wins; stem is the fallback so
+ * notes without a useful body still render something. */
+function noteDisplayTitle(note: BrainNote): string {
+  const t = (note.title || "").trim();
+  if (t) return t;
+  return note.stem;
 }
 
 function categoryOf(note: BrainNote): CategoryId {
@@ -229,7 +240,9 @@ export default function Brain() {
         // Memory virtual paths aren't meaningful to the operator, so
         // don't include them in the haystack — search on title/folder.
         const pathHay = isMemoryVirtualPath(n.path) ? "" : n.path;
-        const hay = (n.stem + " " + n.folder + " " + pathHay).toLowerCase();
+        const hay = (
+          (n.title || "") + " " + n.stem + " " + n.folder + " " + pathHay
+        ).toLowerCase();
         return hay.includes(q);
       });
     }
@@ -555,7 +568,10 @@ function NoteCard({
           {note.mtime ? relativeTime(note.mtime) : "—"}
         </span>
       </div>
-      <div className="brain3-card-title">{note.stem}</div>
+      <div className="brain3-card-title">{noteDisplayTitle(note)}</div>
+      {note.title && note.title !== note.stem && (
+        <div className="brain3-card-subtitle">{note.stem}</div>
+      )}
       <div className="brain3-card-foot">
         <span className="brain3-card-size">{formatSize(note.size)}</span>
       </div>
@@ -717,7 +733,11 @@ function NoteReader({
         <header className="brain3-reader-head">
           <div className="brain3-reader-title-wrap">
             <h2 className="brain3-reader-title">
-              {note?.stem ?? (isMemory ? "Memory entry" : path.replace(/\.md$/, ""))}
+              {note
+                ? noteDisplayTitle(note)
+                : isMemory
+                  ? "Memory entry"
+                  : path.replace(/\.md$/, "")}
             </h2>
             <div className="brain3-reader-meta">
               <span>
