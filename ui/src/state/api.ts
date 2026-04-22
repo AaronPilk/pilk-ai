@@ -1218,6 +1218,50 @@ export async function fetchBrainBacklinks(
   return r.json();
 }
 
+/** Upload a PDF or .txt file into the vault as a new note. `folder` is
+ * a vault-relative folder (e.g. `"playbooks"`); `label` becomes the
+ * note title and file stem. Server extracts the text and writes a .md. */
+export async function uploadBrainNote(
+  file: File,
+  label: string,
+  folder: string,
+): Promise<{ note: BrainNote }> {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("label", label);
+  body.append("folder", folder);
+  const r = await apiFetch(`/brain/upload`, {
+    method: "POST",
+    body,
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function updateBrainNote(
+  path: string,
+  content: string,
+): Promise<{ note: BrainNote }> {
+  const r = await apiFetch(`/brain/note`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, content }),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function deleteBrainNote(
+  path: string,
+): Promise<{ deleted: boolean; path: string }> {
+  const r = await apiFetch(
+    `/brain/note?path=${encodeURIComponent(path)}`,
+    { method: "DELETE" },
+  );
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 // ── Telegram (PILK push channel) ───────────────────────────────
 
 /** Shape returned by GET /telegram/bot-info. `configured` means the
