@@ -15,6 +15,7 @@ import {
   type BrainSearchHit,
 } from "../state/api";
 import { BrainGraph } from "./BrainGraph";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 
 type Tab = "list" | "graph";
 
@@ -226,11 +227,22 @@ export default function Brain() {
 
       {tab === "graph" ? (
         <div className="brain-graph-wrap">
-          <BrainGraph
-            enabled={tab === "graph"}
-            selected={selected}
-            onSelect={openNote}
-          />
+          <ErrorBoundary
+            fallback={(err, reset) => (
+              <div className="brain-graph-empty brain-graph-error">
+                Graph crashed: {err.message}
+                <button type="button" className="btn" onClick={reset}>
+                  Try again
+                </button>
+              </div>
+            )}
+          >
+            <BrainGraph
+              enabled={tab === "graph"}
+              selected={selected}
+              onSelect={openNote}
+            />
+          </ErrorBoundary>
         </div>
       ) : (
         <div className="brain-body">
