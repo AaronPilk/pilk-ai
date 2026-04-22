@@ -118,6 +118,7 @@ from core.timers import TimerDaemon
 from core.timers.store import TimerStore
 from core.tools import Gateway, ToolRegistry
 from core.tools.builtin import (
+    ARCADS_TOOLS,
     COMPUTER_CONTROL_TOOLS,
     CREATIVE_TOOLS,
     GOOGLE_ADS_TOOLS,
@@ -345,6 +346,14 @@ async def lifespan(app: FastAPI):
     for t in CREATIVE_TOOLS:
         registry.register(t)
     log.info("creative_registered", tools=[t.name for t in CREATIVE_TOOLS])
+
+    # Arcads — UGC video generation surface. Same "register
+    # unconditionally, handler surfaces missing-key errors" pattern as
+    # CREATIVE_TOOLS; resolves arcads_api_key via the secret store
+    # on every call.
+    for t in ARCADS_TOOLS:
+        registry.register(t)
+    log.info("arcads_registered", tools=[t.name for t in ARCADS_TOOLS])
 
     # Meta Ads operator toolkit — full campaign/adset/ad/creative/
     # insights coverage. Handlers surface a clean "not configured"
