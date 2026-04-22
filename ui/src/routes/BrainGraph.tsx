@@ -138,9 +138,6 @@ export function BrainGraph({
   }, [nodes, edges]);
 
   const handleEngineStop = useCallback(() => {
-    // Fit the whole cloud in view once forces settle. Without this the
-    // simulation can drift the barycentre off-screen on huge, sparsely
-    // linked vaults and the user has no obvious recentre affordance.
     try {
       fgRef.current?.zoomToFit(400, 40);
     } catch {
@@ -155,6 +152,28 @@ export function BrainGraph({
       // ignore
     }
   }, []);
+
+  // Follow the cloud as the simulation settles. onEngineStop alone
+  // isn't enough on 600+ node sparse graphs — the engine takes many
+  // seconds to settle and during that time the barycentre drifts
+  // off-screen. We poll zoomToFit for the first ~6s after the graph
+  // mounts so the camera stays glued to the cloud, then stop so the
+  // user can pan freely.
+  useEffect(() => {
+    if (!enabled || !nodes || nodes.length === 0) return;
+    if (viewport.w === 0 || viewport.h === 0) return;
+    let ticks = 0;
+    const id = window.setInterval(() => {
+      try {
+        fgRef.current?.zoomToFit(300, 40);
+      } catch {
+        // ignore
+      }
+      ticks += 1;
+      if (ticks >= 12) window.clearInterval(id); // 12 × 500ms = 6s
+    }, 500);
+    return () => window.clearInterval(id);
+  }, [enabled, nodes, viewport.w, viewport.h]);
 
   if (!enabled) return null;
 
