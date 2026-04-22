@@ -56,6 +56,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -112,15 +113,121 @@ HISTORY_MAX_TURNS = 12
 # paste earlier in the thread — full text still lands in the vault.
 HISTORY_TURN_CHAR_CAP = 2000
 # Where auto-archived Telegram exchanges land inside the vault.
-# Two sibling paths:
+# Three sibling paths:
 #   - ``chats/telegram/YYYY-MM-DD.md`` — daily digest view the operator
 #     opens in Obsidian when reviewing "what did I talk about today?".
 #   - ``ingested/telegram/YYYY-MM-DD-HH.md`` — per-hour file the brain
 #     ingestion scanners pick up the same way they do ``ingested/
 #     claude-code/`` notes, so the hydration pass surfaces recent
 #     Telegram exchanges as topical context on the next turn.
+#   - ``sessions/telegram/{session_id}.md`` — one file per conversation
+#     session (see ``_ChatSession``). Surfaces in the Brain → Sessions
+#     category as a complete readable thread instead of being sliced
+#     into arbitrary per-hour files.
 CHAT_LOG_FOLDER = "chats/telegram"
 INGEST_LOG_FOLDER = "ingested/telegram"
+SESSION_LOG_FOLDER = "sessions/telegram"
+
+# Idle gap between consecutive inbound messages that closes the
+# current session and opens a new one. Default 15 minutes: short
+# enough that a genuine "new topic after lunch" message starts fresh,
+# long enough that a brief thinking pause mid-thread doesn't shatter
+# a real conversation into fragments. Overridable for testing via the
+# ``PILK_TELEGRAM_SESSION_IDLE_GAP_S`` env var.
+DEFAULT_SESSION_IDLE_GAP_S = 15 * 60.0
+
+
+class _ChatSession:
+    """Idle-timeout-driven session boundary tracker.
+
+    A "session" is a contiguous run of inbound user messages where
+    each consecutive pair arrives within ``idle_gap_s`` seconds of
+    each other. Anything longer closes the old session and opens a
+    fresh one with a new ``session_id``.
+
+    Why this exists: prior behavior treated every inbound message as
+    an independent orchestrator plan, so a one-hour Telegram
+    conversation showed up as ~40 disjointed "sessions" in the
+    dashboard and memory store. Grouping them by idle gap gives the
+    memory hydration + Brain UI something the operator actually
+    recognizes as a conversation.
+
+    State is small enough to round-trip through the bridge's JSON
+    state file on every tick, so an accidental pilkd restart mid-
+    session doesn't drop the operator into a brand-new session.
+    """
+
+    def __init__(self, idle_gap_s: float) -> None:
+        self._idle_gap_s = float(idle_gap_s)
+        self._session_id: str | None = None
+        self._last_activity: datetime | None = None
+        self._started_at: datetime | None = None
+        self._message_count = 0
+
+    @property
+    def session_id(self) -> str | None:
+        return self._session_id
+
+    @property
+    def started_at(self) -> datetime | None:
+        return self._started_at
+
+    def tick(self, now: datetime) -> tuple[str, bool]:
+        """Advance the tracker by one inbound message at ``now``.
+
+        Returns ``(session_id, is_new_session)``. ``is_new_session``
+        is True on the first message ever and after any idle gap
+        larger than ``idle_gap_s``.
+        """
+        is_new = (
+            self._session_id is None
+            or self._last_activity is None
+            or (now - self._last_activity).total_seconds() > self._idle_gap_s
+        )
+        if is_new:
+            # Format is deliberately human-readable and naturally
+            # sortable — the session_id doubles as the vault filename
+            # under ``sessions/telegram/`` so Obsidian's sidebar lists
+            # them chronologically without extra metadata.
+            self._session_id = now.strftime("tg-%Y%m%d-%H%M%S")
+            self._started_at = now
+            self._message_count = 0
+        self._last_activity = now
+        self._message_count += 1
+        assert self._session_id is not None
+        return self._session_id, is_new
+
+    def as_state(self) -> dict[str, Any]:
+        return {
+            "id": self._session_id,
+            "started_at": (
+                self._started_at.isoformat() if self._started_at else None
+            ),
+            "last_activity": (
+                self._last_activity.isoformat() if self._last_activity else None
+            ),
+            "message_count": self._message_count,
+        }
+
+    def load_state(self, data: dict[str, Any]) -> None:
+        sid = data.get("id")
+        if isinstance(sid, str):
+            self._session_id = sid
+        started = data.get("started_at")
+        if isinstance(started, str):
+            try:
+                self._started_at = datetime.fromisoformat(started)
+            except ValueError:
+                self._started_at = None
+        last = data.get("last_activity")
+        if isinstance(last, str):
+            try:
+                self._last_activity = datetime.fromisoformat(last)
+            except ValueError:
+                self._last_activity = None
+        mc = data.get("message_count")
+        if isinstance(mc, int):
+            self._message_count = mc
 
 
 class TelegramBridge:
@@ -142,6 +249,7 @@ class TelegramBridge:
         vault: Vault | None = None,
         coalesce_window_s: float = DEFAULT_COALESCE_WINDOW_S,
         busy_retry_budget_s: float = DEFAULT_BUSY_RETRY_BUDGET_S,
+        session_idle_gap_s: float | None = None,
     ) -> None:
         self._cfg = config
         self._client = TelegramClient(
@@ -154,6 +262,16 @@ class TelegramBridge:
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._offset: int | None = None
+        # Session boundary tracker. Env override lets tests shrink the
+        # idle gap without a code change.
+        env_gap = os.environ.get("PILK_TELEGRAM_SESSION_IDLE_GAP_S")
+        gap = session_idle_gap_s
+        if gap is None:
+            try:
+                gap = float(env_gap) if env_gap else DEFAULT_SESSION_IDLE_GAP_S
+            except ValueError:
+                gap = DEFAULT_SESSION_IDLE_GAP_S
+        self._session = _ChatSession(idle_gap_s=gap)
         # Optional extra dispatcher for inline-button taps. The
         # approvals bridge (``core.io.telegram_approvals``) registers
         # itself here so its callback_queries ride the bridge's
@@ -186,7 +304,12 @@ class TelegramBridge:
     async def start(self) -> None:
         if self._task is not None:
             return
-        self._offset = _read_offset(self._state_path)
+        state = _read_state(self._state_path)
+        offset = state.get("offset")
+        self._offset = int(offset) if isinstance(offset, int) else None
+        session_state = state.get("session")
+        if isinstance(session_state, dict):
+            self._session.load_state(session_state)
         self._stop.clear()
         self._task = asyncio.create_task(self._run(), name="telegram-bridge")
         self._processor_task = asyncio.create_task(
@@ -196,6 +319,7 @@ class TelegramBridge:
             "telegram_bridge_started",
             chat_id=self._cfg.chat_id,
             offset=self._offset,
+            session_id=self._session.session_id,
         )
 
     async def stop(self) -> None:
@@ -255,7 +379,7 @@ class TelegramBridge:
                 update_id = upd.get("update_id")
                 if isinstance(update_id, int):
                     self._offset = update_id + 1
-                    _write_offset(self._state_path, self._offset)
+                    self._save_state()
                 if self._stop.is_set():
                     break
                 await self._handle_update(upd)
@@ -360,7 +484,22 @@ class TelegramBridge:
         PILK stays in-context across turns instead of re-greeting
         mid-thread. Waits a bounded amount of time when the
         orchestrator is busy rather than dropping the message.
+
+        Ticks the session tracker on entry so every dispatch belongs
+        to exactly one session — rapid-fire batches coalesced upstream
+        still count as a single session tick because they arrive here
+        as one call.
         """
+        now = datetime.now(UTC)
+        session_id, is_new_session = self._session.tick(now)
+        if is_new_session:
+            log.info(
+                "telegram_session_opened",
+                session_id=session_id,
+                chat_id=self._cfg.chat_id,
+            )
+        self._save_state()
+
         captured: dict[str, Any] = {}
 
         async def listener(event_type: str, payload: dict[str, Any]) -> None:
@@ -402,7 +541,11 @@ class TelegramBridge:
         # history with a half-turn the model never saw.
         self._history.append(("user", text))
         self._history.append(("assistant", reply))
-        await self._persist_exchange(text, reply)
+        await self._persist_exchange(
+            text, reply,
+            session_id=session_id,
+            is_new_session=is_new_session,
+        )
 
     async def _run_with_busy_retry(self, prompt: str) -> Any:
         """Call ``orchestrator.run`` with a bounded busy-retry loop.
@@ -433,15 +576,26 @@ class TelegramBridge:
                 return e
 
     async def _persist_exchange(
-        self, user_text: str, assistant_text: str
+        self,
+        user_text: str,
+        assistant_text: str,
+        *,
+        session_id: str,
+        is_new_session: bool,
     ) -> None:
-        """Persist one exchange to the vault in two shapes.
+        """Persist one exchange to the vault in three shapes.
 
         * ``chats/telegram/YYYY-MM-DD.md`` — daily digest the
           operator browses in Obsidian.
         * ``ingested/telegram/YYYY-MM-DD-HH.md`` — per-hour file
           the memory hydration + brain search layers pick up as
           recent context on subsequent turns.
+        * ``sessions/telegram/{session_id}.md`` — one file per
+          conversation session, surfaces in the Brain → Sessions
+          category as a complete readable thread. The first
+          exchange in a session writes a short header with the
+          start time; later exchanges just append an exchange
+          block.
 
         Silent-fail by design — a vault write error must never crash
         the bridge or block the reply the operator is waiting on.
@@ -458,6 +612,7 @@ class TelegramBridge:
         hour_rel = (
             f"{INGEST_LOG_FOLDER}/{now.strftime('%Y-%m-%d-%H')}.md"
         )
+        session_rel = f"{SESSION_LOG_FOLDER}/{session_id}.md"
         try:
             await self._append_or_create(
                 day_rel,
@@ -476,16 +631,43 @@ class TelegramBridge:
             )
         except Exception as e:
             log.warning("telegram_bridge_ingestlog_failed", error=str(e))
+        try:
+            session_header = _session_file_header(
+                session_id=session_id,
+                started_at=self._session.started_at or now,
+            )
+            await self._append_or_create(
+                session_rel,
+                block,
+                header=session_header,
+                force_header=is_new_session,
+            )
+        except Exception as e:
+            log.warning(
+                "telegram_bridge_session_log_failed",
+                session_id=session_id, error=str(e),
+            )
+        # Persist session state so a daemon restart mid-conversation
+        # rejoins the same session instead of silently forking one.
+        self._save_state()
 
     async def _append_or_create(
-        self, rel: str, block: str, *, header: str,
+        self,
+        rel: str,
+        block: str,
+        *,
+        header: str,
+        force_header: bool = False,
     ) -> None:
         """Idempotently append ``block`` to ``rel`` in the vault.
 
         Reads first to learn if the file exists; the vault's ``read``
         raises FileNotFoundError when the file is missing, which we
         turn into a fresh write with the given ``header`` as a
-        preamble. Subsequent writes append to the same file.
+        preamble. Subsequent writes append to the same file. When
+        ``force_header`` is true, we always include the header — used
+        by the session logger on the first message of a session so
+        the per-session file always opens with its metadata banner.
         """
         assert self._vault is not None
         exists = True
@@ -498,7 +680,7 @@ class TelegramBridge:
             # force a write. Worst case the header duplicates, which
             # is harmless.
             exists = False
-        if exists:
+        if exists and not force_header:
             await asyncio.to_thread(
                 self._vault.write, rel, block, append=True,
             )
@@ -506,6 +688,22 @@ class TelegramBridge:
             await asyncio.to_thread(
                 self._vault.write, rel, header + block,
             )
+
+    # ── state persistence ──────────────────────────────────────────
+
+    def _save_state(self) -> None:
+        """Flush the offset + session tracker to disk.
+
+        Best-effort: a failed write is logged but never bubbles up —
+        the bridge keeps running with in-memory state.
+        """
+        _write_state(
+            self._state_path,
+            {
+                "offset": self._offset,
+                "session": self._session.as_state(),
+            },
+        )
 
     async def _safe_send(self, text: str) -> None:
         # The client already truncates at TELEGRAM_MESSAGE_MAX_CHARS;
@@ -564,34 +762,54 @@ def _compose_prompt(
     return "\n".join(lines)
 
 
-# ── offset persistence ───────────────────────────────────────────
+# ── bridge state persistence ─────────────────────────────────────
 
 
-def _read_offset(path: Path) -> int | None:
+def _read_state(path: Path) -> dict[str, Any]:
+    """Load the bridge's persisted state.
+
+    Shape: ``{"offset": int, "session": {...}}``. Missing file or
+    malformed JSON returns an empty dict so callers can treat the
+    result uniformly. Backwards-compatible with the pre-session file
+    format (``{"offset": 42}``) — the absent ``session`` key just
+    leaves the tracker in its fresh-init state.
+    """
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return None
+        return {}
     except OSError as e:
-        log.warning("telegram_bridge_offset_read_failed", error=str(e))
-        return None
+        log.warning("telegram_bridge_state_read_failed", error=str(e))
+        return {}
     try:
         data = json.loads(raw)
     except ValueError:
-        return None
-    offset = data.get("offset")
-    return int(offset) if isinstance(offset, int) else None
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def _write_offset(path: Path, offset: int) -> None:
+def _write_state(path: Path, data: dict[str, Any]) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps({"offset": int(offset)}),
-            encoding="utf-8",
-        )
+        path.write_text(json.dumps(data), encoding="utf-8")
     except OSError as e:
-        log.warning("telegram_bridge_offset_write_failed", error=str(e))
+        log.warning("telegram_bridge_state_write_failed", error=str(e))
+
+
+def _session_file_header(*, session_id: str, started_at: datetime) -> str:
+    """Banner written at the top of each per-session vault file.
+
+    Gives the operator a glanceable header when they open the note
+    in Obsidian, and gives memory hydration enough metadata to tag
+    ingested exchanges with their session context.
+    """
+    pretty = started_at.strftime("%Y-%m-%d %H:%M UTC")
+    return (
+        f"# Session {session_id}\n\n"
+        f"- **Channel:** Telegram\n"
+        f"- **Started:** {pretty}\n\n"
+        f"---\n\n"
+    )
 
 
 __all__ = [
@@ -600,10 +818,12 @@ __all__ = [
     "DEFAULT_COALESCE_WINDOW_S",
     "DEFAULT_LONGPOLL_S",
     "DEFAULT_REQUEST_TIMEOUT_S",
+    "DEFAULT_SESSION_IDLE_GAP_S",
     "HISTORY_MAX_TURNS",
     "HISTORY_TURN_CHAR_CAP",
     "INGEST_LOG_FOLDER",
     "ORCHESTRATOR_WAIT_TIMEOUT_S",
     "RETRY_BACKOFF_S",
+    "SESSION_LOG_FOLDER",
     "TelegramBridge",
 ]
