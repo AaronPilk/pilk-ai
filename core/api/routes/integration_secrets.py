@@ -203,6 +203,16 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         ),
         "env": "APIFY_API_TOKEN",
     },
+    "arcads_api_key": {
+        "label": "Arcads (UGC video generation)",
+        "description": (
+            "API key from app.arcads.ai → Settings → API. Powers the "
+            "ugc_video_agent — script + AI actor → short-form UGC "
+            "video render, ~$11 per clip at the current plan. Spec: "
+            "https://external-api.arcads.ai/docs."
+        ),
+        "env": "ARCADS_API_KEY",
+    },
     "telegram_bot_token": {
         "label": "Telegram — bot token",
         "description": (

@@ -1181,6 +1181,7 @@ const SECRET_CATEGORY: Record<string, ApiKeyCategory> = {
   // Creative AI
   nano_banana_api_key: "Creative AI",
   higgsfield_api_key: "Creative AI",
+  arcads_api_key: "Creative AI",
   // Trading
   twelvedata_api_key: "Trading",
   // Infra
@@ -1212,6 +1213,7 @@ const SECRET_GET_KEY_URL: Record<string, string> = {
   browserbase_project_id: "https://www.browserbase.com/projects",
   nano_banana_api_key: "https://aistudio.google.com/app/apikey",
   higgsfield_api_key: "https://cloud.higgsfield.ai/",
+  arcads_api_key: "https://app.arcads.ai/settings/api",
 };
 
 function categorize(name: string): ApiKeyCategory {
