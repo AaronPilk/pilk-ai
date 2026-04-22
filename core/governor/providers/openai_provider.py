@@ -28,6 +28,54 @@ from core.logging import get_logger
 
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
+# OpenAI's Chat Completions caps the `tools` array at 128. Anthropic
+# allows many more; the orchestrator registers 150+ tools today and
+# will keep growing. When routing through OpenAI we clamp the list
+# (see `_prioritised_cap`) — anything dropped is logged so the
+# operator can decide whether to curate the allowlist at the
+# orchestrator layer for OpenAI-tier traffic specifically.
+OPENAI_MAX_TOOLS = 128
+
+# Tools that are most useful in a free-chat turn. Preserved ahead of
+# the alphabetical tail when the registry overflows 128 entries. The
+# literal list is fine here — we only need a stable priority for the
+# ~10 generic primitives the LLM reaches for in every plan.
+_CORE_TOOL_NAMES: tuple[str, ...] = (
+    "fs_read",
+    "fs_write",
+    "shell_exec",
+    "net_fetch",
+    "llm_ask",
+    "agent_create",
+    "code_task",
+    "timer_set",
+    "memory_remember",
+    "memory_list",
+    "memory_delete",
+    "brain_search",
+    "brain_note_read",
+    "brain_note_list",
+    "brain_note_write",
+    "brain_note_search_and_replace",
+    "pilk_registered_tools",
+    "pilk_recent_changes",
+    "pilk_open_prs",
+    "pilk_deploy_status",
+)
+
+# Prefixes to prioritise after the explicit list — keeps Gmail, Drive,
+# Calendar, etc. alongside the generic builtins before the specialist
+# trading / ads / creative surfaces.
+_CORE_TOOL_PREFIXES: tuple[str, ...] = (
+    "gmail_",
+    "drive_",
+    "calendar_",
+    "sheets_",
+    "slides_",
+    "notion_",
+    "ghl_",
+)
+
 log = get_logger("pilkd.governor.openai")
 
 
@@ -51,7 +99,20 @@ class OpenAIPlannerProvider:
         _ = (use_thinking, cache_control)  # intentionally unused
 
         oai_messages = _translate_messages(system, messages)
-        oai_tools = _translate_tools(tools)
+        capped_tools = _prioritised_cap(tools, OPENAI_MAX_TOOLS)
+        if len(capped_tools) < len(tools):
+            dropped = [t["name"] for t in tools if t not in capped_tools]
+            log.warning(
+                "openai_tools_truncated",
+                registered=len(tools),
+                kept=len(capped_tools),
+                dropped_count=len(dropped),
+                # Log only the first few names — the full list would
+                # balloon the structured log line on big registries.
+                dropped_sample=dropped[:8],
+                model=model,
+            )
+        oai_tools = _translate_tools(capped_tools)
 
         payload: dict[str, Any] = {
             "model": model,
@@ -149,6 +210,41 @@ def _translate_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def _prioritised_cap(
+    tools: list[dict[str, Any]], max_tools: int,
+) -> list[dict[str, Any]]:
+    """Keep up to `max_tools` tools, ordered so core primitives survive.
+
+    Priority, highest first:
+      1. Explicit core names (``fs_*``, ``shell_exec``, ``llm_ask``,
+         brain / memory / pilk_* introspection, etc.).
+      2. Tools whose name starts with a core prefix (Gmail, Drive,
+         Calendar, Notion, GHL).
+      3. Everything else, in the order the caller passed them in.
+
+    The caller-order within each bucket is preserved so
+    registry-sorted output stays alphabetical where possible (prompt
+    caching stable across turns).
+    """
+    if len(tools) <= max_tools:
+        return tools
+    core_names = set(_CORE_TOOL_NAMES)
+    prefixes = _CORE_TOOL_PREFIXES
+
+    def priority(tool: dict[str, Any]) -> int:
+        name = tool.get("name") or ""
+        if name in core_names:
+            return 0
+        if name.startswith(prefixes):
+            return 1
+        return 2
+
+    # Stable sort → ties preserve caller order.
+    ordered = sorted(enumerate(tools), key=lambda ix: (priority(ix[1]), ix[0]))
+    kept = [t for _, t in ordered[:max_tools]]
+    return kept
 
 
 def _translate_messages(
