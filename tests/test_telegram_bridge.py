@@ -482,17 +482,16 @@ async def test_history_survives_daemon_restart(tmp_path: Path) -> None:
     await bridge_a._dispatch("do you remember this line?")
 
     # Simulate a daemon restart — fresh bridge, same state path, same
-    # everything else. The history deque should rehydrate from disk
-    # before the next dispatch so the preamble includes the prior turn.
+    # everything else. We drive the rehydration path directly via
+    # ``_load_state`` rather than ``start()`` so the test doesn't have
+    # to spin up the network-polling background tasks.
     hub_b = Hub()
     orch_b = _FakeOrchestrator(hub_b, reply_text="still here")
     bridge_b, _ = _bridge(orch_b, tmp_path=tmp_path, hub=hub_b)
-    await bridge_b.start()
-    try:
-        assert len(bridge_b._history) == 2
-        await bridge_b._dispatch("do you?")
-    finally:
-        await bridge_b.stop()
+    bridge_b._load_state()
+    assert len(bridge_b._history) == 2
+
+    await bridge_b._dispatch("do you?")
 
     # On the second dispatch the preamble must carry the prior turn —
     # that's the entire point of persisting history.
@@ -791,7 +790,7 @@ async def test_dispatch_writes_per_session_vault_file(
     body = files[0].read_text(encoding="utf-8")
     # Header written once, on session open.
     assert body.count("# Session ") == 1
-    assert "Channel: Telegram" in body
+    assert "**Channel:** Telegram" in body
     # Both exchanges persisted under the session header.
     assert "msg one" in body and "msg two" in body
     assert body.count("**PILK:** noted") == 2

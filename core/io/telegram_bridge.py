@@ -304,29 +304,7 @@ class TelegramBridge:
     async def start(self) -> None:
         if self._task is not None:
             return
-        state = _read_state(self._state_path)
-        offset = state.get("offset")
-        self._offset = int(offset) if isinstance(offset, int) else None
-        session_state = state.get("session")
-        if isinstance(session_state, dict):
-            self._session.load_state(session_state)
-        # Rehydrate the rolling conversation window so a daemon
-        # restart mid-thread doesn't wipe PILK's short-term memory of
-        # what was just said. The deque's ``maxlen`` naturally trims
-        # anything beyond the window if a future version shrinks it.
-        history_raw = state.get("history")
-        if isinstance(history_raw, list):
-            for item in history_raw:
-                if not isinstance(item, dict):
-                    continue
-                role = item.get("role")
-                text = item.get("text")
-                if (
-                    isinstance(role, str)
-                    and role in ("user", "assistant")
-                    and isinstance(text, str)
-                ):
-                    self._history.append((role, text))
+        self._load_state()
         self._stop.clear()
         self._task = asyncio.create_task(self._run(), name="telegram-bridge")
         self._processor_task = asyncio.create_task(
@@ -618,7 +596,12 @@ class TelegramBridge:
         Silent-fail by design — a vault write error must never crash
         the bridge or block the reply the operator is waiting on.
         """
+        # State (including the just-appended history turn) must be
+        # flushed even when no vault is wired — otherwise a restart
+        # loses the rolling conversation window for operators running
+        # without a brain vault.
         if self._vault is None:
+            self._save_state()
             return
         now = datetime.now(UTC)
         block = (
@@ -708,6 +691,40 @@ class TelegramBridge:
             )
 
     # ── state persistence ──────────────────────────────────────────
+
+    def _load_state(self) -> None:
+        """Rehydrate offset, session tracker, and rolling conversation
+        history from the persisted state file.
+
+        Split out of ``start()`` so tests can exercise the
+        rehydration path without spawning the network-polling
+        background tasks. Safe to call multiple times; each call
+        overwrites whatever is currently in memory.
+        """
+        state = _read_state(self._state_path)
+        offset = state.get("offset")
+        self._offset = int(offset) if isinstance(offset, int) else None
+        session_state = state.get("session")
+        if isinstance(session_state, dict):
+            self._session.load_state(session_state)
+        # Rehydrate the rolling conversation window so a daemon
+        # restart mid-thread doesn't wipe PILK's short-term memory of
+        # what was just said. The deque's ``maxlen`` naturally trims
+        # anything beyond the window if a future version shrinks it.
+        self._history.clear()
+        history_raw = state.get("history")
+        if isinstance(history_raw, list):
+            for item in history_raw:
+                if not isinstance(item, dict):
+                    continue
+                role = item.get("role")
+                text = item.get("text")
+                if (
+                    isinstance(role, str)
+                    and role in ("user", "assistant")
+                    and isinstance(text, str)
+                ):
+                    self._history.append((role, text))
 
     def _save_state(self) -> None:
         """Flush the offset + session tracker + rolling history to disk.
