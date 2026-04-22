@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import anthropic
 from fastapi import FastAPI
@@ -1026,16 +1027,15 @@ async def lifespan(app: FastAPI):
                 text=reply_text, voice=settings.tts_voice,
             )
             try:
-                import sounddevice as sd  # noqa: PLC0415 - optional dep
-                import numpy as _np  # noqa: PLC0415 - only needed when bridge on
+                import numpy as _np
+                import sounddevice as sd
 
                 # Prefer to hand playback through sounddevice when it's
                 # importable; otherwise we fall back to writing the
                 # synthesized audio to a temp file for the OS to handle.
                 sd.play(
                     _np.frombuffer(spoken.audio_bytes, dtype=_np.int16),
-                    samplerate=settings.voice_bridge_enabled
-                    and 16000 or 16000,
+                    samplerate=16000,
                 )
                 sd.wait()
             except Exception:

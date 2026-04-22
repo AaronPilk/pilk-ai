@@ -462,10 +462,11 @@ class Orchestrator:
         now = datetime.now(UTC)
         rel = f"daily/{now.strftime('%Y-%m-%d')}.md"
         prefix = f"{now.strftime('%H:%M')} —"
-        if agent_name:
-            line = f"- {prefix} [{agent_name}] {summary}"
-        else:
-            line = f"- {prefix} {summary}"
+        line = (
+            f"- {prefix} [{agent_name}] {summary}"
+            if agent_name
+            else f"- {prefix} {summary}"
+        )
         try:
             exists = True
             try:
@@ -825,9 +826,7 @@ def _is_throwaway(goal: str, summary: str) -> bool:
         return True
     if s in _THROWAWAY_PATTERNS:
         return True
-    if len(g) < 6 and len(s) < 6:
-        return True
-    return False
+    return len(g) < 6 and len(s) < 6
 
 
 def _tool_risk(registry: ToolRegistry, name: str) -> str:

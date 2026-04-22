@@ -60,7 +60,6 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 from core.integrations.telegram import TelegramClient, TelegramError
@@ -209,12 +208,10 @@ class XAUUSDRunner:
             # the first evaluation after ``start gold agent``.
             await self._tick()
             while not self._stop.is_set():
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(
                         self._stop.wait(), timeout=self._cfg.tick_seconds,
                     )
-                except TimeoutError:
-                    pass
                 if self._stop.is_set():
                     return
                 await self._tick()
@@ -411,13 +408,11 @@ class XAUUSDRunner:
     async def _pnl_loop(self) -> None:
         try:
             while not self._stop.is_set():
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(
                         self._stop.wait(),
                         timeout=self._cfg.pnl_tick_seconds,
                     )
-                except TimeoutError:
-                    pass
                 if self._stop.is_set():
                     return
                 await self._emit_heartbeat(
@@ -574,7 +569,7 @@ def _compose_rationale(
     bias = getattr(evaluation, "bias", None)
     regime = getattr(evaluation, "regime", None)
     reason = getattr(evaluation, "reason", "")
-    risk_usd = abs(entry - stop) * lots * 100  # XAU lots × 100 oz
+    risk_usd = abs(entry - stop) * lots * 100  # XAU lots x 100 oz
     lines = [
         f"XAUUSD setup — {direction}",
         f"Entry: {entry:.2f}   Stop: {stop:.2f}   Size: {lots:.2f} lots",

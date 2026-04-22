@@ -54,9 +54,9 @@ in-memory cache would be premature — measured cost is < 5ms.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Iterable
 
 from core.brain import Vault
 from core.logging import get_logger
@@ -96,7 +96,7 @@ _STOPWORDS = frozenset({
     "very", "want", "wants", "what", "when", "where", "which",
     "while", "will", "with", "would", "your", "yours", "okay", "please",
     "think", "really", "going", "something", "anything", "everything",
-    "someone", "anyone", "everyone", "because", "before",
+    "someone", "anyone", "everyone", "before",
 })
 
 
