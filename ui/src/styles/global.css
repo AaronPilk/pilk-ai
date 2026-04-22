@@ -6430,6 +6430,12 @@ body {
   letter-spacing: 0.04em;
 }
 
+.brain-graph-meta-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .brain-graph-empty {
   flex: 1;
   display: flex;
