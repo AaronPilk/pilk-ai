@@ -1180,6 +1180,44 @@ export async function searchBrain(
   return r.json();
 }
 
+export interface BrainGraphNode {
+  id: string;
+  label: string;
+  folder: string;
+  size: number;
+}
+
+export interface BrainGraphEdge {
+  source: string;
+  target: string;
+}
+
+export interface BrainBacklink {
+  path: string;
+  line: number;
+  snippet: string;
+}
+
+export async function fetchBrainGraph(): Promise<{
+  nodes: BrainGraphNode[];
+  edges: BrainGraphEdge[];
+  root: string;
+}> {
+  const r = await apiFetch(`/brain/graph`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function fetchBrainBacklinks(
+  path: string,
+): Promise<{ target: string; links: BrainBacklink[] }> {
+  const r = await apiFetch(
+    `/brain/backlinks?path=${encodeURIComponent(path)}`,
+  );
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 // ── Telegram (PILK push channel) ───────────────────────────────
 
 /** Shape returned by GET /telegram/bot-info. `configured` means the

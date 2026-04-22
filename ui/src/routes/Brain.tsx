@@ -1,28 +1,54 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  fetchBrainBacklinks,
   fetchBrainNote,
   fetchBrainNotes,
   searchBrain,
+  type BrainBacklink,
   type BrainNote,
   type BrainSearchHit,
 } from "../state/api";
+import { BrainGraph } from "./BrainGraph";
 
-/** Brain — read-only browser for the Obsidian vault at
- * ~/PILK-brain/ (override via PILK_BRAIN_VAULT_PATH). Writes still
- * happen through the `brain_note_write` tool inside the agent loop;
- * this page exists so the operator can see what PILK has written
- * without switching to Obsidian or Finder. */
+type Tab = "list" | "graph";
+
+/** Brain — browser for the Obsidian vault at
+ * ~/PILK-brain/ (override via PILK_BRAIN_VAULT_PATH). This session
+ * adds three things on top of the earlier v1 list view:
+ *
+ *   - Tabs (List / Graph) — the graph view is a force-directed
+ *     rendering of every note and their `[[wiki-link]]` edges.
+ *   - Nested folder tree with expand/collapse + counts.
+ *   - Live search as you type (debounced), backlinks on the note
+ *     view's right rail, tighter typography.
+ *
+ * Writes still happen inside the agent loop via `brain_note_write`;
+ * this view stays read-only.
+ */
 export default function Brain() {
   const [notes, setNotes] = useState<BrainNote[]>([]);
   const [root, setRoot] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+
   const [selected, setSelected] = useState<string | null>(null);
   const [body, setBody] = useState<string | null>(null);
   const [bodyLoading, setBodyLoading] = useState(false);
+
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<BrainSearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
+
+  const [tab, setTab] = useState<Tab>("list");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set([""]));
+
+  const [backlinks, setBacklinks] = useState<BrainBacklink[] | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -44,6 +70,7 @@ export default function Brain() {
     load();
   }, [load]);
 
+  // Body loader.
   useEffect(() => {
     if (selected === null) {
       setBody(null);
@@ -51,61 +78,81 @@ export default function Brain() {
     }
     setBodyLoading(true);
     fetchBrainNote(selected)
-      .then((r) => {
-        setBody(r.body);
-      })
+      .then((r) => setBody(r.body))
       .catch((e: unknown) => {
         setBody(
-          `# ${selected}\n\n> Couldn't load — ${e instanceof Error ? e.message : String(e)}`,
+          `# ${selected}\n\n> Couldn't load — ${
+            e instanceof Error ? e.message : String(e)
+          }`,
         );
       })
       .finally(() => setBodyLoading(false));
   }, [selected]);
 
-  // Group notes by folder for the tree. Empty-folder notes (root level)
-  // get grouped under "".
-  const groupedByFolder = useMemo(() => {
-    const out = new Map<string, BrainNote[]>();
-    for (const n of notes) {
-      const key = n.folder;
-      if (!out.has(key)) out.set(key, []);
-      out.get(key)!.push(n);
+  // Backlinks loader — fires alongside the body so the rail is live
+  // by the time the reader finishes the first paragraph.
+  useEffect(() => {
+    if (selected === null) {
+      setBacklinks(null);
+      return;
     }
-    // Sort folders: root first, then alphabetical. "daily" folder is
-    // special — PILK writes daily journal entries there, and seeing it
-    // bubble up is what makes the vault feel alive.
-    const sorted = Array.from(out.entries()).sort((a, b) => {
-      if (a[0] === "") return -1;
-      if (b[0] === "") return 1;
-      if (a[0] === "daily") return -1;
-      if (b[0] === "daily") return 1;
-      return a[0].localeCompare(b[0]);
-    });
-    return sorted;
-  }, [notes]);
+    let cancelled = false;
+    fetchBrainBacklinks(selected)
+      .then((r) => {
+        if (!cancelled) setBacklinks(r.links);
+      })
+      .catch(() => {
+        if (!cancelled) setBacklinks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
 
-  const runSearch = async () => {
+  // Debounced live search — 200 ms after the last keystroke, refresh
+  // results. Short queries (< 2 chars) clear the result list rather
+  // than firing an empty search.
+  const debounceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (debounceRef.current !== null) {
+      window.clearTimeout(debounceRef.current);
+    }
     const query = q.trim();
     if (query.length < 2) {
       setHits(null);
+      setSearching(false);
       return;
     }
     setSearching(true);
-    try {
-      const r = await searchBrain(query);
-      setHits(r.hits);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setHits([]);
-    } finally {
-      setSearching(false);
-    }
-  };
+    debounceRef.current = window.setTimeout(async () => {
+      try {
+        const r = await searchBrain(query);
+        setHits(r.hits);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+        setHits([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 200);
+    return () => {
+      if (debounceRef.current !== null) {
+        window.clearTimeout(debounceRef.current);
+      }
+    };
+  }, [q]);
+
+  const folderTree = useMemo(() => buildFolderTree(notes), [notes]);
 
   const clearSearch = () => {
     setQ("");
     setHits(null);
   };
+
+  const openNote = useCallback((path: string) => {
+    setSelected(path);
+    setTab("list");
+  }, []);
 
   return (
     <div className="brain-page">
@@ -114,8 +161,7 @@ export default function Brain() {
           <h1>Brain</h1>
           <p>
             PILK's long-term notes. Writes happen inside the agent
-            loop; this view is read-only. Open the same folder in
-            Obsidian for graph + backlinks.
+            loop; this view is read-only.
           </p>
         </div>
         <div className="brain-head-meta">
@@ -126,26 +172,42 @@ export default function Brain() {
         </div>
       </header>
 
+      <div className="brain-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "list"}
+          className={
+            tab === "list" ? "brain-tab brain-tab--active" : "brain-tab"
+          }
+          onClick={() => setTab("list")}
+        >
+          List
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "graph"}
+          className={
+            tab === "graph" ? "brain-tab brain-tab--active" : "brain-tab"
+          }
+          onClick={() => setTab("graph")}
+        >
+          Graph
+        </button>
+      </div>
+
       <div className="brain-search-row">
         <input
           type="search"
           className="brain-search-input"
-          placeholder="Search across every note…"
+          placeholder="Search across every note (type to filter)…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") void runSearch();
             if (e.key === "Escape") clearSearch();
           }}
         />
-        <button
-          type="button"
-          className="btn btn--primary"
-          onClick={() => void runSearch()}
-          disabled={searching || q.trim().length < 2}
-        >
-          {searching ? "Searching…" : "Search"}
-        </button>
         {hits !== null && (
           <button
             type="button"
@@ -155,92 +217,276 @@ export default function Brain() {
             Clear
           </button>
         )}
+        {searching && (
+          <span className="brain-search-status">Searching…</span>
+        )}
       </div>
 
       {err && <div className="brain-error">{err}</div>}
 
-      <div className="brain-body">
-        <aside className="brain-tree">
-          {loading ? (
-            <div className="brain-empty">Reading vault…</div>
-          ) : hits !== null ? (
-            <SearchResults
-              hits={hits}
-              onOpen={(p) => {
-                setSelected(p);
-                clearSearch();
-              }}
-            />
-          ) : notes.length === 0 ? (
-            <div className="brain-empty">
-              Vault's empty. Once PILK starts writing notes (daily
-              journal entries, long-form workspace knowledge), they
-              show up here.
-            </div>
-          ) : (
-            groupedByFolder.map(([folder, rows]) => (
-              <div className="brain-folder" key={folder || "__root__"}>
-                <div className="brain-folder-head">
-                  {folder === "" ? "(root)" : folder}
-                  <span className="brain-folder-count">{rows.length}</span>
-                </div>
-                <ul className="brain-folder-list">
-                  {rows.map((n) => (
-                    <li key={n.path}>
-                      <button
-                        type="button"
-                        className={
-                          selected === n.path
-                            ? "brain-note-btn brain-note-btn--active"
-                            : "brain-note-btn"
-                        }
-                        onClick={() => setSelected(n.path)}
-                      >
-                        <span className="brain-note-stem">{n.stem}</span>
-                        <span className="brain-note-meta">
-                          {n.mtime ? relativeTime(n.mtime) : ""}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+      {tab === "graph" ? (
+        <div className="brain-graph-wrap">
+          <BrainGraph
+            enabled={tab === "graph"}
+            selected={selected}
+            onSelect={openNote}
+          />
+        </div>
+      ) : (
+        <div className="brain-body">
+          <aside className="brain-tree">
+            {loading ? (
+              <div className="brain-empty">Reading vault…</div>
+            ) : hits !== null ? (
+              <SearchResults hits={hits} onOpen={(p) => openNote(p)} />
+            ) : notes.length === 0 ? (
+              <div className="brain-empty">
+                Vault's empty. Once PILK starts writing notes (daily
+                journal entries, long-form workspace knowledge), they
+                show up here.
               </div>
-            ))
-          )}
-        </aside>
-
-        <main className="brain-view">
-          {selected === null ? (
-            <div className="brain-empty">Select a note from the list.</div>
-          ) : bodyLoading ? (
-            <div className="brain-empty">Loading {selected}…</div>
-          ) : body === null ? (
-            <div className="brain-empty">Couldn't load {selected}.</div>
-          ) : (
-            <article className="brain-note">
-              <div className="brain-note-path">{selected}</div>
-              <MarkdownBody
-                source={body}
-                onWikilinkClick={(target) => {
-                  // Wikilinks open the matching note if we have one.
-                  // Fall back to searching for the target otherwise.
-                  const hit = notes.find(
-                    (n) =>
-                      n.stem.toLowerCase() === target.toLowerCase() ||
-                      n.path.toLowerCase() === `${target.toLowerCase()}.md`,
-                  );
-                  if (hit) {
-                    setSelected(hit.path);
-                  } else {
-                    setQ(target);
-                    void runSearch();
-                  }
-                }}
+            ) : (
+              <FolderTree
+                tree={folderTree}
+                expanded={expanded}
+                toggleFolder={(path) =>
+                  setExpanded((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(path)) next.delete(path);
+                    else next.add(path);
+                    return next;
+                  })
+                }
+                selected={selected}
+                onSelect={openNote}
               />
-            </article>
-          )}
-        </main>
-      </div>
+            )}
+          </aside>
+
+          <main className="brain-view">
+            {selected === null ? (
+              <div className="brain-empty">Select a note from the list.</div>
+            ) : bodyLoading ? (
+              <div className="brain-empty">Loading {selected}…</div>
+            ) : body === null ? (
+              <div className="brain-empty">Couldn't load {selected}.</div>
+            ) : (
+              <article className="brain-note">
+                <div className="brain-note-path">{selected}</div>
+                <MarkdownBody
+                  source={body}
+                  onWikilinkClick={(target) => {
+                    const hit = notes.find(
+                      (n) =>
+                        n.stem.toLowerCase() === target.toLowerCase() ||
+                        n.path.toLowerCase() ===
+                          `${target.toLowerCase()}.md`,
+                    );
+                    if (hit) openNote(hit.path);
+                    else setQ(target);
+                  }}
+                />
+              </article>
+            )}
+          </main>
+
+          <aside className="brain-backlinks">
+            <div className="brain-backlinks-head">Backlinks</div>
+            {selected === null ? (
+              <div className="brain-backlinks-empty">
+                Open a note to see who links to it.
+              </div>
+            ) : backlinks === null ? (
+              <div className="brain-backlinks-empty">Checking…</div>
+            ) : backlinks.length === 0 ? (
+              <div className="brain-backlinks-empty">
+                Nothing links here yet.
+              </div>
+            ) : (
+              <ul className="brain-backlinks-list">
+                {backlinks.map((b, i) => (
+                  <li key={`${b.path}-${b.line}-${i}`}>
+                    <button
+                      type="button"
+                      className="brain-backlink-btn"
+                      onClick={() => openNote(b.path)}
+                    >
+                      <span className="brain-backlink-path">{b.path}</span>
+                      <span className="brain-backlink-snippet">
+                        {b.snippet}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </aside>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Folder tree ────────────────────────────────────────────────────
+
+
+interface TreeNode {
+  name: string;           // display segment (e.g. "docs")
+  path: string;           // full folder path (e.g. "ingested/docs")
+  children: TreeNode[];
+  notes: BrainNote[];
+}
+
+function buildFolderTree(notes: BrainNote[]): TreeNode {
+  const root: TreeNode = { name: "", path: "", children: [], notes: [] };
+  for (const n of notes) {
+    if (!n.folder) {
+      root.notes.push(n);
+      continue;
+    }
+    const parts = n.folder.split("/");
+    let cursor = root;
+    let acc = "";
+    for (const part of parts) {
+      acc = acc ? `${acc}/${part}` : part;
+      let child = cursor.children.find((c) => c.name === part);
+      if (!child) {
+        child = { name: part, path: acc, children: [], notes: [] };
+        cursor.children.push(child);
+      }
+      cursor = child;
+    }
+    cursor.notes.push(n);
+  }
+  // Sort each level: daily first, then alphabetical folders, then
+  // individual notes alphabetically.
+  const sort = (node: TreeNode) => {
+    node.children.sort((a, b) => {
+      if (a.name === "daily") return -1;
+      if (b.name === "daily") return 1;
+      return a.name.localeCompare(b.name);
+    });
+    node.notes.sort((a, b) => a.stem.localeCompare(b.stem));
+    node.children.forEach(sort);
+  };
+  sort(root);
+  return root;
+}
+
+function countDescendants(node: TreeNode): number {
+  return (
+    node.notes.length +
+    node.children.reduce((acc, c) => acc + countDescendants(c), 0)
+  );
+}
+
+function FolderTree({
+  tree,
+  expanded,
+  toggleFolder,
+  selected,
+  onSelect,
+}: {
+  tree: TreeNode;
+  expanded: Set<string>;
+  toggleFolder: (path: string) => void;
+  selected: string | null;
+  onSelect: (path: string) => void;
+}) {
+  return (
+    <div className="brain-tree-inner">
+      {tree.notes.length > 0 && (
+        <FolderBlock
+          node={{ name: "(root)", path: "", children: [], notes: tree.notes }}
+          expanded={expanded}
+          toggleFolder={toggleFolder}
+          selected={selected}
+          onSelect={onSelect}
+          depth={0}
+        />
+      )}
+      {tree.children.map((child) => (
+        <FolderBlock
+          key={child.path}
+          node={child}
+          expanded={expanded}
+          toggleFolder={toggleFolder}
+          selected={selected}
+          onSelect={onSelect}
+          depth={0}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FolderBlock({
+  node,
+  expanded,
+  toggleFolder,
+  selected,
+  onSelect,
+  depth,
+}: {
+  node: TreeNode;
+  expanded: Set<string>;
+  toggleFolder: (path: string) => void;
+  selected: string | null;
+  onSelect: (path: string) => void;
+  depth: number;
+}) {
+  const isOpen = expanded.has(node.path);
+  const count = countDescendants(node);
+  return (
+    <div
+      className="brain-folder"
+      style={{ paddingLeft: `${depth * 8}px` }}
+    >
+      <button
+        type="button"
+        className="brain-folder-head brain-folder-head--btn"
+        onClick={() => toggleFolder(node.path)}
+        aria-expanded={isOpen}
+      >
+        <span className="brain-folder-chev">{isOpen ? "▾" : "▸"}</span>
+        <span className="brain-folder-name">{node.name || "(root)"}</span>
+        <span className="brain-folder-count">{count}</span>
+      </button>
+      {isOpen && (
+        <>
+          <ul className="brain-folder-list">
+            {node.notes.map((n) => (
+              <li key={n.path}>
+                <button
+                  type="button"
+                  className={
+                    selected === n.path
+                      ? "brain-note-btn brain-note-btn--active"
+                      : "brain-note-btn"
+                  }
+                  onClick={() => onSelect(n.path)}
+                >
+                  <span className="brain-note-stem">{n.stem}</span>
+                  <span className="brain-note-meta">
+                    {n.mtime ? relativeTime(n.mtime) : ""}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          {node.children.map((child) => (
+            <FolderBlock
+              key={child.path}
+              node={child}
+              expanded={expanded}
+              toggleFolder={toggleFolder}
+              selected={selected}
+              onSelect={onSelect}
+              depth={depth + 1}
+            />
+          ))}
+        </>
+      )}
     </div>
   );
 }
@@ -260,7 +506,7 @@ function SearchResults({
   return (
     <div className="brain-search-results">
       <div className="brain-folder-head">
-        Matches
+        <span className="brain-folder-name">Matches</span>
         <span className="brain-folder-count">{hits.length}</span>
       </div>
       <ul className="brain-folder-list">
@@ -282,19 +528,12 @@ function SearchResults({
   );
 }
 
+// ── Markdown renderer (unchanged from v1) ──────────────────────────
+
+
 /** Tiny markdown renderer for the vault view. Obsidian notes are
  * mostly plain text + headings + lists + wikilinks, so we ship a
- * minimal parser instead of pulling in react-markdown. Handles:
- *  - # / ## / ### headings
- *  - * / - bullet lists
- *  - 1. numbered lists
- *  - **bold**, *italic*, `inline code`
- *  - ```fenced code blocks```
- *  - [link](url)
- *  - [[wikilink]] (dispatches to onWikilinkClick)
- *  - blank-line paragraphs
- * Anything else renders as plain text — which is the graceful
- * fallback the operator would want for an unknown construct. */
+ * minimal parser instead of pulling in react-markdown. */
 function MarkdownBody({
   source,
   onWikilinkClick,
@@ -369,7 +608,6 @@ function parseMarkdown(src: string): Block[] {
       blocks.push({ kind: "ol", items });
       continue;
     }
-    // Paragraph — consume until blank line.
     const paraLines: string[] = [line];
     i++;
     while (
@@ -429,9 +667,6 @@ function renderBlock(
   }
 }
 
-/** Split inline text into chunks: [[wikilink]], [link](url), **bold**,
- * *italic*, `code`, plain. Conservative — any unmatched syntax falls
- * back to literal characters so odd notes never crash the renderer. */
 function renderInline(
   text: string,
   onWikilink: (target: string) => void,
@@ -447,15 +682,18 @@ function renderInline(
       parts.push(text.slice(last, match.index));
     }
     if (match[1]) {
-      const target = match[2];
+      // Strip any `|display` suffix from the wikilink target so
+      // the button label matches Obsidian's visible text.
+      const raw = match[2];
+      const [target, display] = raw.split("|", 2);
       parts.push(
         <button
           key={key++}
           type="button"
           className="brain-wikilink"
-          onClick={() => onWikilink(target)}
+          onClick={() => onWikilink(target.trim())}
         >
-          {target}
+          {(display ?? target).trim()}
         </button>,
       );
     } else if (match[3]) {
@@ -491,5 +729,5 @@ function relativeTime(iso: string): string {
   if (secs < 3600) return `${Math.round(secs / 60)}m`;
   if (secs < 86400) return `${Math.round(secs / 3600)}h`;
   if (secs < 86400 * 30) return `${Math.round(secs / 86400)}d`;
-  return iso.slice(0, 10); // fallback to date
+  return iso.slice(0, 10);
 }

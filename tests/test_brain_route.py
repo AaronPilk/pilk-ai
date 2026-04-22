@@ -168,3 +168,136 @@ async def test_search_503_when_vault_missing() -> None:
             _FakeRequest(None), q="anything", limit=50
         )
     assert exc.value.status_code == 503
+
+
+# ── graph ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_graph_emits_node_per_note(vault: Vault) -> None:
+    r = await brain_route.graph(_FakeRequest(vault))
+    node_ids = {n["id"] for n in r["nodes"]}
+    assert "daily/2026-04-20.md" in node_ids
+    assert "PILK architecture.md" in node_ids
+    # Nodes carry folder + size for the UI's cluster colouring.
+    by_id = {n["id"]: n for n in r["nodes"]}
+    assert by_id["daily/2026-04-20.md"]["folder"] == "daily"
+    assert by_id["PILK architecture.md"]["size"] > 0
+
+
+@pytest.mark.asyncio
+async def test_graph_resolves_wikilink_by_stem(vault: Vault) -> None:
+    r = await brain_route.graph(_FakeRequest(vault))
+    edges = {(e["source"], e["target"]) for e in r["edges"]}
+    # The daily note links to [[PILK architecture]] — the resolver
+    # matches the stem and produces an edge.
+    assert (
+        "daily/2026-04-20.md",
+        "PILK architecture.md",
+    ) in edges
+
+
+@pytest.mark.asyncio
+async def test_graph_drops_unresolvable_links(tmp_path: Path) -> None:
+    v = Vault(tmp_path)
+    v.ensure_initialized()
+    (tmp_path / "only.md").write_text(
+        "# only\n\nTalks about [[ghost]] and [[another-ghost]].\n",
+        encoding="utf-8",
+    )
+    r = await brain_route.graph(_FakeRequest(v))
+    # One node (plus whatever ensure_initialized seeded); no edges.
+    assert any(n["id"] == "only.md" for n in r["nodes"])
+    assert all(e["source"] != "only.md" for e in r["edges"])
+
+
+@pytest.mark.asyncio
+async def test_graph_resolves_folder_prefixed_links(tmp_path: Path) -> None:
+    v = Vault(tmp_path)
+    v.ensure_initialized()
+    (tmp_path / "alpha").mkdir()
+    (tmp_path / "alpha" / "a.md").write_text("# a\n\nSee [[beta/b]].\n")
+    (tmp_path / "beta").mkdir()
+    (tmp_path / "beta" / "b.md").write_text("# b\n")
+    r = await brain_route.graph(_FakeRequest(v))
+    edges = {(e["source"], e["target"]) for e in r["edges"]}
+    assert ("alpha/a.md", "beta/b.md") in edges
+
+
+@pytest.mark.asyncio
+async def test_graph_dedupes_repeated_wikilinks(tmp_path: Path) -> None:
+    v = Vault(tmp_path)
+    v.ensure_initialized()
+    (tmp_path / "hub.md").write_text(
+        "# hub\n\n[[spoke]] [[spoke]] [[spoke|display]]\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "spoke.md").write_text("# spoke\n")
+    r = await brain_route.graph(_FakeRequest(v))
+    count = sum(
+        1
+        for e in r["edges"]
+        if e["source"] == "hub.md" and e["target"] == "spoke.md"
+    )
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_graph_ignores_self_links(tmp_path: Path) -> None:
+    v = Vault(tmp_path)
+    v.ensure_initialized()
+    (tmp_path / "lonely.md").write_text(
+        "# lonely\n\nRefers to [[lonely]] for no good reason.\n",
+        encoding="utf-8",
+    )
+    r = await brain_route.graph(_FakeRequest(v))
+    assert not any(
+        e["source"] == e["target"] for e in r["edges"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_graph_503_when_vault_missing() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await brain_route.graph(_FakeRequest(None))
+    assert exc.value.status_code == 503
+
+
+# ── backlinks ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_backlinks_returns_linking_notes(vault: Vault) -> None:
+    r = await brain_route.backlinks(
+        _FakeRequest(vault), path="PILK architecture"
+    )
+    assert r["target"] == "PILK architecture.md"
+    paths = [link["path"] for link in r["links"]]
+    assert "daily/2026-04-20.md" in paths
+
+
+@pytest.mark.asyncio
+async def test_backlinks_empty_when_nothing_links(tmp_path: Path) -> None:
+    v = Vault(tmp_path)
+    v.ensure_initialized()
+    (tmp_path / "solo.md").write_text("# solo\n\nStanding alone.\n")
+    r = await brain_route.backlinks(_FakeRequest(v), path="solo.md")
+    assert r["links"] == []
+
+
+@pytest.mark.asyncio
+async def test_backlinks_404_when_target_missing(vault: Vault) -> None:
+    with pytest.raises(HTTPException) as exc:
+        await brain_route.backlinks(
+            _FakeRequest(vault), path="no-such-note.md"
+        )
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_backlinks_503_when_vault_missing() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await brain_route.backlinks(
+            _FakeRequest(None), path="anything.md"
+        )
+    assert exc.value.status_code == 503
