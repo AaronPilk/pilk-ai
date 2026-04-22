@@ -268,9 +268,17 @@ async def backlinks(
     ``path``. Powers the right-hand panel on the Brain page."""
     vault = _vault(request)
     try:
-        target_rel = vault.resolve(path).relative_to(vault.root).as_posix()
+        resolved = vault.resolve(path)
     except (ValueError, FileNotFoundError) as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    if not resolved.exists():
+        # vault.resolve only validates path safety, not existence —
+        # backlinks on a nonexistent target is an API error, not an
+        # empty-result query. 404 matches the rest of the brain route.
+        raise HTTPException(
+            status_code=404, detail=f"note not found: {path}",
+        )
+    target_rel = resolved.relative_to(vault.root).as_posix()
 
     by_path, by_stem = _build_note_index(vault)
     try:
