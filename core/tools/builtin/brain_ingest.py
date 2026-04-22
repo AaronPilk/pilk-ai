@@ -52,6 +52,20 @@ from core.integrations.ingesters.claude_code import (
     render_project_note,
     scan_projects,
 )
+from core.integrations.ingesters.docs import (
+    DEFAULT_EXTENSIONS as DOCS_DEFAULT_EXTENSIONS,
+)
+from core.integrations.ingesters.docs import (
+    DEFAULT_MAX_FILES as DOCS_DEFAULT_MAX_FILES,
+)
+from core.integrations.ingesters.docs import (
+    HARD_MAX_FILES as DOCS_HARD_MAX_FILES,
+)
+from core.integrations.ingesters.docs import (
+    DocsIngestError,
+    render_doc_note,
+    scan_docs,
+)
 from core.integrations.ingesters.gmail import (
     DEFAULT_MAX_THREADS,
     DEFAULT_QUERY,
@@ -440,6 +454,153 @@ def _load_user_gmail_creds(
     return credentials_from_blob(blob), account
 
 
+def _docs_ingest_tool(vault: Vault) -> Tool:
+    """Walk a home-scoped folder of plain-text docs and stage each as
+    a markdown note under ``ingested/docs/``. Original folder
+    structure is preserved so the Obsidian graph reflects the source
+    layout.
+
+    Gated at the daemon level by ``COMPUTER_CONTROL_ENABLED`` — the
+    ingester itself refuses any path outside ``$HOME`` regardless of
+    the kill-switch, as a defence-in-depth layer.
+    """
+
+    async def _handler(args: dict, _ctx: ToolContext) -> ToolOutcome:
+        raw_source = str(args.get("source_dir") or "").strip()
+        if not raw_source:
+            return ToolOutcome(
+                content=(
+                    "brain_ingest_docs requires 'source_dir' — a folder "
+                    "path under your home directory."
+                ),
+                is_error=True,
+            )
+        try:
+            max_files = int(args.get("max_files") or DOCS_DEFAULT_MAX_FILES)
+        except (TypeError, ValueError):
+            max_files = DOCS_DEFAULT_MAX_FILES
+        max_files = max(1, min(max_files, DOCS_HARD_MAX_FILES))
+        recursive = bool(args.get("recursive", True))
+        exts_raw = args.get("extensions")
+        if isinstance(exts_raw, list) and exts_raw:
+            extensions = tuple(
+                e if e.startswith(".") else f".{e}"
+                for e in (str(x).lower() for x in exts_raw)
+            )
+        else:
+            extensions = DOCS_DEFAULT_EXTENSIONS
+
+        try:
+            scan = scan_docs(
+                Path(raw_source),
+                extensions=extensions,
+                max_files=max_files,
+                recursive=recursive,
+            )
+        except DocsIngestError as e:
+            return ToolOutcome(content=str(e), is_error=True)
+        except OSError as e:
+            return ToolOutcome(
+                content=f"brain_ingest_docs failed to walk source: {e}",
+                is_error=True,
+            )
+
+        written: list[dict] = []
+        errors: list[str] = []
+        for doc in scan.found:
+            note = render_doc_note(doc, scan_root=scan.root)
+            try:
+                rel = _write_note(vault, note.path, note.body)
+            except (OSError, ValueError) as e:
+                errors.append(f"{doc.rel_path.as_posix()}: {e}")
+                continue
+            written.append(
+                {
+                    "path": rel,
+                    "source": str(doc.abs_path),
+                    "title": note.title,
+                    "size": doc.size,
+                }
+            )
+
+        summary = (
+            f"Ingested {len(written)}/{len(scan.found)} doc(s) from "
+            f"`{scan.root}` into `ingested/docs/`. Skipped "
+            f"{len(scan.skipped)} non-matching / oversized / "
+            "undecodable file(s)."
+        )
+        if errors:
+            summary += f" {len(errors)} write failure(s): {errors[:3]}"
+        return ToolOutcome(
+            content=summary,
+            data={
+                "source_dir": str(scan.root),
+                "written": written,
+                "skipped_count": len(scan.skipped),
+                "errors": errors,
+            },
+        )
+
+    return Tool(
+        name="brain_ingest_docs",
+        description=(
+            "Walk an operator-chosen folder of plain-text documents "
+            "(`.md`, `.txt`, `.rtf`, `.html`, `.log`, `.csv`, `.json`, "
+            "`.yaml`, …) and stage every readable file as a markdown "
+            "note under `ingested/docs/`. Preserves the source folder "
+            "layout so the Obsidian graph clusters by origin. "
+            "`source_dir` must live under the operator's home "
+            "directory; binary / oversized / non-matching files are "
+            "skipped silently. Gated by COMPUTER_CONTROL_ENABLED at "
+            "the daemon level."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "source_dir": {
+                    "type": "string",
+                    "description": (
+                        "Absolute or ~-relative path under your home "
+                        "directory (e.g. '~/Documents/projects')."
+                    ),
+                },
+                "recursive": {
+                    "type": "boolean",
+                    "description": (
+                        "Walk subdirectories (default true). Set false "
+                        "to ingest only the top-level files."
+                    ),
+                },
+                "max_files": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": DOCS_HARD_MAX_FILES,
+                    "description": (
+                        f"Cap on ingested files (default "
+                        f"{DOCS_DEFAULT_MAX_FILES}, max "
+                        f"{DOCS_HARD_MAX_FILES})."
+                    ),
+                },
+                "extensions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Override allowed suffixes. Defaults to the "
+                        "standard text-native set."
+                    ),
+                },
+            },
+            "required": ["source_dir"],
+        },
+        # WRITE_LOCAL because the net effect is a vault write; the
+        # source read is bounded to the operator's own $HOME and
+        # the daemon-level COMPUTER_CONTROL kill-switch still
+        # applies to the underlying computer_* surface if present.
+        risk=RiskClass.WRITE_LOCAL,
+        handler=_handler,
+    )
+
+
 def make_brain_ingest_tools(
     vault: Vault, accounts: AccountsStore | None = None,
 ) -> list[Tool]:
@@ -452,6 +613,7 @@ def make_brain_ingest_tools(
     tools: list[Tool] = [
         _claude_code_ingest_tool(vault),
         _chatgpt_ingest_tool(vault),
+        _docs_ingest_tool(vault),
     ]
     tools.append(_gmail_ingest_tool(vault, accounts))
     return tools
