@@ -163,62 +163,21 @@ export function BrainGraph({
     return () => window.clearTimeout(t);
   }, [viewport.w, viewport.h, resetView]);
 
-  // Gentle center-seeking force — without this, a mostly-disconnected
-  // graph (freshly-ingested docs have no wiki-links between them)
-  // drifts out of view because d3-force's default has no gravity.
+  // While the simulation is running (first 4-6 seconds for a big
+  // graph), re-fit every second so the nodes never drift past the
+  // viewport edge. Stops firing once we cross 6 s, matching the
+  // cooldown window below. Keeps the operator from having to hit
+  // "Reset view" on the very first paint.
   useEffect(() => {
-    const fg = fgRef.current;
-    if (!fg || !nodes || nodes.length === 0) return;
-    // Charge defaults at -30. Boost repulsion so clusters separate
-    // cleanly; the center force below keeps the whole graph anchored.
-    const charge = fg.d3Force("charge");
-    if (charge) {
-      (charge as unknown as { strength: (v: number) => unknown }).strength(-40);
-    }
-    // Re-seat every node toward (0,0) with a soft pull. Strength
-    // scales gently with node count so a 50-node graph isn't cramped
-    // and a 5000-node graph doesn't explode.
-    fg.d3Force(
-      "center-pull-x",
-      (() => {
-        let strength = 0.05;
-        const force = (alpha: number) => {
-          for (const n of (nodes as unknown as Array<{ x?: number; vx?: number }>) ?? []) {
-            if (typeof n.x === "number" && typeof n.vx === "number") {
-              n.vx -= n.x * strength * alpha;
-            }
-          }
-        };
-        (force as unknown as { initialize: (n: unknown) => void }).initialize = () => {};
-        (force as unknown as { strength: (v: number) => unknown }).strength = (v: number) => {
-          strength = v;
-          return force;
-        };
-        return force;
-      })(),
-    );
-    fg.d3Force(
-      "center-pull-y",
-      (() => {
-        let strength = 0.05;
-        const force = (alpha: number) => {
-          for (const n of (nodes as unknown as Array<{ y?: number; vy?: number }>) ?? []) {
-            if (typeof n.y === "number" && typeof n.vy === "number") {
-              n.vy -= n.y * strength * alpha;
-            }
-          }
-        };
-        (force as unknown as { initialize: (n: unknown) => void }).initialize = () => {};
-        (force as unknown as { strength: (v: number) => unknown }).strength = (v: number) => {
-          strength = v;
-          return force;
-        };
-        return force;
-      })(),
-    );
-    // Kick the simulation so the new forces apply.
-    fg.d3ReheatSimulation();
-  }, [nodes]);
+    if (!nodes || nodes.length === 0) return;
+    let ticks = 0;
+    const interval = window.setInterval(() => {
+      ticks += 1;
+      resetView();
+      if (ticks >= 6) window.clearInterval(interval);
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [nodes, resetView]);
 
   return (
     <div ref={containerRef} className="brain-graph-canvas">
