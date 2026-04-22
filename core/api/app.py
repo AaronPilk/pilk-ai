@@ -1072,6 +1072,7 @@ async def lifespan(app: FastAPI):
                 hub=hub,
                 state_path=home / "state" / "telegram-bridge.json",
                 callback_handler=telegram_approvals_bridge.handle_callback,
+                vault=brain,
             )
             await telegram_bridge.start()
             log.info(

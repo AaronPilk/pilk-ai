@@ -56,11 +56,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from collections import deque
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from core.api.hub import Hub
+from core.brain import Vault
 from core.integrations.telegram import (
     TELEGRAM_MESSAGE_MAX_CHARS,
     TelegramClient,
@@ -91,6 +94,25 @@ RETRY_BACKOFF_S = 5.0
 # strongly suggests an orchestrator-side bug or a runaway tool loop
 # — we'd rather surface that than hang the bridge indefinitely.
 ORCHESTRATOR_WAIT_TIMEOUT_S = 600.0
+# When a message arrives, wait this long for follow-ups before
+# dispatching. Rapid-fire "add to my previous text" messages merge
+# into one turn so PILK sees them as a single intent instead of two
+# disjointed conversations.
+DEFAULT_COALESCE_WINDOW_S = 2.5
+# Max orchestrator-busy wall-clock we'll wait before giving up on a
+# queued batch. If something else is holding the lock for longer than
+# this, the operator is told explicitly so they know it wasn't lost.
+DEFAULT_BUSY_RETRY_BUDGET_S = 45.0
+# Rolling history window. Each "turn" is two messages (user + PILK),
+# so 12 turns = 24 messages — enough context for a coherent thread
+# without blowing the token budget on every run.
+HISTORY_MAX_TURNS = 12
+# Per-turn character clamp when composing the history preamble. Keeps
+# the per-message prompt bounded even if the operator sent a 50KB
+# paste earlier in the thread — full text still lands in the vault.
+HISTORY_TURN_CHAR_CAP = 2000
+# Where auto-archived Telegram exchanges land inside the vault.
+CHAT_LOG_FOLDER = "chats/telegram"
 
 
 class TelegramBridge:
@@ -109,6 +131,9 @@ class TelegramBridge:
         state_path: Path,
         longpoll_seconds: int = DEFAULT_LONGPOLL_S,
         callback_handler: CallbackHandler | None = None,
+        vault: Vault | None = None,
+        coalesce_window_s: float = DEFAULT_COALESCE_WINDOW_S,
+        busy_retry_budget_s: float = DEFAULT_BUSY_RETRY_BUDGET_S,
     ) -> None:
         self._cfg = config
         self._client = TelegramClient(
@@ -127,6 +152,26 @@ class TelegramBridge:
         # single long-poll loop instead of racing it with a second
         # ``getUpdates`` caller.
         self._callback_handler = callback_handler
+        # Optional brain vault. When set, every (user, PILK) exchange
+        # is appended to the daily chat log so the operator has a
+        # searchable, grep-able record without having to say
+        # "remember this" every turn.
+        self._vault = vault
+        self._coalesce_window_s = float(coalesce_window_s)
+        self._busy_retry_budget_s = float(busy_retry_budget_s)
+        # Rolling conversation history, passed into every run() as a
+        # preamble so PILK keeps context across turns instead of
+        # re-greeting the operator mid-thread. Size is 2x turns since
+        # each turn is a (user, assistant) pair.
+        self._history: deque[tuple[str, str]] = deque(
+            maxlen=HISTORY_MAX_TURNS * 2
+        )
+        # Inbound message queue drained by a single processor task.
+        # Serializing here means rapid-fire messages can be coalesced
+        # into one turn and we never accidentally call
+        # ``orchestrator.run`` twice concurrently.
+        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self._processor_task: asyncio.Task | None = None
 
     # ── lifecycle ────────────────────────────────────────────────
 
@@ -136,6 +181,9 @@ class TelegramBridge:
         self._offset = _read_offset(self._state_path)
         self._stop.clear()
         self._task = asyncio.create_task(self._run(), name="telegram-bridge")
+        self._processor_task = asyncio.create_task(
+            self._process_queue(), name="telegram-bridge-processor"
+        )
         log.info(
             "telegram_bridge_started",
             chat_id=self._cfg.chat_id,
@@ -145,19 +193,25 @@ class TelegramBridge:
     async def stop(self) -> None:
         self._stop.set()
         task = self._task
+        processor = self._processor_task
         self._task = None
-        if task is None:
-            return
-        # A long-poll in flight will return within ``longpoll`` seconds
-        # on its own; we don't cancel aggressively because cancellation
-        # mid-HTTP leaves the client socket in a weird state. Add a
-        # generous wall-clock bound so shutdown can't hang forever.
-        try:
-            await asyncio.wait_for(task, timeout=self._longpoll + 5)
-        except TimeoutError:
-            task.cancel()
+        self._processor_task = None
+        if task is not None:
+            # A long-poll in flight will return within ``longpoll``
+            # seconds on its own; we don't cancel aggressively because
+            # cancellation mid-HTTP leaves the client socket in a
+            # weird state. Add a generous wall-clock bound so shutdown
+            # can't hang forever.
+            try:
+                await asyncio.wait_for(task, timeout=self._longpoll + 5)
+            except TimeoutError:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+        if processor is not None:
+            processor.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
+                await processor
         log.info("telegram_bridge_stopped")
 
     # ── main loop ───────────────────────────────────────────────
@@ -244,57 +298,166 @@ class TelegramBridge:
                     "Send me a message and I'll reply.",
                 )
             return
-        await self._dispatch(text.strip())
+        # Queue for the processor; it handles coalescing + serialization.
+        await self._queue.put(text.strip())
+
+    async def _process_queue(self) -> None:
+        """Drain inbound messages one coalesced batch at a time.
+
+        A single processor task owns all orchestrator dispatches so
+        two messages can never race each other into ``run()``. After
+        pulling the first message off the queue, we wait up to
+        ``coalesce_window_s`` for follow-ups and merge them into one
+        turn — the "I want to add to that" flow the operator keeps
+        hitting.
+        """
+        loop = asyncio.get_running_loop()
+        while not self._stop.is_set():
+            try:
+                first = await self._queue.get()
+            except asyncio.CancelledError:
+                return
+
+            # Coalesce any follow-ups that arrive within the window.
+            parts = [first]
+            deadline = loop.time() + self._coalesce_window_s
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                try:
+                    more = await asyncio.wait_for(
+                        self._queue.get(), timeout=remaining
+                    )
+                except TimeoutError:
+                    break
+                parts.append(more)
+
+            merged = "\n\n".join(p for p in parts if p)
+            if not merged:
+                continue
+
+            try:
+                await self._dispatch(merged)
+            except Exception as e:  # pragma: no cover - defense-in-depth
+                log.exception(
+                    "telegram_bridge_processor_error", error=str(e)
+                )
 
     async def _dispatch(self, text: str) -> None:
-        """Run one message through the orchestrator and ship the reply
-        back over Telegram.
+        """Run one (possibly coalesced) message through the orchestrator
+        and ship the reply back over Telegram.
 
-        The orchestrator broadcasts ``chat.assistant`` synchronously
-        (all listeners are awaited inside ``Hub.broadcast``) before
-        ``run()`` returns, so we can capture the text with a one-shot
-        listener, await ``run()``, and then send the captured text.
+        Prepends a rolling conversation-history preamble to ``text`` so
+        PILK stays in-context across turns instead of re-greeting
+        mid-thread. Waits a bounded amount of time when the
+        orchestrator is busy rather than dropping the message.
         """
         captured: dict[str, Any] = {}
 
         async def listener(event_type: str, payload: dict[str, Any]) -> None:
             if event_type != "chat.assistant":
                 return
-            # First chat.assistant event wins — there is only one per
-            # run but the listener stays live after the first capture
-            # to be safe.
             if "text" in captured:
                 return
             captured["text"] = payload.get("text") or ""
 
+        prompt = _compose_prompt(list(self._history), text)
+
         self._hub.subscribe(listener)
         try:
-            try:
-                await asyncio.wait_for(
-                    self._orchestrator.run(text),
-                    timeout=ORCHESTRATOR_WAIT_TIMEOUT_S,
-                )
-            except OrchestratorBusyError:
+            ran = await self._run_with_busy_retry(prompt)
+            if ran is _BusyExhausted:
                 await self._safe_send(
-                    "PILK is working on another task right now. "
-                    "Send that again in a moment and I'll pick it up.",
+                    "PILK is still finishing something else — try "
+                    "again in a minute and I'll pick it up.",
                 )
                 return
-            except TimeoutError:
+            if ran is _Timeout:
                 await self._safe_send(
                     "That task ran past the Telegram reply window. "
                     "Check the dashboard for the final result.",
                 )
                 return
-            except Exception as e:
-                log.exception("telegram_bridge_run_failed", error=str(e))
-                await self._safe_send(f"Something went wrong: {e}")
+            if isinstance(ran, BaseException):
+                log.exception("telegram_bridge_run_failed", error=str(ran))
+                await self._safe_send(f"Something went wrong: {ran}")
                 return
         finally:
             self._hub.unsubscribe(listener)
 
         reply = captured.get("text") or "(no response)"
         await self._safe_send(reply)
+
+        # Only record the exchange once PILK actually replied — a
+        # busy-exhausted or timed-out dispatch shouldn't pollute
+        # history with a half-turn the model never saw.
+        self._history.append(("user", text))
+        self._history.append(("assistant", reply))
+        await self._persist_exchange(text, reply)
+
+    async def _run_with_busy_retry(self, prompt: str) -> Any:
+        """Call ``orchestrator.run`` with a bounded busy-retry loop.
+
+        Returns ``None`` on success, the sentinel ``_BusyExhausted``
+        when the retry budget is spent, ``_Timeout`` on
+        ``TimeoutError``, or the raised exception on any other failure
+        — the caller decides how to surface each to the operator.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._busy_retry_budget_s
+        backoff = 0.75
+        while True:
+            try:
+                await asyncio.wait_for(
+                    self._orchestrator.run(prompt),
+                    timeout=ORCHESTRATOR_WAIT_TIMEOUT_S,
+                )
+                return None
+            except OrchestratorBusyError:
+                if loop.time() >= deadline:
+                    return _BusyExhausted
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 1.5, 4.0)
+            except TimeoutError:
+                return _Timeout
+            except Exception as e:
+                return e
+
+    async def _persist_exchange(
+        self, user_text: str, assistant_text: str
+    ) -> None:
+        """Append one exchange to ``chats/telegram/YYYY-MM-DD.md``.
+
+        Silent-fail by design — a vault write error should never crash
+        the bridge or block the reply the operator is waiting on.
+        """
+        if self._vault is None:
+            return
+        now = datetime.now(UTC)
+        rel = f"{CHAT_LOG_FOLDER}/{now.strftime('%Y-%m-%d')}.md"
+        block = (
+            f"## {now.strftime('%H:%M UTC')}\n\n"
+            f"**Me:** {user_text}\n\n"
+            f"**PILK:** {assistant_text}\n"
+        )
+        try:
+            exists = True
+            try:
+                self._vault.read(rel)
+            except Exception:
+                exists = False
+            if exists:
+                await asyncio.to_thread(
+                    self._vault.write, rel, block, append=True
+                )
+            else:
+                header = f"# Telegram — {now.strftime('%Y-%m-%d')}\n\n"
+                await asyncio.to_thread(
+                    self._vault.write, rel, header + block
+                )
+        except Exception as e:
+            log.warning("telegram_bridge_chatlog_failed", error=str(e))
 
     async def _safe_send(self, text: str) -> None:
         # The client already truncates at TELEGRAM_MESSAGE_MAX_CHARS;
@@ -312,6 +475,45 @@ class TelegramBridge:
             )
         except Exception as e:
             log.warning("telegram_bridge_send_error", error=str(e))
+
+
+# ── sentinels used by ``_run_with_busy_retry`` ────────────────────
+
+
+class _BusyExhausted:
+    """Marker: the orchestrator stayed busy past the retry budget."""
+
+
+class _Timeout:
+    """Marker: the run blew through ``ORCHESTRATOR_WAIT_TIMEOUT_S``."""
+
+
+# ── prompt composition ────────────────────────────────────────────
+
+
+def _compose_prompt(
+    history: list[tuple[str, str]], current: str
+) -> str:
+    """Format ``history`` + ``current`` into a single prompt.
+
+    PILK's free-chat path doesn't take a history parameter, so we
+    stuff it into the user message itself. The format is plain enough
+    that the model reliably treats the preamble as context rather
+    than as instructions from the operator.
+    """
+    if not history:
+        return current
+    lines = ["[Conversation so far — rolling window]"]
+    for role, text in history:
+        label = "Me" if role == "user" else "PILK"
+        body = text or ""
+        if len(body) > HISTORY_TURN_CHAR_CAP:
+            body = body[:HISTORY_TURN_CHAR_CAP] + "… [truncated]"
+        lines.append(f"{label}: {body}")
+    lines.append("")
+    lines.append("[New message]")
+    lines.append(current)
+    return "\n".join(lines)
 
 
 # ── offset persistence ───────────────────────────────────────────
@@ -345,8 +547,13 @@ def _write_offset(path: Path, offset: int) -> None:
 
 
 __all__ = [
+    "CHAT_LOG_FOLDER",
+    "DEFAULT_BUSY_RETRY_BUDGET_S",
+    "DEFAULT_COALESCE_WINDOW_S",
     "DEFAULT_LONGPOLL_S",
     "DEFAULT_REQUEST_TIMEOUT_S",
+    "HISTORY_MAX_TURNS",
+    "HISTORY_TURN_CHAR_CAP",
     "ORCHESTRATOR_WAIT_TIMEOUT_S",
     "RETRY_BACKOFF_S",
     "TelegramBridge",

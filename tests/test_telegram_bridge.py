@@ -11,6 +11,7 @@ Stubs:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json as _json
 from collections.abc import Callable
 from pathlib import Path
@@ -19,10 +20,13 @@ import httpx
 import pytest
 
 from core.api.hub import Hub
+from core.brain import Vault
 from core.integrations.telegram import TelegramConfig
 from core.io.telegram_bridge import (
+    CHAT_LOG_FOLDER,
     DEFAULT_LONGPOLL_S,
     TelegramBridge,
+    _compose_prompt,
     _read_offset,
     _write_offset,
 )
@@ -94,6 +98,9 @@ def _bridge(
     tmp_path: Path,
     hub: Hub | None = None,
     chat_id: str = "999",
+    vault: Vault | None = None,
+    coalesce_window_s: float = 0.0,
+    busy_retry_budget_s: float = 0.0,
 ) -> tuple[TelegramBridge, Hub]:
     h = hub or Hub()
     b = TelegramBridge(
@@ -102,6 +109,9 @@ def _bridge(
         hub=h,
         state_path=tmp_path / "state" / "bridge.json",
         longpoll_seconds=DEFAULT_LONGPOLL_S,
+        vault=vault,
+        coalesce_window_s=coalesce_window_s,
+        busy_retry_budget_s=busy_retry_budget_s,
     )
     return b, h
 
@@ -154,6 +164,9 @@ async def test_dispatch_empty_reply_falls_back(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_busy_error_sends_retry_hint(tmp_path: Path) -> None:
+    """When the orchestrator stays busy past the retry budget, the
+    operator gets a clear 'try again' message instead of the call
+    being silently dropped."""
     sends: list[dict] = []
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -167,9 +180,13 @@ async def test_dispatch_busy_error_sends_retry_hint(tmp_path: Path) -> None:
     orch = _FakeOrchestrator(
         hub, raise_exc=OrchestratorBusyError("busy"),
     )
-    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub)
+    # busy_retry_budget_s=0 means one try then give up — keeps the
+    # test instant even though real prod retries for ~45s.
+    bridge, _ = _bridge(
+        orch, tmp_path=tmp_path, hub=hub, busy_retry_budget_s=0.0
+    )
     await bridge._dispatch("hey")
-    assert "another task" in sends[0]["text"].lower()
+    assert "still finishing" in sends[0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -270,14 +287,14 @@ async def test_handle_update_non_text_sends_gentle_reply(
 
 
 @pytest.mark.asyncio
-async def test_handle_update_text_message_dispatches(
+async def test_handle_update_text_message_enqueues(
     tmp_path: Path,
 ) -> None:
-    sends: list[dict] = []
+    """Inbound text messages are enqueued for the processor rather
+    than dispatched inline. Trimming still happens at the boundary so
+    downstream code never sees leading/trailing whitespace."""
 
-    def handler(req: httpx.Request) -> httpx.Response:
-        if str(req.url).endswith("/sendMessage"):
-            sends.append(_json.loads(req.content.decode()))
+    def handler(_req: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_ok({"message_id": 1}))
 
     _install_transport(handler)
@@ -291,9 +308,9 @@ async def test_handle_update_text_message_dispatches(
             "text": "  ingest gmail please  ",
         },
     })
-    # Whitespace trimmed; goal passed through verbatim.
-    assert orch.calls == ["ingest gmail please"]
-    assert sends[-1]["text"] == "kicked off"
+    assert orch.calls == []  # processor not running; still enqueued.
+    assert bridge._queue.qsize() == 1
+    assert bridge._queue.get_nowait() == "ingest gmail please"
 
 
 # ── offset persistence ──────────────────────────────────────────
@@ -362,21 +379,270 @@ async def test_run_loop_advances_offset_past_seen_updates(
     orch = _FakeOrchestrator(hub, reply_text="ok")
     bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub)
 
-    # Drive the loop and let the orchestrator fake trigger stop after
-    # the second message has been processed. That guarantees the loop
-    # finishes the in-flight batch and exits cleanly — we just want
-    # to verify offset advances across a multi-update batch.
-    original_run = orch.run
+    # Stop the loop as soon as it hands the second update to
+    # _handle_update — the offset must have been written by then.
+    original_handle = bridge._handle_update
 
-    async def run_and_stop_after_second(goal: str) -> None:
-        await original_run(goal)
-        if goal == "second":
+    async def handle_and_stop_after_second(upd):
+        await original_handle(upd)
+        if (upd.get("message") or {}).get("text") == "second":
             bridge._stop.set()
 
-    orch.run = run_and_stop_after_second  # type: ignore[method-assign]
+    bridge._handle_update = (  # type: ignore[method-assign]
+        handle_and_stop_after_second
+    )
     await bridge._run()
 
-    assert orch.calls == ["first", "second"]
+    # Messages land on the queue (the processor runs separately via
+    # start()). The loop's contract is just "advance offset on every
+    # update you touch."
+    assert bridge._queue.qsize() == 2
     assert bridge._offset == 102
     persisted = _read_offset(tmp_path / "state" / "bridge.json")
     assert persisted == 102
+
+
+# ── rolling conversation history ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_second_dispatch_sees_first_as_history(
+    tmp_path: Path,
+) -> None:
+    """PILK must see prior turns in the preamble on the second
+    dispatch — that's the whole fix for the 'fresh conversation'
+    Telegram bug."""
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    orch = _FakeOrchestrator(hub, reply_text="reply-one")
+    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub)
+    await bridge._dispatch("first message")
+    orch.reply_text = "reply-two"
+    await bridge._dispatch("follow-up")
+
+    # First call: no preamble — history was empty.
+    assert orch.calls[0] == "first message"
+    # Second call: preamble carries the previous exchange so PILK
+    # can continue the thread instead of re-greeting.
+    assert "first message" in orch.calls[1]
+    assert "reply-one" in orch.calls[1]
+    assert orch.calls[1].endswith("follow-up")
+
+
+@pytest.mark.asyncio
+async def test_history_window_is_bounded(tmp_path: Path) -> None:
+    """The rolling window caps at ``HISTORY_MAX_TURNS`` so long
+    threads don't blow the token budget."""
+    from core.io.telegram_bridge import HISTORY_MAX_TURNS
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    orch = _FakeOrchestrator(hub, reply_text="ack")
+    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub)
+    for i in range(HISTORY_MAX_TURNS + 5):
+        await bridge._dispatch(f"msg-{i}")
+    # Each turn is 2 entries (user + assistant).
+    assert len(bridge._history) == HISTORY_MAX_TURNS * 2
+
+
+# ── coalesce window ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_processor_coalesces_rapid_messages(
+    tmp_path: Path,
+) -> None:
+    """Two messages landing inside the coalesce window must merge
+    into one orchestrator call instead of two separate greets."""
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    orch = _FakeOrchestrator(hub, reply_text="merged-reply")
+    bridge, _ = _bridge(
+        orch, tmp_path=tmp_path, hub=hub, coalesce_window_s=0.2
+    )
+    await bridge._queue.put("hello")
+    await bridge._queue.put("and another thing")
+    task = asyncio.create_task(bridge._process_queue())
+    # Give the processor just enough time to pull both and dispatch.
+    await asyncio.sleep(0.5)
+    bridge._stop.set()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+
+    assert len(orch.calls) == 1
+    assert "hello" in orch.calls[0]
+    assert "and another thing" in orch.calls[0]
+
+
+@pytest.mark.asyncio
+async def test_processor_does_not_coalesce_across_windows(
+    tmp_path: Path,
+) -> None:
+    """A message arriving well AFTER the first dispatch finishes
+    must be its own turn, not merged with a stale batch."""
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    orch = _FakeOrchestrator(hub, reply_text="ok")
+    bridge, _ = _bridge(
+        orch, tmp_path=tmp_path, hub=hub, coalesce_window_s=0.05
+    )
+    task = asyncio.create_task(bridge._process_queue())
+    await bridge._queue.put("first")
+    await asyncio.sleep(0.25)  # well past the coalesce window
+    await bridge._queue.put("second")
+    await asyncio.sleep(0.25)
+    bridge._stop.set()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+
+    assert len(orch.calls) == 2
+    # History preamble guarantees the second call carries the first.
+    assert orch.calls[0] == "first"
+    assert orch.calls[1].endswith("second")
+
+
+# ── busy retry ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_busy_retry_recovers_within_budget(
+    tmp_path: Path,
+) -> None:
+    """When the orchestrator is busy on the first attempt but frees
+    up before the retry budget expires, the message goes through
+    instead of being dropped."""
+    sends: list[dict] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if str(req.url).endswith("/sendMessage"):
+            sends.append(_json.loads(req.content.decode()))
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+
+    class _FlipOrchestrator(_FakeOrchestrator):
+        def __init__(self, hub: Hub) -> None:
+            super().__init__(hub, reply_text="finally")
+            self._rejected = 0
+
+        async def run(self, goal: str) -> None:
+            self.calls.append(goal)
+            if self._rejected < 2:
+                self._rejected += 1
+                raise OrchestratorBusyError("still busy")
+            await self.hub.broadcast(
+                "chat.assistant",
+                {"text": self.reply_text, "plan_id": "p"},
+            )
+
+    orch = _FlipOrchestrator(hub)
+    bridge, _ = _bridge(
+        orch, tmp_path=tmp_path, hub=hub, busy_retry_budget_s=5.0
+    )
+    await bridge._dispatch("eventually works")
+    assert len(orch.calls) == 3  # 2 busy + 1 success
+    assert sends[-1]["text"] == "finally"
+
+
+# ── vault auto-ingest ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dispatch_appends_exchange_to_vault(
+    tmp_path: Path,
+) -> None:
+    """Every successful turn must land in the daily Telegram chat
+    log so the operator has a full searchable record without having
+    to say 'remember this'."""
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    vault_root = tmp_path / "vault"
+    vault = Vault(vault_root)
+    vault.ensure_initialized()
+    hub = Hub()
+    orch = _FakeOrchestrator(hub, reply_text="noted")
+    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub, vault=vault)
+
+    await bridge._dispatch("remember this bit")
+    await bridge._dispatch("and this one too")
+
+    # One dated file under chats/telegram/ with both exchanges
+    # appended, ordered chronologically.
+    chat_dir = vault_root / CHAT_LOG_FOLDER
+    files = list(chat_dir.iterdir())
+    assert len(files) == 1
+    body = files[0].read_text(encoding="utf-8")
+    assert "remember this bit" in body
+    assert "and this one too" in body
+    # Both PILK replies are there too — so search-across-vault finds
+    # either side of the conversation.
+    assert body.count("**PILK:** noted") == 2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_without_vault_is_silent(
+    tmp_path: Path,
+) -> None:
+    """The auto-ingest step must silent-fail when no vault is wired
+    — operators without the brain configured still get a working
+    chat bridge."""
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    orch = _FakeOrchestrator(hub, reply_text="ok")
+    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub, vault=None)
+    # Should NOT raise.
+    await bridge._dispatch("hi")
+
+
+# ── _compose_prompt ──────────────────────────────────────────────
+
+
+def test_compose_prompt_empty_history_passes_through() -> None:
+    assert _compose_prompt([], "hello") == "hello"
+
+
+def test_compose_prompt_labels_turns() -> None:
+    prompt = _compose_prompt(
+        [
+            ("user", "what's up"),
+            ("assistant", "helping you out"),
+        ],
+        "add detail",
+    )
+    assert "Me: what's up" in prompt
+    assert "PILK: helping you out" in prompt
+    assert prompt.rstrip().endswith("add detail")
+
+
+def test_compose_prompt_truncates_overlong_turns() -> None:
+    from core.io.telegram_bridge import HISTORY_TURN_CHAR_CAP
+
+    big = "x" * (HISTORY_TURN_CHAR_CAP + 500)
+    prompt = _compose_prompt([("user", big)], "short")
+    assert "[truncated]" in prompt
+    assert len(prompt) < 2 * HISTORY_TURN_CHAR_CAP
