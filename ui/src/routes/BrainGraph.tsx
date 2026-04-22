@@ -148,37 +148,6 @@ export function BrainGraph({
     );
   }
 
-  const resetView = useCallback(() => {
-    if (!fgRef.current) return;
-    // Zoom the camera so every node fits in the viewport. `40` is the
-    // padding in px. `400` is the easing duration.
-    fgRef.current.zoomToFit(400, 40);
-  }, []);
-
-  // Re-fit on resize so a large graph doesn't creep off-screen when
-  // the window grows / the DevTools pane opens.
-  useEffect(() => {
-    if (viewport.w === 0 || viewport.h === 0) return;
-    const t = window.setTimeout(() => resetView(), 80);
-    return () => window.clearTimeout(t);
-  }, [viewport.w, viewport.h, resetView]);
-
-  // While the simulation is running (first 4-6 seconds for a big
-  // graph), re-fit every second so the nodes never drift past the
-  // viewport edge. Stops firing once we cross 6 s, matching the
-  // cooldown window below. Keeps the operator from having to hit
-  // "Reset view" on the very first paint.
-  useEffect(() => {
-    if (!nodes || nodes.length === 0) return;
-    let ticks = 0;
-    const interval = window.setInterval(() => {
-      ticks += 1;
-      resetView();
-      if (ticks >= 6) window.clearInterval(interval);
-    }, 1000);
-    return () => window.clearInterval(interval);
-  }, [nodes, resetView]);
-
   return (
     <div ref={containerRef} className="brain-graph-canvas">
       <div className="brain-graph-meta">
@@ -186,23 +155,13 @@ export function BrainGraph({
           {nodes?.length ?? 0} node{nodes?.length === 1 ? "" : "s"} ·{" "}
           {edges?.length ?? 0} link{edges?.length === 1 ? "" : "s"}
         </span>
-        <div className="brain-graph-meta-actions">
-          <button
-            type="button"
-            className="btn btn--ghost"
-            onClick={resetView}
-            title="Re-centre and zoom so every node fits on screen"
-          >
-            Reset view
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost"
-            onClick={() => void load()}
-          >
-            Refresh
-          </button>
-        </div>
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={() => void load()}
+        >
+          Refresh
+        </button>
       </div>
       {viewport.w > 0 && viewport.h > 0 && (
         <ForceGraph2D
@@ -216,31 +175,10 @@ export function BrainGraph({
           linkColor={() => "rgba(255,255,255,0.12)"}
           linkDirectionalParticles={0}
           linkWidth={0.6}
-          // Longer cooldown so 600+ disconnected nodes have time to
-          // spread + settle before the simulation freezes.
-          cooldownTicks={300}
-          // Auto-fit once the simulation stops jittering.
-          onEngineStop={resetView}
-          // Click hit-zone is radius × this multiplier. Default 1;
-          // bump so a 4-px node is clickable without pixel-peeping.
+          cooldownTicks={140}
           onNodeClick={(node) => {
             const n = node as unknown as InternalNode;
             onSelect(n.id);
-          }}
-          nodePointerAreaPaint={(node, color, ctx) => {
-            const n = node as unknown as InternalNode;
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            // Pad the hit-zone by 4 px so tiny nodes are catchable.
-            ctx.arc(
-              n.x ?? 0,
-              n.y ?? 0,
-              n.radius + 4,
-              0,
-              2 * Math.PI,
-              false,
-            );
-            ctx.fill();
           }}
           nodeCanvasObject={(node, ctx, globalScale) => {
             const n = node as unknown as InternalNode;
