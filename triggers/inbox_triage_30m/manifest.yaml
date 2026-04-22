@@ -1,0 +1,22 @@
+name: inbox_triage_30m
+description: |
+  Every 30 minutes, run the inbox triage agent on anything that
+  arrived in the last 24 hours. Classifies into urgent / client /
+  vendor / junk / personal; drafts replies for urgent + client
+  (via gmail_draft_save_as_me, approval-gated); surfaces junk to
+  the operator via Telegram.
+agent_name: inbox_triage_agent
+goal: |
+  Scan my Gmail inbox for unread threads received in the last 24
+  hours. Classify each thread into one of: urgent, client, vendor,
+  junk, personal. For urgent + client buckets, draft a reply via
+  gmail_draft_save_as_me and append a log row. For junk, build a
+  single-message Telegram list summarising senders + subjects so
+  I can archive them in one pass. Log each decision to the triage
+  log on disk. If there is anything urgent, send a Telegram ping
+  with the count and the top sender. Skip the Telegram ping when
+  nothing urgent surfaces.
+enabled: true
+schedule:
+  kind: cron
+  expression: "*/30 * * * *"

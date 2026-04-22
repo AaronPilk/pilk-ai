@@ -1,0 +1,15 @@
+name: gmail_auto_ingest
+description: |
+  Every 6 hours, pull the last 6 hours of Gmail threads + any
+  updated Claude Code transcripts into the brain vault so hydration
+  + search have fresh data.
+agent_name: brain_ingest_agent
+goal: |
+  Run one brain ingest cycle. Pull the last 6 hours of Gmail
+  threads and any newly-updated Claude Code project transcripts
+  into the vault. Log the counts to the daily note, and ping the
+  operator via Telegram only if an ingester returned errors.
+enabled: true
+schedule:
+  kind: cron
+  expression: "0 */6 * * *"

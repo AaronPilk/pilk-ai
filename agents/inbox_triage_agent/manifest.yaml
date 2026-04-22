@@ -161,7 +161,10 @@ tools:
   - gmail_search_my_inbox
   - gmail_read_me
   - gmail_thread_read_me
+  - gmail_draft_save_as_me
   - gmail_send_as_me
+  - telegram_notify
+  - brain_note_write
 
 sandbox:
   type: process

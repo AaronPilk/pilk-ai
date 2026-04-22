@@ -53,6 +53,24 @@ class RemediationEnv(Protocol):
 # ── Remediation implementations ─────────────────────────────────
 
 
+# Per-agent restart-attempt counter. Keyed on agent_name; incremented
+# on every auto-restart we attempt. A consecutive streak of two
+# failures means "we tried twice and it didn't come back", and we
+# escalate via the notifier / Telegram alert instead of looping
+# indefinitely. The counter resets on the first successful restart.
+_restart_attempts: dict[str, int] = {}
+# Max consecutive failed restarts before Sentinel gives up and
+# escalates. Matches the spec's "If restart fails twice, escalate".
+MAX_RESTART_ATTEMPTS = 2
+
+
+def restart_attempts_snapshot() -> dict[str, int]:
+    """Read-only copy of the per-agent restart counter. Exposed for
+    tests + the ``sentinel_status`` tool; the supervisor doesn't need
+    this to route logic, it just reads the counter to surface state."""
+    return dict(_restart_attempts)
+
+
 async def _restart_stale(
     finding: Finding, triage: TriageResult, env: RemediationEnv
 ) -> RemediationResult:
@@ -63,7 +81,30 @@ async def _restart_stale(
             ok=False,
             message="no agent_name on finding",
         )
-    return await env.restart_agent(agent)
+    attempts = _restart_attempts.get(agent, 0) + 1
+    if attempts > MAX_RESTART_ATTEMPTS:
+        # Don't keep hammering; leave the counter in place so the
+        # operator-visible incident still reflects the retry budget
+        # consumed. The supervisor's notifier / Telegram alert bridge
+        # will see this outcome and escalate.
+        return RemediationResult(
+            kind="restart_agent",
+            ok=False,
+            message=(
+                f"gave up after {attempts - 1} failed restart attempts "
+                "— escalating to operator"
+            ),
+        )
+    _restart_attempts[agent] = attempts
+    result = await env.restart_agent(agent)
+    if result.ok:
+        # Successful restart — reset so the next streak starts fresh.
+        _restart_attempts.pop(agent, None)
+    return RemediationResult(
+        kind=result.kind,
+        ok=result.ok,
+        message=f"attempt {attempts}/{MAX_RESTART_ATTEMPTS}: {result.message}",
+    )
 
 
 async def _clear_lock_file(

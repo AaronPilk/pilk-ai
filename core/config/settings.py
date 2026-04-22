@@ -66,6 +66,30 @@ class Settings(BaseSettings):
     )
     tts_voice: str | None = Field(default=None)
 
+    # Local wake-word voice bridge — runs alongside the daemon so the
+    # operator can say "Hey PILK" from anywhere on their Mac without
+    # opening the web UI. Optional everywhere; we degrade silently on
+    # a headless host where the hardware libs aren't importable.
+    voice_bridge_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "PILK_VOICE_BRIDGE_ENABLED", "VOICE_BRIDGE_ENABLED",
+        ),
+    )
+    picovoice_access_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PILK_PICOVOICE_ACCESS_KEY", "PICOVOICE_ACCESS_KEY",
+        ),
+    )
+    voice_wake_keyword_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PILK_VOICE_WAKE_KEYWORD_PATH",
+            "VOICE_WAKE_KEYWORD_PATH",
+        ),
+    )
+
     browserbase_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices(

@@ -1,0 +1,17 @@
+name: lead_qualifier_poll
+description: |
+  Every 15 minutes, poll GHL for contacts created in the last 15
+  minutes and score each one via the lead qualifier agent. Cron
+  rather than webhook so PILK doesn't need an inbound HTTP surface
+  exposed to the operator's GHL account.
+agent_name: lead_qualifier_agent
+goal: |
+  Search GHL for contacts created in the last 15 minutes
+  (ghl_contact_search with a recent dateAdded filter). For each
+  new contact, score them per the rubric and file the result —
+  note + tag + task (if hot) + Telegram ping (if hot). If no new
+  contacts surfaced this window, stay silent and exit cleanly.
+enabled: true
+schedule:
+  kind: cron
+  expression: "*/15 * * * *"
