@@ -99,6 +99,7 @@ def test_known_static_entries_unchanged_contract() -> None:
         "twelvedata_api_key",
         "nano_banana_api_key",
         "higgsfield_api_key",
+        "arcads_api_key",
         "browserbase_api_key",
         "browserbase_project_id",
     }
