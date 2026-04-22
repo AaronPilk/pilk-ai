@@ -45,11 +45,10 @@ def test_manifest_description_is_substantive(manifest: Manifest) -> None:
 
 
 def test_manifest_declares_arcads_tools(manifest: Manifest) -> None:
-    """Three arcads_* tools land in a follow-up PR once the external
-    API spec is wired. Names locked in here so the reviewer knows
-    what to register."""
+    """Three arcads_* tools that together cover product pick →
+    generate → poll for the Arcads external API."""
     for t in (
-        "arcads_list_actors",
+        "arcads_list_products",
         "arcads_video_generate",
         "arcads_video_status",
     ):

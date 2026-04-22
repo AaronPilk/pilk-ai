@@ -1,4 +1,10 @@
 from core.tools.builtin.agent_meta import make_agent_create_tool
+from core.tools.builtin.arcads import (
+    ARCADS_TOOLS,
+    arcads_list_products_tool,
+    arcads_video_generate_tool,
+    arcads_video_status_tool,
+)
 from core.tools.builtin.browser import BrowserSessionManager, make_browser_tools
 from core.tools.builtin.code_task import make_code_task_tool
 from core.tools.builtin.computer_control import COMPUTER_CONTROL_TOOLS
@@ -62,6 +68,7 @@ from core.tools.builtin.xauusd import (
 )
 
 __all__ = [
+    "ARCADS_TOOLS",
     "COMPUTER_CONTROL_TOOLS",
     "CREATIVE_TOOLS",
     "GOOGLE_ADS_TOOLS",
@@ -72,6 +79,9 @@ __all__ = [
     "UGC_TOOLS",
     "XAUUSD_TOOLS",
     "BrowserSessionManager",
+    "arcads_list_products_tool",
+    "arcads_video_generate_tool",
+    "arcads_video_status_tool",
     "finance_deposit_tool",
     "finance_transfer_tool",
     "finance_withdraw_tool",

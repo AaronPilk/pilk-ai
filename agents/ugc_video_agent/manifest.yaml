@@ -34,21 +34,28 @@ system_prompt: |
      • If the brain has nothing, write from first principles and
        flag it in the final report.
 
-  3. PICK an actor.
-     • Use `arcads_list_actors` to fetch the current roster.
-     • Filter to the operator's requested demographic. Prefer
-       actors the operator has used before (query the brain for
-       past arcads runs).
-     • Return the top 3 matches and let the operator pick, UNLESS
-       the operator already named an actor in the brief.
+  3. PICK a product context.
+     • Every Arcads render attaches to a `productId`. Use
+       `arcads_list_products` to see what's available on this
+       workspace.
+     • If the operator already named the product in the brief,
+       match it by name and reuse that id. Otherwise confirm with
+       the operator before firing the chargeable call — picking
+       the wrong product buries the render in the wrong dashboard
+       folder.
 
   4. GENERATE.
-     • Call `arcads_video_generate` with the final script + chosen
-       actor. Store the job id.
-     • Poll `arcads_video_status` every 20 s until `status` is
-       `completed` or `failed`. Cap polling at 10 minutes; if it
-       runs past that, stop and report the job id so the operator
-       can check the Arcads dashboard directly.
+     • Call `arcads_video_generate` with `{product_id, prompt,
+       aspect_ratio, duration_s}`. Model defaults to
+       `seedance-2.0` which handles UGC selfie style + optional
+       `audio_enabled: true` for a lip-synced read. Write the
+       prompt as one paragraph — the agent skill's Seedance 2.0
+       UGC guide is the reference.
+     • Store the returned `asset_id`.
+     • Poll `arcads_video_status` every 20 s until status is
+       `generated` or `failed`. Cap polling at 10 minutes; if it
+       runs past that, stop and report the asset id so the
+       operator can check the Arcads dashboard directly.
 
   5. CAPTURE.
      • On success, save a brain note under
@@ -91,7 +98,7 @@ system_prompt: |
     the operator's call.
 
 tools:
-  - arcads_list_actors
+  - arcads_list_products
   - arcads_video_generate
   - arcads_video_status
   - brain_note_read
