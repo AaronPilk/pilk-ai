@@ -466,3 +466,90 @@ async def test_bridge_allows_callback_updates_in_getupdates(
     assert seen_allowed, "getUpdates was never called"
     assert "message" in seen_allowed[0]
     assert "callback_query" in seen_allowed[0]
+
+
+# ── _format_request: per-tool summary layer ─────────────────────
+
+
+def test_format_request_ghl_task_create_shows_summary() -> None:
+    """The specific case from the operator's screenshot: an approval
+    for ghl_task_create must lead with a one-sentence summary, not a
+    raw ``contact_id = 'location_id'`` dump."""
+    from core.io.telegram_approvals import _format_request
+
+    out = _format_request({
+        "agent_name": "lead_qualifier_agent",
+        "tool_name": "ghl_task_create",
+        "risk_class": "NET_WRITE",
+        "reason": "NET_WRITE: requires approval",
+        "args": {
+            "contact_id": "location_id",
+            "title": "Set ghl_default_location_id",
+            "body": "Please set the default location ID in GHL settings.",
+            "due_date": "2026-04-23T09:00:00",
+        },
+    })
+    # The lead line is a human sentence.
+    assert "Create a GHL task" in out
+    assert '"Set ghl_default_location_id"' in out
+    assert "for contact location_id" in out
+    assert "due 2026-04-23T09:00:00" in out
+    # Agent + tool + risk stay visible for context.
+    assert "lead_qualifier_agent" in out
+    assert "ghl_task_create" in out
+    assert "NET_WRITE" in out
+    # Boilerplate "NET_WRITE: requires approval" reason is suppressed
+    # because it just echoes the risk class.
+    assert "requires approval" not in out
+
+
+def test_format_request_gmail_send_shows_summary() -> None:
+    from core.io.telegram_approvals import _format_request
+
+    out = _format_request({
+        "agent_name": "inbox_triage_agent",
+        "tool_name": "gmail_send_as_pilk",
+        "risk_class": "COMMS",
+        "reason": "",
+        "args": {
+            "to": "alice@example.com",
+            "subject": "Quick question",
+            "body": "Hey Alice, …",
+        },
+    })
+    assert "Send an email to alice@example.com" in out
+    assert '"Quick question"' in out
+
+
+def test_format_request_unknown_tool_falls_back() -> None:
+    """Tools without a bespoke summary still render, just in the
+    cleaner arg-dump layout (no repr-quoted bare strings)."""
+    from core.io.telegram_approvals import _format_request
+
+    out = _format_request({
+        "agent_name": "some_agent",
+        "tool_name": "brand_new_tool_nobody_has_seen",
+        "risk_class": "NET_WRITE",
+        "reason": "",
+        "args": {"payload": "hello world"},
+    })
+    assert "brand_new_tool_nobody_has_seen" in out
+    # Bare string, not repr('hello world'). This is the readability
+    # improvement on the fallback path.
+    assert "hello world" in out
+    assert "'hello world'" not in out
+
+
+def test_format_request_non_boilerplate_reason_surfaces() -> None:
+    """A meaningful reason still shows up — we only filter out the
+    policy-layer boilerplate that echoes the risk class."""
+    from core.io.telegram_approvals import _format_request
+
+    out = _format_request({
+        "agent_name": "lead_qualifier_agent",
+        "tool_name": "ghl_send_email",
+        "risk_class": "COMMS",
+        "reason": "Client hasn't replied in 10 days; nudging.",
+        "args": {"contact_id": "abc123", "subject": "Following up"},
+    })
+    assert "Client hasn't replied in 10 days" in out

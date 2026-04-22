@@ -44,6 +44,7 @@ the operator's chat history is a faithful log of what's still pending.
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Callable
 from typing import Any
 
 from core.api.hub import Hub
@@ -286,42 +287,278 @@ class TelegramApprovals:
 def _format_request(payload: dict[str, Any]) -> str:
     """Render an approval request as a concise one-glance message.
 
+    Two layers:
+
+    1. If the tool is in ``_TOOL_SUMMARIES``, we lead with a one-line
+       plain-English description of what will happen ("Create a GHL
+       task…", "Send an email to…"). The raw args dump becomes a
+       collapsed footer so a curious operator can still eyeball
+       details, but the glanceable answer to "what is this approving?"
+       is one sentence, not ten.
+    2. For tools without a bespoke summary, we fall back to a cleaner
+       arg dump (no ``repr()`` quote noise on short strings) so even
+       the unknown tools read better than before.
+
     Uses plain text (no markdown) so we don't have to escape every
     stray asterisk or bracket that might appear in tool args.
     """
     risk = str(payload.get("risk_class") or "")
-    emoji = _RISK_EMOJI.get(risk, "❓")  # ❓
-    tool = payload.get("tool_name") or "unknown_tool"
+    emoji = _RISK_EMOJI.get(risk, "❓")
+    tool = str(payload.get("tool_name") or "unknown_tool")
     agent = payload.get("agent_name") or "PILK"
     reason = payload.get("reason") or ""
-    args = payload.get("args") or {}
-    lines = [
-        f"{emoji} Approval requested",
-        f"{agent} wants to run {tool} ({risk})",
-    ]
-    if reason:
+    raw_args = payload.get("args")
+    args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
+
+    summary = _summarize_tool_call(tool, args)
+
+    lines: list[str] = [f"{emoji} Approval requested"]
+    if summary:
+        lines.append("")
+        lines.append(summary)
+        lines.append("")
+        lines.append(f"Agent: {agent}  ·  Tool: {tool}  ·  Risk: {risk}")
+        # Only show "Reason" when it's actually informative — the
+        # policy layer defaults it to "NET_WRITE: requires approval"
+        # which just duplicates the risk class we already surfaced.
+        if reason and not _is_redundant_reason(reason, risk):
+            lines.append(f"Note: {reason}")
+        return "\n".join(lines)
+
+    # ── fallback path: no bespoke summary for this tool ────────────
+    lines.append(f"{agent} wants to run {tool} ({risk})")
+    if reason and not _is_redundant_reason(reason, risk):
         lines.append(f"Reason: {reason}")
-    # Pretty-print args one per line. Skip when there aren't any so we
-    # don't dangle an empty header.
     if args:
         lines.append("")
         lines.append("Args:")
         for k, v in args.items():
-            lines.append(f"  {k} = {_short(v)}")
+            lines.append(f"  {k}: {_short(v)}")
     return "\n".join(lines)
+
+
+def _is_redundant_reason(reason: str, risk: str) -> bool:
+    """True when the policy-layer ``reason`` is just echoing the risk
+    class (``"NET_WRITE: requires approval"``) — we already show the
+    risk class on its own line, so echoing it again is noise."""
+    trimmed = reason.strip().lower()
+    if not trimmed or not risk:
+        return False
+    boilerplate = f"{risk.lower()}: requires approval"
+    return trimmed == boilerplate
 
 
 def _short(value: Any, *, limit: int = 200) -> str:
     """Render a tool-arg value inline without flooding the card.
 
-    Long strings get truncated with an ellipsis; nested structures
-    are JSON-ish via repr() — the goal is "can the operator eyeball
-    what's being run", not "round-trip the value".
+    Strings are rendered bare (no ``repr()`` quote noise), everything
+    else falls back to ``repr()``. Long values get truncated with an
+    ellipsis — the goal is "can the operator eyeball what's being
+    run", not "round-trip the value".
     """
-    s = repr(value)
+    # Collapse multi-line strings onto one row so one argument
+    # doesn't explode the card. Real content stays on disk / in
+    # the web dashboard if the operator wants full detail.
+    s = value.replace("\n", " ↵ ") if isinstance(value, str) else repr(value)
     if len(s) > limit:
         return s[: limit - 1] + "…"
     return s
+
+
+# ── per-tool summary registry ─────────────────────────────────────
+#
+# Each entry takes the ``args`` dict and returns a one-line plain-
+# English sentence. Return ``None`` if the entry can't produce a
+# useful summary for this particular args shape and we should fall
+# back to the raw-args path. ``_summarize_tool_call`` also returns
+# ``None`` for unknown tools, same semantics.
+#
+# Guiding principles:
+#   * One sentence, ~80-120 chars ideally.
+#   * Lead with the verb: "Send", "Create", "Update", "Delete", "Run".
+#   * Include the concrete thing being acted on (recipient, title,
+#     path, amount) — the operator is approving *this specific* call.
+#   * Quote strings with double quotes so they're visually distinct.
+#   * Skip fields that are noisy (ids, internal references) unless
+#     they're the only anchor we have.
+
+
+def _q(s: Any) -> str:
+    """Quote a string for inline display, truncating if huge."""
+    text = str(s or "").strip().replace("\n", " ")
+    if len(text) > 80:
+        text = text[:79] + "…"
+    return f'"{text}"'
+
+
+def _opt(value: Any) -> str:
+    """Empty string when value is falsy so a summary line can splice in
+    optional fields without dangling "due None" / "to ''"."""
+    return "" if value in (None, "", [], {}) else str(value)
+
+
+def _fmt_ghl_task_create(a: dict[str, Any]) -> str:
+    title = _q(a.get("title"))
+    contact = _opt(a.get("contact_id"))
+    due = _opt(a.get("due_date"))
+    tail = []
+    if contact:
+        tail.append(f"for contact {contact}")
+    if due:
+        tail.append(f"due {due}")
+    suffix = (" " + ", ".join(tail)) if tail else ""
+    return f"Create a GHL task {title}{suffix}."
+
+
+def _fmt_ghl_contact_mutation(verb: str) -> Callable[[dict[str, Any]], str]:
+    def _fmt(a: dict[str, Any]) -> str:
+        name = _opt(a.get("first_name")) + " " + _opt(a.get("last_name"))
+        who = name.strip() or _opt(a.get("email")) or _opt(a.get("phone")) or _opt(a.get("contact_id")) or "a contact"
+        return f"{verb} GHL contact {who}."
+    return _fmt
+
+
+def _fmt_ghl_send_email(a: dict[str, Any]) -> str:
+    to = _opt(a.get("contact_id")) or _opt(a.get("to")) or "a contact"
+    subject = _q(a.get("subject") or "(no subject)")
+    return f"Send a GHL email to {to} with subject {subject}."
+
+
+def _fmt_ghl_send_sms(a: dict[str, Any]) -> str:
+    to = _opt(a.get("contact_id")) or _opt(a.get("to")) or "a contact"
+    msg = _q(a.get("message"))
+    return f"Send a GHL SMS to {to}: {msg}"
+
+
+def _fmt_ghl_opportunity_create(a: dict[str, Any]) -> str:
+    name = _q(a.get("name") or "an opportunity")
+    pipeline = _opt(a.get("pipeline_id"))
+    stage = _opt(a.get("pipeline_stage_id"))
+    bits = [p for p in [pipeline and f"pipeline {pipeline}", stage and f"stage {stage}"] if p]
+    tail = (" in " + ", ".join(bits)) if bits else ""
+    return f"Create a GHL opportunity {name}{tail}."
+
+
+def _fmt_ghl_opportunity_move_stage(a: dict[str, Any]) -> str:
+    opp = _opt(a.get("opportunity_id")) or "an opportunity"
+    stage = _opt(a.get("pipeline_stage_id")) or "a new stage"
+    return f"Move GHL opportunity {opp} to stage {stage}."
+
+
+def _fmt_ghl_workflow_add_contact(a: dict[str, Any]) -> str:
+    contact = _opt(a.get("contact_id")) or "a contact"
+    wf = _opt(a.get("workflow_id")) or "a workflow"
+    return f"Add GHL contact {contact} to workflow {wf}."
+
+
+def _fmt_ghl_appointment_create(a: dict[str, Any]) -> str:
+    title = _q(a.get("title") or "an appointment")
+    start = _opt(a.get("start_time"))
+    tail = f" at {start}" if start else ""
+    return f"Create a GHL appointment {title}{tail}."
+
+
+def _fmt_gmail_send(a: dict[str, Any]) -> str:
+    to = _opt(a.get("to")) or "a recipient"
+    subject = _q(a.get("subject") or "(no subject)")
+    return f"Send an email to {to} with subject {subject}."
+
+
+def _fmt_gmail_draft(a: dict[str, Any]) -> str:
+    to = _opt(a.get("to")) or "(no recipient)"
+    subject = _q(a.get("subject") or "(no subject)")
+    return f"Save a Gmail draft to {to} with subject {subject}."
+
+
+def _fmt_calendar_create(a: dict[str, Any]) -> str:
+    summary = _q(a.get("summary") or a.get("title") or "an event")
+    start = _opt(a.get("start")) or _opt(a.get("start_time"))
+    tail = f" starting {start}" if start else ""
+    return f"Create a calendar event {summary}{tail}."
+
+
+def _fmt_brain_note_write(a: dict[str, Any]) -> str:
+    path = _opt(a.get("path")) or "a note"
+    content = a.get("content") or ""
+    size = len(content) if isinstance(content, str) else 0
+    return f"Write brain note {path} ({size} bytes)."
+
+
+def _fmt_fs_write(a: dict[str, Any]) -> str:
+    path = _opt(a.get("path")) or "a file"
+    content = a.get("content") or ""
+    size = len(content) if isinstance(content, str) else 0
+    return f"Write file {path} ({size} bytes)."
+
+
+def _fmt_shell(a: dict[str, Any]) -> str:
+    cmd = a.get("command") or a.get("cmd") or ""
+    if isinstance(cmd, list):
+        cmd = " ".join(str(p) for p in cmd)
+    cmd = str(cmd)
+    if len(cmd) > 120:
+        cmd = cmd[:119] + "…"
+    return f"Run shell: {cmd}"
+
+
+def _fmt_finance_deposit(a: dict[str, Any]) -> str:
+    amount = _opt(a.get("amount"))
+    currency = _opt(a.get("currency"))
+    return f"Deposit {amount} {currency}".rstrip() + "."
+
+
+_TOOL_SUMMARIES: dict[str, Callable[[dict[str, Any]], str]] = {
+    # GHL (CRM) writes — the ones that actually fire approval cards.
+    "ghl_task_create": _fmt_ghl_task_create,
+    "ghl_contact_create": _fmt_ghl_contact_mutation("Create"),
+    "ghl_contact_update": _fmt_ghl_contact_mutation("Update"),
+    "ghl_contact_delete": _fmt_ghl_contact_mutation("Delete"),
+    "ghl_send_email": _fmt_ghl_send_email,
+    "ghl_send_sms": _fmt_ghl_send_sms,
+    "ghl_opportunity_create": _fmt_ghl_opportunity_create,
+    "ghl_opportunity_update": _fmt_ghl_opportunity_create,
+    "ghl_opportunity_move_stage": _fmt_ghl_opportunity_move_stage,
+    "ghl_opportunity_delete": lambda a: f"Delete GHL opportunity {_opt(a.get('opportunity_id')) or '?'}.",
+    "ghl_workflow_add_contact": _fmt_ghl_workflow_add_contact,
+    "ghl_appointment_create": _fmt_ghl_appointment_create,
+    "ghl_appointment_update": _fmt_ghl_appointment_create,
+    # Gmail + Calendar writes.
+    "gmail_send_as_pilk": _fmt_gmail_send,
+    "gmail_send_as_me": _fmt_gmail_send,
+    "gmail_draft_save_as_pilk": _fmt_gmail_draft,
+    "gmail_draft_save_as_me": _fmt_gmail_draft,
+    "calendar_create_my_event": _fmt_calendar_create,
+    # Local writes.
+    "brain_note_write": _fmt_brain_note_write,
+    "brain_note_search_and_replace": lambda a: (
+        f"Search-and-replace in brain note {_opt(a.get('path')) or '?'}."
+    ),
+    "fs_write": _fmt_fs_write,
+    "computer_fs_write": _fmt_fs_write,
+    "shell_exec": _fmt_shell,
+    "computer_shell": _fmt_shell,
+    # Financial.
+    "finance_deposit": _fmt_finance_deposit,
+}
+
+
+def _summarize_tool_call(tool: str, args: dict[str, Any]) -> str | None:
+    """Return a one-line human summary for ``(tool, args)`` or ``None``
+    when we don't have a bespoke formatter. Any exception raised by a
+    formatter is swallowed and falls back to the raw-args path so a
+    single malformed args dict can't hide the approval card."""
+    fn = _TOOL_SUMMARIES.get(tool)
+    if fn is None:
+        return None
+    try:
+        result = fn(args)
+    except Exception as e:  # pragma: no cover - defense-in-depth
+        log.warning(
+            "telegram_approval_summary_failed",
+            tool=tool, error=str(e),
+        )
+        return None
+    return result if result else None
 
 
 def _decision_marker(decision: str) -> str:
