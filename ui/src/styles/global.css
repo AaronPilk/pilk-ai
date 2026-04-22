@@ -6430,10 +6430,24 @@ body {
   letter-spacing: 0.04em;
 }
 
-.brain-graph-meta-actions {
+.brain-graph-meta-actions,
+.brain-graph-actions {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.brain-graph-surface {
+  flex: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.brain-graph-surface:active {
+  cursor: grabbing;
 }
 
 .brain-graph-empty {
