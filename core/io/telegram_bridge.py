@@ -310,6 +310,23 @@ class TelegramBridge:
         session_state = state.get("session")
         if isinstance(session_state, dict):
             self._session.load_state(session_state)
+        # Rehydrate the rolling conversation window so a daemon
+        # restart mid-thread doesn't wipe PILK's short-term memory of
+        # what was just said. The deque's ``maxlen`` naturally trims
+        # anything beyond the window if a future version shrinks it.
+        history_raw = state.get("history")
+        if isinstance(history_raw, list):
+            for item in history_raw:
+                if not isinstance(item, dict):
+                    continue
+                role = item.get("role")
+                text = item.get("text")
+                if (
+                    isinstance(role, str)
+                    and role in ("user", "assistant")
+                    and isinstance(text, str)
+                ):
+                    self._history.append((role, text))
         self._stop.clear()
         self._task = asyncio.create_task(self._run(), name="telegram-bridge")
         self._processor_task = asyncio.create_task(
@@ -320,6 +337,7 @@ class TelegramBridge:
             chat_id=self._cfg.chat_id,
             offset=self._offset,
             session_id=self._session.session_id,
+            history_turns=len(self._history) // 2,
         )
 
     async def stop(self) -> None:
@@ -692,16 +710,30 @@ class TelegramBridge:
     # ── state persistence ──────────────────────────────────────────
 
     def _save_state(self) -> None:
-        """Flush the offset + session tracker to disk.
+        """Flush the offset + session tracker + rolling history to disk.
+
+        The rolling history is what keeps PILK's short-term memory
+        coherent across daemon restarts — without it, restarting pilkd
+        mid-conversation drops the operator into a "fresh chat" that
+        can't remember anything they just said. Each turn is capped at
+        ``HISTORY_TURN_CHAR_CAP`` on the way out so the state file
+        stays bounded even if someone pasted a 50 KB message earlier.
 
         Best-effort: a failed write is logged but never bubbles up —
         the bridge keeps running with in-memory state.
         """
+        history_payload: list[dict[str, str]] = []
+        for role, text in self._history:
+            body = text or ""
+            if len(body) > HISTORY_TURN_CHAR_CAP:
+                body = body[:HISTORY_TURN_CHAR_CAP]
+            history_payload.append({"role": role, "text": body})
         _write_state(
             self._state_path,
             {
                 "offset": self._offset,
                 "session": self._session.as_state(),
+                "history": history_payload,
             },
         )
 

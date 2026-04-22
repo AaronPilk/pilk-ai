@@ -466,6 +466,61 @@ async def test_history_window_is_bounded(tmp_path: Path) -> None:
     assert len(bridge._history) == HISTORY_MAX_TURNS * 2
 
 
+@pytest.mark.asyncio
+async def test_history_survives_daemon_restart(tmp_path: Path) -> None:
+    """A restart mid-conversation must not wipe PILK's short-term
+    memory: the second bridge's deque has to rehydrate from disk and
+    see the first bridge's exchanges."""
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub_a = Hub()
+    orch_a = _FakeOrchestrator(hub_a, reply_text="first-reply")
+    bridge_a, _ = _bridge(orch_a, tmp_path=tmp_path, hub=hub_a)
+    await bridge_a._dispatch("do you remember this line?")
+
+    # Simulate a daemon restart — fresh bridge, same state path, same
+    # everything else. The history deque should rehydrate from disk
+    # before the next dispatch so the preamble includes the prior turn.
+    hub_b = Hub()
+    orch_b = _FakeOrchestrator(hub_b, reply_text="still here")
+    bridge_b, _ = _bridge(orch_b, tmp_path=tmp_path, hub=hub_b)
+    await bridge_b.start()
+    try:
+        assert len(bridge_b._history) == 2
+        await bridge_b._dispatch("do you?")
+    finally:
+        await bridge_b.stop()
+
+    # On the second dispatch the preamble must carry the prior turn —
+    # that's the entire point of persisting history.
+    assert "do you remember this line?" in orch_b.calls[-1]
+    assert "first-reply" in orch_b.calls[-1]
+
+
+def test_state_history_truncates_oversized_turns(tmp_path: Path) -> None:
+    """Entries larger than ``HISTORY_TURN_CHAR_CAP`` get truncated on
+    the way to disk so the state file can't grow unbounded when the
+    operator pastes a 50 KB message mid-thread."""
+    from core.io.telegram_bridge import HISTORY_TURN_CHAR_CAP
+
+    _install_transport(lambda _: httpx.Response(200, json=_ok({})))
+    hub = Hub()
+    orch = _FakeOrchestrator(hub, reply_text="ack")
+    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub)
+    big = "x" * (HISTORY_TURN_CHAR_CAP + 500)
+    bridge._history.append(("user", big))
+    bridge._history.append(("assistant", "ok"))
+    bridge._save_state()
+    state = _read_state(bridge._state_path)
+    persisted = state["history"]
+    assert persisted[0]["role"] == "user"
+    assert len(persisted[0]["text"]) == HISTORY_TURN_CHAR_CAP
+    assert persisted[1]["text"] == "ok"
+
+
 # ── coalesce window ───────────────────────────────────────────────
 
 
