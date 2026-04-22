@@ -7002,6 +7002,16 @@ body {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+  align-items: center;
+}
+
+.brain2-detail-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 4px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
 }
 
 .brain2-danger {

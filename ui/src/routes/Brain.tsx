@@ -9,6 +9,12 @@
  * Writes flow through the same Vault on the backend that the agent's
  * `brain_note_write` tool uses, so nothing added here is hidden from
  * PILK during future conversations.
+ *
+ * The Memory category also projects the structured memory store
+ * (SQLite-backed preferences / standing instructions / facts /
+ * patterns) as read-only virtual notes. Those stay editable from the
+ * Memory tab — Brain just surfaces them so the operator sees the full
+ * knowledge picture in one place.
  */
 import {
   useCallback,
@@ -23,11 +29,50 @@ import {
   fetchBrainBacklinks,
   fetchBrainNote,
   fetchBrainNotes,
+  fetchMemory,
   updateBrainNote,
   uploadBrainNote,
   type BrainBacklink,
   type BrainNote,
+  type MemoryEntry,
+  type MemoryKind,
 } from "../state/api";
+
+// Virtual-path scheme for memory-store projections. Never collides
+// with a real vault path (vault rejects `:` in names).
+const MEMORY_VIRTUAL_PREFIX = "memory://";
+
+function isMemoryVirtualPath(p: string): boolean {
+  return p.startsWith(MEMORY_VIRTUAL_PREFIX);
+}
+
+function memoryVirtualPath(id: string): string {
+  return `${MEMORY_VIRTUAL_PREFIX}${id}`;
+}
+
+const MEMORY_KIND_LABEL: Record<MemoryKind, string> = {
+  preference: "Preference",
+  standing_instruction: "Standing Instruction",
+  fact: "Fact",
+  pattern: "Pattern",
+};
+
+function memoryToNote(entry: MemoryEntry): BrainNote {
+  return {
+    path: memoryVirtualPath(entry.id),
+    folder: "memory",
+    stem: entry.title || MEMORY_KIND_LABEL[entry.kind],
+    size: (entry.body || "").length,
+    mtime: entry.updated_at || entry.created_at || null,
+  };
+}
+
+function memoryToBody(entry: MemoryEntry): string {
+  const header = `# ${entry.title || MEMORY_KIND_LABEL[entry.kind]}\n`;
+  const meta = `> ${MEMORY_KIND_LABEL[entry.kind]} · source: ${entry.source || "unknown"}`;
+  const body = (entry.body || "").trim();
+  return `${header}\n${meta}\n\n${body}\n`;
+}
 
 // ── Category model ─────────────────────────────────────────────────
 
@@ -80,6 +125,9 @@ function categoryOf(note: BrainNote): CategoryId {
 
 export default function Brain() {
   const [notes, setNotes] = useState<BrainNote[]>([]);
+  const [memoryById, setMemoryById] = useState<Map<string, MemoryEntry>>(
+    () => new Map(),
+  );
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -91,11 +139,30 @@ export default function Brain() {
 
   const load = useCallback(async () => {
     try {
-      const r = await fetchBrainNotes();
-      setNotes(r.notes);
-      setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      // Fetch the vault + the structured memory store in parallel.
+      // Memory errors are non-fatal — a missing memory store shouldn't
+      // take the whole Brain page down.
+      const [vault, memory] = await Promise.allSettled([
+        fetchBrainNotes(),
+        fetchMemory(),
+      ]);
+      if (vault.status === "fulfilled") {
+        setNotes(vault.value.notes);
+      }
+      if (memory.status === "fulfilled") {
+        const m = new Map<string, MemoryEntry>();
+        for (const e of memory.value.entries) m.set(e.id, e);
+        setMemoryById(m);
+      }
+      if (vault.status === "rejected") {
+        setErr(
+          vault.reason instanceof Error
+            ? vault.reason.message
+            : String(vault.reason),
+        );
+      } else {
+        setErr(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -112,9 +179,25 @@ export default function Brain() {
     return () => window.clearTimeout(t);
   }, [toast]);
 
+  // Memory store entries projected as virtual BrainNotes. They live
+  // in the Memory category alongside any real `memory/*.md` files.
+  const memoryNotes = useMemo(() => {
+    const out: BrainNote[] = [];
+    for (const e of memoryById.values()) out.push(memoryToNote(e));
+    return out;
+  }, [memoryById]);
+
+  // Everything we surface in the UI — real vault files plus virtual
+  // memory-store projections. Kept as one collection so filtering,
+  // search, and counts all work uniformly.
+  const allNotes = useMemo(
+    () => [...notes, ...memoryNotes],
+    [notes, memoryNotes],
+  );
+
   const counts = useMemo(() => {
     const m: Record<CategoryId, number> = {
-      all: notes.length,
+      all: allNotes.length,
       daily: 0,
       sessions: 0,
       clients: 0,
@@ -125,20 +208,23 @@ export default function Brain() {
       ingested: 0,
       playbooks: 0,
     };
-    for (const n of notes) m[categoryOf(n)] += 1;
+    for (const n of allNotes) m[categoryOf(n)] += 1;
     return m;
-  }, [notes]);
+  }, [allNotes]);
 
   // Filter + sort the list for the middle column.
   const listed = useMemo(() => {
     const q = query.trim().toLowerCase();
-    let rows = notes;
+    let rows = allNotes;
     if (activeCategory !== "all") {
       rows = rows.filter((n) => categoryOf(n) === activeCategory);
     }
     if (q.length > 0) {
       rows = rows.filter((n) => {
-        const hay = (n.stem + " " + n.folder + " " + n.path).toLowerCase();
+        // Memory virtual paths aren't meaningful to the operator, so
+        // don't include them in the haystack — search on title/folder.
+        const pathHay = isMemoryVirtualPath(n.path) ? "" : n.path;
+        const hay = (n.stem + " " + n.folder + " " + pathHay).toLowerCase();
         return hay.includes(q);
       });
     }
@@ -148,7 +234,7 @@ export default function Brain() {
       if (!b.mtime) return -1;
       return b.mtime.localeCompare(a.mtime);
     });
-  }, [notes, activeCategory, query]);
+  }, [allNotes, activeCategory, query]);
 
   // Keep the selected note valid when the category / filter changes.
   useEffect(() => {
@@ -294,7 +380,14 @@ export default function Brain() {
               <NoteDetail
                 key={selectedPath}
                 path={selectedPath}
-                note={notes.find((n) => n.path === selectedPath) ?? null}
+                note={allNotes.find((n) => n.path === selectedPath) ?? null}
+                memoryEntry={
+                  isMemoryVirtualPath(selectedPath)
+                    ? memoryById.get(
+                        selectedPath.slice(MEMORY_VIRTUAL_PREFIX.length),
+                      ) ?? null
+                    : null
+                }
                 onDeleted={handleNoteDeleted}
                 onSaved={handleNoteSaved}
                 onClose={() => setSelectedPath(null)}
@@ -332,16 +425,19 @@ export default function Brain() {
 function NoteDetail({
   path,
   note,
+  memoryEntry,
   onDeleted,
   onSaved,
   onClose,
 }: {
   path: string;
   note: BrainNote | null;
+  memoryEntry: MemoryEntry | null;
   onDeleted: (path: string) => void;
   onSaved: (updated: BrainNote) => void;
   onClose: () => void;
 }) {
+  const isMemory = isMemoryVirtualPath(path);
   const [body, setBody] = useState<string | null>(null);
   const [bodyLoading, setBodyLoading] = useState(true);
   const [backlinks, setBacklinks] = useState<BrainBacklink[] | null>(null);
@@ -353,12 +449,29 @@ function NoteDetail({
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
+    setEditing(false);
+    setErr(null);
+
+    // Memory-store projections render straight from the cached entry —
+    // no network call, no backlinks. The Memory tab remains the place
+    // to edit them.
+    if (isMemory) {
+      if (memoryEntry) {
+        const rendered = memoryToBody(memoryEntry);
+        setBody(rendered);
+        setDraft(rendered);
+      } else {
+        setBody(null);
+      }
+      setBacklinks([]);
+      setBodyLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setBodyLoading(true);
     setBody(null);
     setBacklinks(null);
-    setEditing(false);
-    setErr(null);
 
     fetchBrainNote(path)
       .then((r) => {
@@ -385,7 +498,7 @@ function NoteDetail({
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, isMemory, memoryEntry]);
 
   const save = async () => {
     setSaving(true);
@@ -419,16 +532,38 @@ function NoteDetail({
       <header className="brain2-detail-head">
         <div className="brain2-detail-title-wrap">
           <div className="brain2-detail-title">
-            {note?.stem ?? path.replace(/\.md$/, "")}
+            {note?.stem ?? (isMemory ? "Memory entry" : path.replace(/\.md$/, ""))}
           </div>
           <div className="brain2-detail-meta">
-            <span>{prettyFolder(note?.folder ?? path.split("/").slice(0, -1).join("/"))}</span>
+            <span>
+              {isMemory
+                ? memoryEntry
+                  ? `Memory · ${MEMORY_KIND_LABEL[memoryEntry.kind]}`
+                  : "Memory"
+                : prettyFolder(
+                    note?.folder ?? path.split("/").slice(0, -1).join("/"),
+                  )}
+            </span>
             {note?.mtime && <span>·</span>}
             {note?.mtime && <span>{formatDate(note.mtime)}</span>}
           </div>
         </div>
         <div className="brain2-detail-actions">
-          {!editing ? (
+          {isMemory ? (
+            <>
+              <span className="brain2-detail-hint">
+                Managed in Memory tab
+              </span>
+              <button
+                type="button"
+                className="btn"
+                onClick={onClose}
+                aria-label="Close"
+              >
+                Close
+              </button>
+            </>
+          ) : !editing ? (
             <>
               <button
                 type="button"
