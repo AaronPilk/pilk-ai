@@ -278,14 +278,33 @@ export default function Brain() {
   }, []);
 
   const handleUploaded = useCallback(
-    (note: BrainNote) => {
+    (
+      notes: BrainNote[],
+      info: { imported: number; source_kind: "pdf" | "text" | "chatgpt_export" },
+    ) => {
       setNotes((prev) => {
-        const without = prev.filter((n) => n.path !== note.path);
-        return [note, ...without];
+        const paths = new Set(notes.map((n) => n.path));
+        const without = prev.filter((n) => !paths.has(n.path));
+        return [...notes, ...without];
       });
-      setSelectedPath(note.path);
+      // For single-note uploads (PDF / text) auto-open the new note
+      // so the operator sees it immediately. For ChatGPT batch imports
+      // we jump to the Ingested category so they can browse what
+      // just landed — opening a single conversation wouldn't tell
+      // them anything about the other 299.
+      if (info.source_kind === "chatgpt_export") {
+        setActiveCategory("ingested");
+        setSelectedPath(null);
+        setToast(
+          info.imported === 1
+            ? "Imported 1 ChatGPT conversation"
+            : `Imported ${info.imported} ChatGPT conversations`,
+        );
+      } else if (notes.length > 0) {
+        setSelectedPath(notes[0].path);
+        setToast("Uploaded to Brain");
+      }
       setUploadOpen(false);
-      setToast("Uploaded to Brain");
       // Refresh in the background so sizes/mtimes match the server's truth.
       void load();
     },
@@ -879,7 +898,10 @@ function UploadModal({
 }: {
   defaultCategory: CategoryId;
   onClose: () => void;
-  onUploaded: (note: BrainNote) => void;
+  onUploaded: (
+    notes: BrainNote[],
+    info: { imported: number; source_kind: "pdf" | "text" | "chatgpt_export" },
+  ) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -890,26 +912,32 @@ function UploadModal({
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // A .zip upload is currently always a ChatGPT export — the backend
+  // picks the destination folder from the export data, so we hide the
+  // label + category selectors when the operator picks a zip.
+  const isZip = !!file && /\.zip$/i.test(file.name);
+
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] ?? null;
     setFile(f);
-    if (f && !label) {
+    if (f && !label && !/\.zip$/i.test(f.name)) {
       setLabel(f.name.replace(/\.(pdf|txt)$/i, ""));
     }
   };
 
   const submit = async () => {
     if (!file) {
-      setErr("Pick a PDF or .txt file first.");
+      setErr("Pick a PDF, .txt, or .zip file first.");
       return;
     }
     const cat = CATEGORIES.find((c) => c.id === category) ?? CATEGORIES[0];
-    const folder = cat.uploadFolder;
+    const folder = isZip ? "" : cat.uploadFolder;
+    const effectiveLabel = isZip ? "" : (label.trim() || file.name);
     setUploading(true);
     setErr(null);
     try {
-      const r = await uploadBrainNote(file, label.trim() || file.name, folder);
-      onUploaded(r.note);
+      const r = await uploadBrainNote(file, effectiveLabel, folder);
+      onUploaded(r.notes, { imported: r.imported, source_kind: r.source_kind });
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -928,8 +956,9 @@ function UploadModal({
         <header className="brain2-modal-head">
           <div className="brain2-modal-title">Upload to Brain</div>
           <div className="brain2-modal-sub">
-            Drop a PDF or .txt file. PILK extracts the text and files it
-            under the category you pick.
+            Drop a PDF, a .txt note, or a ChatGPT export .zip. PILK
+            extracts the content and files it — a ChatGPT zip lands as
+            one note per conversation under Ingested.
           </div>
         </header>
 
@@ -939,7 +968,7 @@ function UploadModal({
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.txt,application/pdf,text/plain"
+              accept=".pdf,.txt,.zip,application/pdf,text/plain,application/zip,application/x-zip-compressed"
               onChange={onFile}
               className="brain2-file-input"
             />
@@ -951,33 +980,41 @@ function UploadModal({
             )}
           </div>
 
-          <div className="brain2-field">
-            <label className="brain2-field-label">
-              What is this?
-            </label>
-            <input
-              type="text"
-              className="brain2-input"
-              placeholder="e.g. Sales script, product brief, reference doc"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-            />
-          </div>
+          {isZip ? (
+            <div className="brain2-field">
+              <div className="brain2-detail-hint" style={{ marginTop: 4 }}>
+                ChatGPT export detected — each conversation will land as its own note under Ingested. Label + category are chosen automatically.
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="brain2-field">
+                <label className="brain2-field-label">What is this?</label>
+                <input
+                  type="text"
+                  className="brain2-input"
+                  placeholder="e.g. Sales script, product brief, reference doc"
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
+                />
+              </div>
 
-          <div className="brain2-field">
-            <label className="brain2-field-label">Category</label>
-            <select
-              className="brain2-select"
-              value={category}
-              onChange={(e) => setCategory(e.target.value as CategoryId)}
-            >
-              {CATEGORIES.filter((c) => c.id !== "all").map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </div>
+              <div className="brain2-field">
+                <label className="brain2-field-label">Category</label>
+                <select
+                  className="brain2-select"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value as CategoryId)}
+                >
+                  {CATEGORIES.filter((c) => c.id !== "all").map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
 
           {err && <div className="brain2-error">{err}</div>}
         </div>
@@ -997,7 +1034,13 @@ function UploadModal({
             onClick={submit}
             disabled={uploading || !file}
           >
-            {uploading ? "Uploading…" : "Upload"}
+            {uploading
+              ? isZip
+                ? "Importing…"
+                : "Uploading…"
+              : isZip
+                ? "Import to Brain"
+                : "Upload"}
           </button>
         </footer>
       </div>

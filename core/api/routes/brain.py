@@ -33,8 +33,10 @@ so the UI can render its own tree without a second round-trip.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
@@ -406,15 +408,16 @@ async def backlinks(
 
 # ── write endpoints (upload / edit / delete) ─────────────────────────
 
-# Cap on accepted PDF/.txt uploads. We extract to utf-8 markdown anyway,
-# so the raw bytes ceiling can be generous — the vault's own
-# MAX_WRITE_BYTES will reject oversized extracted bodies downstream.
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MiB
+# Cap on accepted PDF / .txt / .zip uploads. ChatGPT data exports can
+# run 50 to 150 MiB for power users, so a 20 MiB ceiling here was too
+# tight. The vault's own MAX_WRITE_BYTES still caps per-note size
+# downstream, so this is effectively just the zip envelope cap.
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200 MiB
 
 # We use pypdf (already in pyproject.toml via the ingester pipeline)
 # rather than pulling in a new dependency. The inline import below
 # degrades gracefully if pypdf isn't installed in some slim env.
-_SUPPORTED_UPLOAD_SUFFIXES = (".pdf", ".txt")
+_SUPPORTED_UPLOAD_SUFFIXES = (".pdf", ".txt", ".zip")
 
 
 class NotePatch(BaseModel):
@@ -455,6 +458,78 @@ def _unique_note_path(vault: Vault, folder: str, stem: str) -> str:
     raise HTTPException(status_code=409, detail="cannot allocate unique note path")
 
 
+def _ingest_chatgpt_zip(
+    vault: Vault, payload: bytes, filename: str
+) -> list[dict[str, Any]]:
+    """Import a ChatGPT "Export data" zip as a batch of vault notes.
+
+    ChatGPT's export is a zip with ``conversations.json`` at the root.
+    We write each conversation to ``ingested/chatgpt/<date>-<slug>.md``
+    using the same renderer the auto-ingest pipeline uses, so manual
+    uploads and cron-driven re-syncs land in identical shapes. A
+    single malformed conversation is skipped rather than aborting the
+    whole import — the operator would rather see 299 / 300 than zero.
+    """
+    # Lazy import so the route module stays importable on envs where
+    # the ingester's optional deps aren't installed.
+    import tempfile
+
+    from core.integrations.ingesters.chatgpt import (
+        ChatGPTIngestError,
+        parse_export,
+        render_conversation_note,
+    )
+
+    with tempfile.NamedTemporaryFile(
+        suffix=".zip", prefix="brain-chatgpt-", delete=False
+    ) as tmp:
+        tmp.write(payload)
+        tmp_path = Path(tmp.name)
+    try:
+        try:
+            conversations = parse_export(tmp_path)
+        except ChatGPTIngestError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Zip doesn't look like a ChatGPT export — expected a "
+                    f"`conversations.json` at the root ({e})."
+                ),
+            ) from e
+        if not conversations:
+            raise HTTPException(
+                status_code=400,
+                detail="ChatGPT export contains zero conversations.",
+            )
+
+        written: list[dict[str, Any]] = []
+        skipped = 0
+        for conv in conversations:
+            rendered = render_conversation_note(conv)
+            try:
+                vault.write(rendered.path, rendered.body)
+            except (OSError, ValueError) as e:
+                log.warning(
+                    "brain_upload_chatgpt_write_failed",
+                    path=rendered.path, error=str(e),
+                )
+                skipped += 1
+                continue
+            written.append(_list_row(vault, rendered.path))
+
+        log.info(
+            "brain_upload_chatgpt_saved",
+            source=filename or "chatgpt.zip",
+            total=len(conversations),
+            written=len(written),
+            skipped=skipped,
+        )
+        return written
+    finally:
+        with contextlib.suppress(OSError):
+            tmp_path.unlink()
+
+
 def _extract_pdf_text(payload: bytes) -> str:
     try:
         from pypdf import PdfReader
@@ -488,26 +563,40 @@ def _extract_pdf_text(payload: bytes) -> str:
 async def upload_note(
     request: Request,
     file: UploadFile = File(...),  # noqa: B008 — FastAPI dependency pattern
-    label: str = Form(...),
+    label: str = Form(""),
     folder: str = Form(""),
 ) -> dict[str, Any]:
-    """Accept a PDF or .txt file, extract its text, and write it to the
-    vault as a new markdown note. Returns the new note's descriptor so
-    the UI can reopen it without refetching the whole list.
+    """Accept a PDF, .txt, or .zip upload and land it in the vault.
 
-    * ``label`` becomes the note title (and file stem).
-    * ``folder`` is a vault-relative folder (``playbooks``,
-      ``clients``, …). Empty string writes to the root.
+    * ``.pdf`` / ``.txt`` → extract text, write one note. ``label`` is
+      the note title; ``folder`` is the vault-relative destination.
+    * ``.zip`` → currently recognises ChatGPT "Export data" zips (the
+      ones containing ``conversations.json``). Each conversation
+      becomes one markdown note under ``ingested/chatgpt/``, named by
+      date + slug. ``label`` / ``folder`` are ignored because the
+      ingester owns the destination shape.
+
+    Response is always ``{"notes": [BrainNote, ...]}`` so the client
+    handles single-note uploads and zip imports uniformly.
     """
     vault = _vault(request)
     filename = (file.filename or "").strip()
     suffix_ok = filename.lower().endswith(_SUPPORTED_UPLOAD_SUFFIXES)
     mime = (file.content_type or "").lower()
-    mime_ok = mime in {"application/pdf", "text/plain", "text/markdown"}
+    mime_ok = mime in {
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "application/zip",
+        "application/x-zip-compressed",
+    }
     if not (suffix_ok or mime_ok):
         raise HTTPException(
             status_code=415,
-            detail="unsupported file type — upload a PDF or .txt file",
+            detail=(
+                "unsupported file type — upload a PDF, .txt, or .zip "
+                "(ChatGPT export) file."
+            ),
         )
     payload = await file.read()
     if not payload:
@@ -518,7 +607,19 @@ async def upload_note(
             detail=f"upload exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MiB cap",
         )
 
-    # Extract body text. .txt/.md → decode; .pdf → pypdf.
+    # ── .zip branch (ChatGPT export for now) ──────────────────────
+    if filename.lower().endswith(".zip") or mime in (
+        "application/zip",
+        "application/x-zip-compressed",
+    ):
+        notes = _ingest_chatgpt_zip(vault, payload, filename)
+        return {
+            "notes": notes,
+            "source_kind": "chatgpt_export",
+            "imported": len(notes),
+        }
+
+    # ── .pdf / .txt branches ─────────────────────────────────────
     if filename.lower().endswith(".pdf") or mime == "application/pdf":
         body_text = _extract_pdf_text(payload)
         if not body_text.strip():
@@ -556,13 +657,18 @@ async def upload_note(
         log.warning("brain_upload_write_failed", path=rel_path, error=str(e))
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    source_kind = "pdf" if filename.lower().endswith(".pdf") else "text"
     log.info(
         "brain_upload_saved",
         path=rel_path,
         bytes=len(markdown.encode("utf-8")),
-        source_kind="pdf" if filename.lower().endswith(".pdf") else "text",
+        source_kind=source_kind,
     )
-    return {"note": _list_row(vault, rel_path)}
+    return {
+        "notes": [_list_row(vault, rel_path)],
+        "source_kind": source_kind,
+        "imported": 1,
+    }
 
 
 @router.patch("/note")
