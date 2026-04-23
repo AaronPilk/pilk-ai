@@ -61,6 +61,13 @@ from core.integrations.ingesters.docs import (
 from core.integrations.ingesters.docs import (
     HARD_MAX_FILES as DOCS_HARD_MAX_FILES,
 )
+from core.integrations.ingesters.apple_messages import (
+    AppleMessagesIngestError,
+    DEFAULT_SINCE_DAYS as MESSAGES_DEFAULT_SINCE_DAYS,
+    HARD_MAX_THREADS as MESSAGES_HARD_MAX_THREADS,
+    render_thread_note as render_messages_thread_note,
+    scan_apple_messages,
+)
 from core.integrations.ingesters.docs import (
     DocsIngestError,
     render_doc_note,
@@ -607,6 +614,130 @@ def _docs_ingest_tool(vault: Vault) -> Tool:
     )
 
 
+def _apple_messages_ingest_tool(vault: Vault) -> Tool:
+    """Pull local Apple Messages history into the vault as per-contact
+    markdown notes. Reads ``~/Library/Messages/chat.db`` read-only;
+    requires macOS Full Disk Access on the pilkd process.
+    """
+
+    async def _handler(args: dict, _ctx: ToolContext) -> ToolOutcome:
+        try:
+            since_days = int(
+                args.get("since_days") or MESSAGES_DEFAULT_SINCE_DAYS
+            )
+        except (TypeError, ValueError):
+            since_days = MESSAGES_DEFAULT_SINCE_DAYS
+        include_groups = bool(args.get("include_groups", False))
+        skip_shortcodes = bool(args.get("skip_shortcodes", True))
+        try:
+            max_threads = int(
+                args.get("max_threads") or MESSAGES_HARD_MAX_THREADS
+            )
+        except (TypeError, ValueError):
+            max_threads = MESSAGES_HARD_MAX_THREADS
+
+        try:
+            scan = scan_apple_messages(
+                since_days=since_days,
+                include_groups=include_groups,
+                skip_shortcodes=skip_shortcodes,
+                max_threads=max_threads,
+            )
+        except AppleMessagesIngestError as e:
+            return ToolOutcome(content=str(e), is_error=True)
+
+        written: list[dict] = []
+        errors: list[str] = []
+        for thread in scan.threads:
+            note = render_messages_thread_note(thread)
+            try:
+                rel = _write_note(vault, note.path, note.body)
+            except (OSError, ValueError) as e:
+                errors.append(f"{thread.note_slug}: {e}")
+                continue
+            written.append(
+                {
+                    "path": rel,
+                    "chat_id": thread.chat_id,
+                    "title": note.title,
+                    "messages": len(thread.messages),
+                }
+            )
+
+        total_msgs = sum(t["messages"] for t in written)
+        summary = (
+            f"Ingested {len(written)} conversation(s) ({total_msgs} "
+            f"messages) from the last {since_days} day(s) into "
+            f"`ingested/messages/`. Skipped {len(scan.skipped)} "
+            "non-text / shortcode / out-of-scope chat(s)."
+        )
+        if errors:
+            summary += f" {len(errors)} write failure(s): {errors[:3]}"
+        return ToolOutcome(
+            content=summary,
+            data={
+                "since_days": since_days,
+                "written": written,
+                "skipped_count": len(scan.skipped),
+                "errors": errors,
+            },
+        )
+
+    return Tool(
+        name="brain_ingest_messages",
+        description=(
+            "Pull the operator's local Apple Messages history into the "
+            "brain vault. One markdown note per 1:1 conversation under "
+            "`ingested/messages/<handle>.md`, messages grouped by day. "
+            "Reads `~/Library/Messages/chat.db` read-only; requires "
+            "Full Disk Access granted to the pilkd process on macOS. "
+            "Defaults to last 90 days of DMs, skipping numeric "
+            "shortcodes (verification codes)."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "since_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650,
+                    "description": (
+                        "How many days of history to ingest (default "
+                        f"{MESSAGES_DEFAULT_SINCE_DAYS})."
+                    ),
+                },
+                "include_groups": {
+                    "type": "boolean",
+                    "description": (
+                        "Include group chats. Default false — group "
+                        "chats flood the vault and are rarely worth "
+                        "archiving as per-conversation notes."
+                    ),
+                },
+                "skip_shortcodes": {
+                    "type": "boolean",
+                    "description": (
+                        "Skip numeric-only senders like 40404 "
+                        "(verification codes, shortcode marketing). "
+                        "Default true."
+                    ),
+                },
+                "max_threads": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": MESSAGES_HARD_MAX_THREADS,
+                    "description": (
+                        "Cap on threads per run (default "
+                        f"{MESSAGES_HARD_MAX_THREADS})."
+                    ),
+                },
+            },
+        },
+        risk=RiskClass.WRITE_LOCAL,
+        handler=_handler,
+    )
+
+
 def make_brain_ingest_tools(
     vault: Vault, accounts: AccountsStore | None = None,
 ) -> list[Tool]:
@@ -620,6 +751,7 @@ def make_brain_ingest_tools(
         _claude_code_ingest_tool(vault),
         _chatgpt_ingest_tool(vault),
         _docs_ingest_tool(vault),
+        _apple_messages_ingest_tool(vault),
     ]
     tools.append(_gmail_ingest_tool(vault, accounts))
     return tools
