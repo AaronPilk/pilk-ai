@@ -139,12 +139,24 @@ export async function fetchCostEntries(limit = 50): Promise<{ entries: CostEntry
 
 export interface SubscriptionUsage {
   count: number;
+  pilk_count?: number;
+  claude_code_count?: number;
   estimated_cap: number;
   pct: number;
   window_hours: number;
   window_start: string;
   oldest_at: string | null;
   severity: "ok" | "warn" | "hot";
+  claude_code?: {
+    count: number;
+    window_hours: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+    sessions_sampled: number;
+    oldest_at: string | null;
+  };
 }
 
 export async function fetchSubscriptionUsage(): Promise<SubscriptionUsage> {

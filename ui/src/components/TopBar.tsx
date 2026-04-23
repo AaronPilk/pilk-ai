@@ -123,10 +123,7 @@ export default function TopBar() {
           {subUsage && (
             <div
               className={`topbar-stat topbar-stat--ring topbar-stat--ring-${subUsage.severity}`}
-              title={
-                `Claude Max — ${subUsage.count} of ~${subUsage.estimated_cap} ` +
-                `subscription turns in the rolling 5-hour window.`
-              }
+              title={formatSubscriptionTooltip(subUsage)}
             >
               <SubscriptionRing pct={subUsage.pct} />
               <div className="topbar-stat-stack">
@@ -180,6 +177,14 @@ export default function TopBar() {
       </div>
     </header>
   );
+}
+
+function formatSubscriptionTooltip(u: SubscriptionUsage): string {
+  const cc = u.claude_code_count ?? u.claude_code?.count ?? 0;
+  const pilk = u.pilk_count ?? 0;
+  const total = `${u.count} of ~${u.estimated_cap} Claude Max turns this 5h window.`;
+  const breakdown = `  ${pilk} from PILK · ${cc} from Claude Code CLI`;
+  return `${total}\n${breakdown}`;
 }
 
 // Thin SVG arc meter rendered next to the "Max" label in the top bar.
