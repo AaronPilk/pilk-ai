@@ -3,6 +3,16 @@
 Keeps filesystem reads and env lookups out of the generic flow module.
 Returns None when no client is configured for a given provider; the
 caller surfaces a clear error.
+
+Lookup order for Slack / LinkedIn / X / Meta:
+  1. ``integration_secrets`` SQLite store (values pasted in Settings →
+     API Keys) — so the operator can connect without shell env vars.
+  2. ``PILK_<PROVIDER>_CLIENT_ID`` / ``PILK_<PROVIDER>_CLIENT_SECRET``
+     env vars — kept as a fallback for Railway / local dev.
+
+Google still resolves through its Desktop-client JSON file because
+that's the shape Google Cloud Console exports; the env-var fallback
+for Google is identical to the others.
 """
 
 from __future__ import annotations
@@ -11,21 +21,33 @@ import json
 import os
 from pathlib import Path
 
+from core.secrets import resolve_secret
+
 
 def load_client(provider: str, *, settings) -> tuple[str, str] | None:
     """Return (client_id, client_secret) for `provider`, or None."""
     if provider == "google":
         return _load_google_client(settings.google_client_secret_path)
     if provider == "slack":
-        return _load_env_pair("PILK_SLACK_CLIENT_ID", "PILK_SLACK_CLIENT_SECRET")
+        return _load_pair(
+            "slack_client_id", "PILK_SLACK_CLIENT_ID",
+            "slack_client_secret", "PILK_SLACK_CLIENT_SECRET",
+        )
     if provider == "linkedin":
-        return _load_env_pair(
-            "PILK_LINKEDIN_CLIENT_ID", "PILK_LINKEDIN_CLIENT_SECRET"
+        return _load_pair(
+            "linkedin_client_id", "PILK_LINKEDIN_CLIENT_ID",
+            "linkedin_client_secret", "PILK_LINKEDIN_CLIENT_SECRET",
         )
     if provider == "x":
-        return _load_env_pair("PILK_X_CLIENT_ID", "PILK_X_CLIENT_SECRET")
+        return _load_pair(
+            "x_client_id", "PILK_X_CLIENT_ID",
+            "x_client_secret", "PILK_X_CLIENT_SECRET",
+        )
     if provider == "meta":
-        return _load_env_pair("PILK_META_CLIENT_ID", "PILK_META_CLIENT_SECRET")
+        return _load_pair(
+            "meta_client_id", "PILK_META_CLIENT_ID",
+            "meta_client_secret", "PILK_META_CLIENT_SECRET",
+        )
     return None
 
 
@@ -48,19 +70,50 @@ def setup_hint(provider: str, *, settings) -> str | None:
             "or set PILK_GOOGLE_CLIENT_ID + PILK_GOOGLE_CLIENT_SECRET."
         )
     if provider == "slack":
-        return "Set PILK_SLACK_CLIENT_ID + PILK_SLACK_CLIENT_SECRET."
+        return (
+            "Paste the Slack app's client ID + client secret in "
+            "Settings → API Keys (fields 'slack_client_id' + "
+            "'slack_client_secret'), or set PILK_SLACK_CLIENT_ID + "
+            "PILK_SLACK_CLIENT_SECRET."
+        )
     if provider == "linkedin":
-        return "Set PILK_LINKEDIN_CLIENT_ID + PILK_LINKEDIN_CLIENT_SECRET."
+        return (
+            "Paste the LinkedIn app's client ID + client secret in "
+            "Settings → API Keys (fields 'linkedin_client_id' + "
+            "'linkedin_client_secret'), or set PILK_LINKEDIN_CLIENT_ID "
+            "+ PILK_LINKEDIN_CLIENT_SECRET."
+        )
     if provider == "x":
-        return "Set PILK_X_CLIENT_ID + PILK_X_CLIENT_SECRET."
+        return (
+            "Paste the X developer app's client ID + client secret in "
+            "Settings → API Keys (fields 'x_client_id' + "
+            "'x_client_secret'), or set PILK_X_CLIENT_ID + "
+            "PILK_X_CLIENT_SECRET."
+        )
     if provider == "meta":
-        return "Set PILK_META_CLIENT_ID + PILK_META_CLIENT_SECRET."
+        return (
+            "Paste the Meta app's app ID + app secret in Settings → "
+            "API Keys (fields 'meta_client_id' + 'meta_client_secret'), "
+            "or set PILK_META_CLIENT_ID + PILK_META_CLIENT_SECRET."
+        )
     return None
 
 
-def _load_env_pair(id_var: str, secret_var: str) -> tuple[str, str] | None:
-    cid = os.getenv(id_var)
-    csec = os.getenv(secret_var)
+def _load_pair(
+    id_secret_name: str,
+    id_env_var: str,
+    secret_secret_name: str,
+    secret_env_var: str,
+) -> tuple[str, str] | None:
+    """Resolve a (client_id, client_secret) pair.
+
+    Each half goes through ``resolve_secret``, which checks the
+    integration_secrets SQLite store first (Settings → API Keys
+    overrides) and falls back to the env var if the store has no row.
+    Returns None unless both halves resolve to non-empty values.
+    """
+    cid = resolve_secret(id_secret_name, env_fallback=os.getenv(id_env_var))
+    csec = resolve_secret(secret_secret_name, env_fallback=os.getenv(secret_env_var))
     if cid and csec:
         return (cid, csec)
     return None
