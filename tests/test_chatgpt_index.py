@@ -76,6 +76,42 @@ def test_classify_topic_specific_wins_over_broad() -> None:
 # ── build_index / load_index ────────────────────────────────────────
 
 
+def test_build_index_classifies_keywords_past_preview_window(
+    tmp_path: Path,
+) -> None:
+    """Previously the classifier only saw the first 300 chars so a
+    conversation that opened with small talk and only got to the topic
+    keywords later dropped to ``general``. Regression test: a body
+    where the topic keywords sit well past the preview window must
+    still bucket correctly."""
+    chat_dir = tmp_path / "ingested" / "chatgpt"
+    chat_dir.mkdir(parents=True)
+
+    # 1200 chars of pleasantries before any topical keyword appears.
+    # This is well past the old 300-char classifier window — only
+    # picks up ``business`` if the classifier reads deep into the body.
+    filler = (
+        "Hey, hope your day is going well. Just wanted to catch up and "
+        "talk about something I've been mulling over for a while now. "
+    )
+    while len(filler) < 1200:
+        filler += "It's been a weird week, lots of small things adding up. "
+
+    body = (
+        "# Thinking out loud\n\n"
+        + filler
+        + "\n\nOK here's the thing — I want to put together a pitch for a "
+        "SaaS with recurring revenue, really nail the GTM funnel and pricing.\n"
+    )
+    (chat_dir / "2026-04-22-thinking.md").write_text(body, encoding="utf-8")
+
+    n = build_index(tmp_path)
+    assert n == 1
+
+    entries = load_index(tmp_path)
+    assert entries[0].topic == "business"
+
+
 def test_build_index_writes_jsonl(tmp_path: Path) -> None:
     _seed_vault(tmp_path)
     n = build_index(tmp_path)

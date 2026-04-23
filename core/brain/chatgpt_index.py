@@ -60,8 +60,16 @@ INDEX_FILE = "ingested/chatgpt/_index.jsonl"
 # and is plenty for keyword scoring without bloating the index on
 # disk (roughly 500 bytes per entry at 300 preview chars → a 10k-note
 # index is ~5 MiB, trivial to mmap).
-PREVIEW_CHARS = 300
+PREVIEW_CHARS = 1500
 TITLE_MAX_CHARS = 160
+# How much of each conversation body we feed the topic classifier.
+# Classifying on the preview alone (the first 300 chars) was missing
+# most threads because ChatGPT conversations usually open with
+# pleasantries / context-setting; the actual keywords (``trade``,
+# ``pitch``, ``revenue``, ``logo``) show up later. Reading a larger
+# window catches those without blowing memory on multi-megabyte
+# exports.
+CLASSIFY_CHARS = 8000
 
 # YAML frontmatter at the top of notes (``---\n…\n---``). Stripped
 # before title / preview extraction so the index doesn't leak
@@ -214,11 +222,25 @@ def _derive_title(body: str, fallback: str) -> str:
 
 def _derive_preview(body: str) -> str:
     """Flatten the first ``PREVIEW_CHARS`` of prose for keyword search."""
+    return _flatten_body(body)[:PREVIEW_CHARS]
+
+
+def _derive_classify_text(body: str) -> str:
+    """Wider window used only by the topic classifier. Bigger than the
+    preview because topic keywords routinely sit past the opening
+    paragraph in ChatGPT conversations."""
+    return _flatten_body(body)[:CLASSIFY_CHARS]
+
+
+def _flatten_body(body: str) -> str:
+    """Strip frontmatter + markdown formatting and collapse whitespace.
+    Shared between preview derivation and the classifier window so both
+    see the same cleaned prose.
+    """
     clean = _FRONTMATTER_RE.sub("", body or "", count=1)
     clean = _INLINE_MD_RE.sub("", clean)
     clean = _LINK_RE.sub(r"\1", clean)
-    flat = re.sub(r"\s+", " ", clean).strip()
-    return flat[:PREVIEW_CHARS]
+    return re.sub(r"\s+", " ", clean).strip()
 
 
 def _entry_for_file(vault_root: Path, abs_path: Path) -> IndexEntry | None:
@@ -246,7 +268,13 @@ def _entry_for_file(vault_root: Path, abs_path: Path) -> IndexEntry | None:
     stem = abs_path.stem
     title = _derive_title(body, fallback=stem)
     preview = _derive_preview(body)
-    topic = classify_topic(f"{title}\n{preview}")
+    # Classify off a wider window than the preview. Most ChatGPT
+    # threads open with context/pleasantries before the operator
+    # says anything topical, so classifying on title+preview alone
+    # dropped the vast majority of threads into "general". Using
+    # the first CLASSIFY_CHARS of the cleaned body catches the
+    # actual substance.
+    topic = classify_topic(f"{title}\n{_derive_classify_text(body)}")
     return IndexEntry(
         path=rel, title=title, preview=preview,
         topic=topic, mtime=mtime, size=size,
