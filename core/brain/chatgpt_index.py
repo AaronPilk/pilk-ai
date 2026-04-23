@@ -36,13 +36,14 @@ recall, this is the only module to replace.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
 import re
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 
 from core.logging import get_logger
@@ -393,9 +394,71 @@ def _atomic_write_lines(dest: Path, lines: list[str]) -> None:
         raise
 
 
+# ── scheduler ────────────────────────────────────────────────────────
+#
+# A background task that rebuilds the index once on startup (so a
+# just-ingested export is queryable before the first nightly run) and
+# then at 03:00 local every day. Kept in this module so the index
+# lifecycle lives in one place; wired into app startup from
+# core/api/app.py.
+
+#: Local time-of-day for the nightly rebuild. Matches the spec ("3 AM")
+#: without introducing a hard dep on a cron library — we just sleep
+#: until the next local 03:00.
+NIGHTLY_REBUILD_AT = time(hour=3, minute=0)
+
+
+def _seconds_until_next(now: datetime, target: time) -> float:
+    """Wall-clock seconds from ``now`` until the next local ``target``
+    time-of-day. Always returns a positive value so a tick exactly at
+    ``target`` schedules the following day, not the current one.
+    """
+    today_target = now.replace(
+        hour=target.hour, minute=target.minute, second=0, microsecond=0,
+    )
+    if today_target <= now:
+        today_target = today_target + timedelta(days=1)
+    return (today_target - now).total_seconds()
+
+
+async def _run_scheduler(vault_root: Path) -> None:
+    """Index-on-boot + nightly rebuild loop. Silently swallows every
+    exception so a transient filesystem blip doesn't kill the task."""
+    try:
+        build_index(vault_root)
+    except Exception as e:
+        log.exception("chatgpt_index_boot_build_failed", error=str(e))
+    while True:
+        try:
+            delay = _seconds_until_next(
+                datetime.now().astimezone(),
+                NIGHTLY_REBUILD_AT,
+            )
+            await asyncio.sleep(delay)
+            build_index(vault_root)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.exception("chatgpt_index_nightly_build_failed", error=str(e))
+            # Guarantee forward progress — don't busy-loop on repeated
+            # failures; wait an hour and try again.
+            await asyncio.sleep(3600)
+
+
+def spawn_scheduler(vault_root: Path | str) -> asyncio.Task[None]:
+    """Create the boot + nightly rebuild task. Caller holds the
+    reference so the event loop doesn't garbage-collect it."""
+    root = Path(vault_root).expanduser()
+    return asyncio.create_task(
+        _run_scheduler(root),
+        name="chatgpt-index-scheduler",
+    )
+
+
 __all__ = [
     "CHATGPT_DIR",
     "INDEX_FILE",
+    "NIGHTLY_REBUILD_AT",
     "TOPIC_LABELS",
     "IndexEntry",
     "QueryHit",
@@ -403,4 +466,5 @@ __all__ = [
     "classify_topic",
     "load_index",
     "query_chatgpt_vault",
+    "spawn_scheduler",
 ]

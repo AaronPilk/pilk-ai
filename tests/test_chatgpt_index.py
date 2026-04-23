@@ -1,6 +1,7 @@
 """ChatGPT vault index — build, load, topic classification, query."""
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 
 from core.brain.chatgpt_index import (
@@ -190,3 +191,39 @@ def test_index_entry_roundtrip() -> None:
 def test_index_entry_from_bad_line_is_none() -> None:
     assert IndexEntry.from_json_line("not json") is None
     assert IndexEntry.from_json_line("[]") is None  # not a dict
+
+
+# ── scheduler math ──────────────────────────────────────────────────
+
+
+def test_seconds_until_next_future_same_day() -> None:
+    """Target later today → seconds until target later today."""
+    from datetime import datetime, time
+
+    from core.brain.chatgpt_index import _seconds_until_next
+
+    now = datetime(2026, 4, 23, 1, 0, 0, tzinfo=UTC)
+    # Target 03:00 same day → 2 hours.
+    assert _seconds_until_next(now, time(3, 0)) == 2 * 3600
+
+
+def test_seconds_until_next_wraps_to_tomorrow() -> None:
+    """Target already passed today → schedule it for tomorrow."""
+    from datetime import datetime, time
+
+    from core.brain.chatgpt_index import _seconds_until_next
+
+    now = datetime(2026, 4, 23, 5, 0, 0, tzinfo=UTC)
+    # Target 03:00 has passed → 22 hours until tomorrow's 03:00.
+    assert _seconds_until_next(now, time(3, 0)) == 22 * 3600
+
+
+def test_seconds_until_next_exactly_on_time_wraps() -> None:
+    """At exactly the target second we still wait a full day — avoids
+    firing twice if the loop tick lands right at 03:00:00.000."""
+    from datetime import datetime, time
+
+    from core.brain.chatgpt_index import _seconds_until_next
+
+    now = datetime(2026, 4, 23, 3, 0, 0, tzinfo=UTC)
+    assert _seconds_until_next(now, time(3, 0)) == 24 * 3600

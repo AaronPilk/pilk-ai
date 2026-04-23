@@ -520,6 +520,16 @@ class Settings(BaseSettings):
             "BRAIN_AUTO_INGEST_GMAIL_QUERY",
         ),
     )
+    # Keep the ChatGPT per-conversation side-index warm. Builds once
+    # on boot + nightly at 03:00 local. Default ON; it's a cheap
+    # keyword pass, no network, no LLM calls.
+    chatgpt_index_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "PILK_CHATGPT_INDEX_ENABLED",
+            "CHATGPT_INDEX_ENABLED",
+        ),
+    )
     # Dedicated model for the draft-only APIEngine. Defaults to the
     # standard tier so the governor can re-route via its normal rules
     # later without a settings change.
