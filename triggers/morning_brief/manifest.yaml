@@ -1,15 +1,18 @@
 name: morning_brief
 description: |
   08:00 chief-of-staff briefing. Pulls today's calendar, due GHL
-  tasks, the top three unread Gmail threads, and open Sentinel
-  incidents, then ships one Telegram message to the operator.
-agent_name: daily_brief_agent
+  tasks, the top three unread Gmail threads, overnight agent activity
+  from the daily brain note, and the three most recently updated
+  brain notes, then ships ONE email to the operator's personal Gmail.
+  Email delivery — not Telegram — so the brief lives in an inbox
+  Aaron already scans and stays searchable.
+agent_name: morning_brief_agent
 goal: |
   It's 8am. Compose and send the morning brief to the operator via
-  Telegram. Follow the system prompt's format exactly — calendar,
-  tasks due today, three unread inbox threads, and any open Sentinel
-  incidents. Keep it scannable; Aaron wants to read it in thirty
-  seconds before his first coffee. Append a one-line entry to
+  email (gmail_send_as_pilk → pilkingtonent@gmail.com). Follow the
+  system prompt's format exactly. Omit sections that are empty. One
+  email only — if something is urgent, flag it inside the brief with
+  ⚡ rather than sending a follow-up. Append a one-line entry to
   today's daily note when shipped.
 enabled: true
 schedule:
