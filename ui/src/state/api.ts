@@ -355,6 +355,10 @@ export interface GovernorStatus {
   override?: OverrideMode;
   premium_gate?: PremiumGate;
   budget?: GovernorBudget;
+  // Planner provider names that registered at boot. Only includes
+  // providers whose credentials (API key or subscription binary) were
+  // available. Empty list when the governor is offline.
+  registered_providers?: string[];
 }
 
 export async function fetchGovernorStatus(): Promise<GovernorStatus> {

@@ -1082,6 +1082,11 @@ async def lifespan(app: FastAPI):
     app.state.orchestrator_tasks = set()
     app.state.browser_sessions = browser_sessions
     app.state.governor = governor
+    # Surface the registered provider map so /governor/status can list
+    # which planner providers are actually wired (API-key-gated). The
+    # orchestrator holds its own reference; this one is for the HTTP
+    # surface only.
+    app.state.providers = providers
     app.state.memory = memory
     app.state.brain = brain
     app.state.computer_control = computer_control_gate
