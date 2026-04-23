@@ -54,6 +54,29 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("OPENAI_API_KEY", "PILK_OPENAI_API_KEY"),
     )
+    # Google Gemini for the planner provider. Uses Gemini's OpenAI-
+    # compatible endpoint so the OpenAI provider's code path backs it
+    # too. Get a key at https://aistudio.google.com/apikey.
+    # Falls through common env names (GOOGLE_API_KEY) so a single
+    # Google credential covers both this and nano_banana_api_key for
+    # image gen.
+    gemini_planner_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PILK_GEMINI_PLANNER_API_KEY",
+            "GEMINI_PLANNER_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+        ),
+    )
+    # xAI Grok for the planner provider. Uses xAI's OpenAI-compatible
+    # endpoint at api.x.ai. Get a key at https://console.x.ai.
+    grok_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PILK_GROK_API_KEY", "GROK_API_KEY", "XAI_API_KEY",
+        ),
+    )
     elevenlabs_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("ELEVENLABS_API_KEY", "PILK_ELEVENLABS_API_KEY"),

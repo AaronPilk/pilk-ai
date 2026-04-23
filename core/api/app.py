@@ -778,6 +778,8 @@ async def lifespan(app: FastAPI):
         providers = build_providers(
             anthropic_client=client,
             openai_api_key=settings.openai_api_key,
+            gemini_api_key=settings.gemini_planner_api_key,
+            grok_api_key=settings.grok_api_key,
             claude_code_binary=settings.claude_code_binary,
             enable_claude_code_chat=settings.enable_claude_code_chat,
         )

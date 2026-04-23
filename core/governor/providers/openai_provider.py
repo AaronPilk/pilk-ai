@@ -1,10 +1,17 @@
-"""OpenAI planner provider.
+"""OpenAI-compatible planner provider.
 
-Runs the turn loop against OpenAI's Chat Completions endpoint with
+Runs the turn loop against any Chat-Completions-shaped endpoint with
 native function-calling tools. The translation layer converts the
-Anthropic-shaped turn history the orchestrator already uses into
-OpenAI's expected shape and translates the response back. Orchestrator
+Anthropic-shaped turn history the orchestrator already uses into the
+OpenAI shape and translates the response back so the orchestrator
 stays provider-agnostic.
+
+### Multi-provider reuse
+
+The class takes ``base_url`` and ``name`` kwargs so the same code path
+backs OpenAI itself, Google's Gemini OpenAI-compatible endpoint, and
+xAI's Grok endpoint. Each gets a distinct registry name (``openai``,
+``gemini``, ``grok``) so the tier config can point at a specific one.
 
 Uses httpx directly (no openai SDK dep) — mirrors the approach used by
 the voice drivers. Adaptive thinking / prompt caching are Anthropic-
@@ -26,7 +33,9 @@ from core.governor.providers.base import (
 )
 from core.logging import get_logger
 
-OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_BASE_URL = "https://api.openai.com/v1"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+GROK_BASE_URL = "https://api.x.ai/v1"
 
 # OpenAI's Chat Completions caps the `tools` array at 128. Anthropic
 # allows many more; the orchestrator registers 150+ tools today and
@@ -80,10 +89,29 @@ log = get_logger("pilkd.governor.openai")
 
 
 class OpenAIPlannerProvider:
-    name = "openai"
+    """Chat-Completions-shaped planner provider.
 
-    def __init__(self, api_key: str) -> None:
+    Default config targets OpenAI itself. Pass ``base_url`` and
+    ``name`` to repoint at another OpenAI-compatible endpoint
+    (Gemini, Grok, a local LiteLLM proxy, etc.).
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str = OPENAI_BASE_URL,
+        name: str = "openai",
+    ) -> None:
         self._api_key = api_key
+        # Trim trailing slash so the endpoint concatenation stays
+        # clean regardless of how the caller formats the URL.
+        self._base_url = base_url.rstrip("/")
+        self.name = name
+
+    @property
+    def _endpoint(self) -> str:
+        return f"{self._base_url}/chat/completions"
 
     async def plan_turn(
         self,
@@ -104,6 +132,7 @@ class OpenAIPlannerProvider:
             dropped = [t["name"] for t in tools if t not in capped_tools]
             log.warning(
                 "openai_tools_truncated",
+                provider=self.name,
                 registered=len(tools),
                 kept=len(capped_tools),
                 dropped_count=len(dropped),
@@ -125,7 +154,7 @@ class OpenAIPlannerProvider:
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             r = await client.post(
-                OPENAI_URL,
+                self._endpoint,
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
@@ -135,7 +164,7 @@ class OpenAIPlannerProvider:
             if r.status_code >= 400:
                 body_preview = r.text[:500] if r.text else ""
                 raise RuntimeError(
-                    f"openai {r.status_code} ({model}): {body_preview}"
+                    f"{self.name} {r.status_code} ({model}): {body_preview}"
                 )
             data = r.json()
 
@@ -158,6 +187,7 @@ class OpenAIPlannerProvider:
             except json.JSONDecodeError:
                 log.warning(
                     "openai_tool_args_parse_failed",
+                    provider=self.name,
                     model=model,
                     name=fn.get("name"),
                     raw=raw_args[:200],
