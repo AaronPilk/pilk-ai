@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PILK — Privacy Policy</title>
+    <meta
+      name="description"
+      content="PILK Privacy Policy: what data PILK collects, how it's stored, and how to request deletion."
+    />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --text: #15181f;
+        --text-dim: #565c6b;
+        --bg: #f7f8fb;
+        --border: rgba(10, 14, 32, 0.10);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --text: #eef0f5;
+          --text-dim: #a2a8b8;
+          --bg: #0a0b10;
+          --border: rgba(255, 255, 255, 0.12);
+        }
+      }
+      html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+        line-height: 1.6;
+        font-size: 16px;
+        -webkit-font-smoothing: antialiased;
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 56px 24px 96px;
+      }
+      h1 {
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin: 0 0 8px;
+      }
+      .eyebrow {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        margin-bottom: 24px;
+      }
+      .updated { color: var(--text-dim); margin: 0 0 32px; font-size: 14px; }
+      h2 { font-size: 18px; font-weight: 700; margin: 36px 0 8px; }
+      p, li { color: var(--text); }
+      a { color: inherit; text-decoration: underline; }
+      ul { padding-left: 22px; }
+      li { margin: 4px 0; }
+      hr { border: 0; border-top: 1px solid var(--border); margin: 48px 0 24px; }
+      footer { font-size: 13px; color: var(--text-dim); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">PILK</div>
+      <h1>Privacy Policy</h1>
+      <p class="updated">Last updated: April 22, 2026</p>
+
+      <p>
+        PILK is a personal AI operating system run by Skyway Media on
+        behalf of a single operator. It connects to third-party
+        services — Google, Slack, LinkedIn, X (Twitter), Meta
+        (Facebook / Instagram), and similar providers — so the operator
+        can read from and post to those services through a unified
+        dashboard. This policy describes what data PILK collects,
+        how it is stored, and how to request deletion.
+      </p>
+
+      <h2>1. Who runs PILK</h2>
+      <p>
+        PILK is operated by Aaron Pilk / Skyway Media. Questions about
+        this policy should be sent to
+        <a href="mailto:aaron@skyway.media">aaron@skyway.media</a>.
+      </p>
+
+      <h2>2. What data we collect</h2>
+      <p>
+        When you sign in to a third-party service through PILK, the
+        provider issues an OAuth token that authorizes PILK to act on
+        your behalf. Specifically we may collect and store:
+      </p>
+      <ul>
+        <li>
+          <strong>OAuth access and refresh tokens</strong> for each
+          connected account, along with their expiry and granted
+          scopes.
+        </li>
+        <li>
+          <strong>Basic profile information</strong> returned by each
+          provider after sign-in (name, email or user handle, profile
+          ID, profile picture URL).
+        </li>
+        <li>
+          <strong>Content you explicitly ask PILK to read, summarize,
+          or post</strong> — for example, messages, posts, or
+          conversations that the operator has PILK analyze or send.
+        </li>
+        <li>
+          <strong>Operational metadata</strong> — timestamps, tool
+          names, costs, and audit logs of which actions PILK performed
+          on your behalf.
+        </li>
+      </ul>
+      <p>
+        PILK does not collect data beyond what you have explicitly
+        authorized through a connected account or a direct instruction.
+      </p>
+
+      <h2>3. How the data is used</h2>
+      <p>
+        Data collected through connected accounts is used only to:
+      </p>
+      <ul>
+        <li>
+          Execute the tasks the operator instructs PILK to perform
+          (drafting, posting, scheduling, retrieving messages, etc.).
+        </li>
+        <li>
+          Provide context to PILK's internal memory so it can pick up
+          threads across sessions.
+        </li>
+        <li>
+          Show the operator an audit log of PILK's activity for cost,
+          approval, and debugging purposes.
+        </li>
+      </ul>
+      <p>
+        PILK does <strong>not</strong> sell, rent, or trade user data.
+        It does not share collected data with advertisers or data
+        brokers.
+      </p>
+
+      <h2>4. How the data is stored</h2>
+      <p>
+        OAuth tokens and related metadata are stored in a private
+        database controlled by Skyway Media. Tokens are stored at rest
+        and transmitted only over HTTPS. Only the operator and
+        personnel under direct Skyway Media control can access them.
+      </p>
+      <p>
+        PILK's AI components (for example, Anthropic's Claude API) may
+        process content you hand to them in order to generate a reply;
+        those providers operate under their own privacy policies and
+        do not retain prompts for training.
+      </p>
+
+      <h2>5. Data retention and deletion</h2>
+      <p>
+        Connected-account data is retained until you disconnect the
+        account or request deletion. You can:
+      </p>
+      <ul>
+        <li>
+          Disconnect any connected account from the PILK dashboard at
+          Settings → Accounts, which immediately revokes PILK's copy of
+          the token.
+        </li>
+        <li>
+          Revoke PILK's access directly from the provider
+          (for example,
+          <a href="https://www.facebook.com/settings?tab=business_tools">Facebook's Business Integrations settings</a>
+          for Meta, or
+          <a href="https://myaccount.google.com/permissions">Google Account permissions</a>).
+        </li>
+        <li>
+          Request full deletion of any data associated with your
+          account by following the
+          <a href="/data-deletion">Data Deletion Instructions</a> or by
+          emailing
+          <a href="mailto:aaron@skyway.media">aaron@skyway.media</a>.
+          We respond to every verified request within 30 days.
+        </li>
+      </ul>
+
+      <h2>6. Security</h2>
+      <p>
+        Access to PILK's systems requires authenticated access. All
+        network traffic is over HTTPS. OAuth tokens are stored in a
+        protected database with restricted filesystem access. We
+        follow industry-standard practices, but no system is perfectly
+        secure; in the unlikely event of a breach affecting your data,
+        we will notify you promptly.
+      </p>
+
+      <h2>7. Children's privacy</h2>
+      <p>
+        PILK is not directed to children under 13, and we do not
+        knowingly collect data from anyone under 13. If you believe we
+        have collected such data, please contact us and we will delete
+        it.
+      </p>
+
+      <h2>8. Changes to this policy</h2>
+      <p>
+        If we materially change this policy we will update the "Last
+        updated" date at the top and, where feasible, notify connected
+        operators by email.
+      </p>
+
+      <h2>9. Contact</h2>
+      <p>
+        Aaron Pilk<br />
+        Skyway Media<br />
+        <a href="mailto:aaron@skyway.media">aaron@skyway.media</a>
+      </p>
+
+      <hr />
+      <footer>
+        See also:
+        <a href="/data-deletion">Data Deletion Instructions</a> ·
+        <a href="/">PILK Dashboard</a>
+      </footer>
+    </main>
+  </body>
+</html>

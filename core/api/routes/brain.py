@@ -66,10 +66,92 @@ def _vault(request: Request) -> Vault:
     return vault
 
 
+# YAML frontmatter at the top of a note (``---\n...\n---``). Stripped
+# before we hunt for a display title so the title doesn't come back as
+# an opaque "title: Something" key/value line.
+_FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n?", re.DOTALL)
+# Markdown heading line — captures the text after the hashes.
+_HEADING_LINE_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*$")
+# Cheap per-file read ceiling for title extraction. 2 KiB is plenty to
+# find the first heading or first prose line on any sensibly-shaped
+# markdown note.
+_TITLE_READ_BYTES = 2048
+# Hard cap on how long a display title can be. The card UI clamps to
+# three lines but we still want to bound the payload.
+_TITLE_MAX_CHARS = 120
+
+
+def _looks_like_timestamp(text: str) -> bool:
+    """Heuristic: does this look like a bare date / timestamp line?
+    Covers ``2026-04-22``, ``2026-04-22 14:30``, ``14:30 UTC``, etc.
+    These show up as the first line of daily notes and per-hour
+    ingested files — useless as display titles."""
+    stripped = text.strip()
+    if not stripped:
+        return True
+    return bool(
+        re.fullmatch(r"\d{4}-\d{2}-\d{2}([ T-]\d{2}:\d{2}(:\d{2})?)?( UTC)?", stripped)
+        or re.fullmatch(r"\d{1,2}:\d{2}( UTC)?", stripped)
+    )
+
+
+def _display_title(vault: Vault, rel: str, stem: str) -> str | None:
+    """Return a human-readable title for the note at ``rel``, or
+    ``None`` when we can't improve on the filename.
+
+    We read the first ``_TITLE_READ_BYTES`` of the file, strip any
+    YAML frontmatter, then return:
+      1. The first markdown heading whose text isn't just a
+         repetition of the filename stem or a bare timestamp.
+      2. Otherwise, the first non-trivial prose line.
+
+    Cheap enough to call on every note in the list endpoint — the
+    read is bounded and the vault is on local disk.
+    """
+    abs_path = vault.root / rel
+    try:
+        with abs_path.open("rb") as fh:
+            raw = fh.read(_TITLE_READ_BYTES)
+    except OSError:
+        return None
+    text = raw.decode("utf-8", errors="replace")
+    text = _FRONTMATTER_RE.sub("", text, count=1)
+    stem_lower = stem.strip().lower()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Markdown rule, blockquote, table delimiter — skip.
+        if stripped.startswith(("---", ">", "|")):
+            continue
+        h = _HEADING_LINE_RE.match(stripped)
+        if h:
+            heading = h.group(1).strip()
+            if not heading or heading.lower() == stem_lower:
+                continue
+            if _looks_like_timestamp(heading):
+                continue
+            return heading[:_TITLE_MAX_CHARS]
+        # First prose line — strip cheap markdown emphasis markers so
+        # the card doesn't render ``**bold**`` with the asterisks.
+        plain = re.sub(r"[*_`]+", "", stripped)
+        plain = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", plain)
+        plain = re.sub(r"\s+", " ", plain).strip()
+        if not plain or _looks_like_timestamp(plain):
+            continue
+        return plain[:_TITLE_MAX_CHARS]
+    return None
+
+
 def _list_row(vault: Vault, rel: str) -> dict[str, Any]:
     """Stat + split a vault-relative path into the shape the dashboard
     tree view expects. We tolerate stat failures quietly — a note that
-    vanished between list and stat just gets zeros rather than a 500."""
+    vanished between list and stat just gets zeros rather than a 500.
+
+    Also peeks at the first few lines of the file to derive a human
+    display title (first heading / first prose line), so cards show
+    something more meaningful than the raw filename stem.
+    """
     abs_path = vault.root / rel
     try:
         st = abs_path.stat()
@@ -80,10 +162,12 @@ def _list_row(vault: Vault, rel: str) -> dict[str, Any]:
         mtime = None
     folder, _, filename = rel.rpartition("/")
     stem = filename[:-3] if filename.endswith(".md") else filename
+    title = _display_title(vault, rel, stem)
     return {
         "path": rel,
         "folder": folder,
         "stem": stem,
+        "title": title,
         "size": size,
         "mtime": mtime,
     }

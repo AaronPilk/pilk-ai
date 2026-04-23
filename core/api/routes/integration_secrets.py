@@ -303,6 +303,86 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         ),
         "env": "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
     },
+    # ── OAuth client credentials (for "Connect a new account") ──
+    # These are the per-provider OAuth app credentials that let pilkd
+    # run the Sign-in-with-X flow on the operator's behalf. Each
+    # provider's dev console issues one client ID + client secret;
+    # paste both halves here and the Settings → Connect panel lights
+    # the chip up immediately (no env vars, no restart).
+    "slack_client_id": {
+        "label": "Slack — OAuth client ID",
+        "description": (
+            "From api.slack.com/apps → your app → Basic Information "
+            "→ App Credentials → Client ID. Pairs with the client "
+            "secret below to power Sign in with Slack."
+        ),
+        "env": "PILK_SLACK_CLIENT_ID",
+    },
+    "slack_client_secret": {
+        "label": "Slack — OAuth client secret",
+        "description": (
+            "From api.slack.com/apps → your app → Basic Information "
+            "→ App Credentials → Client Secret. Never leaves pilkd."
+        ),
+        "env": "PILK_SLACK_CLIENT_SECRET",
+    },
+    "linkedin_client_id": {
+        "label": "LinkedIn — OAuth client ID",
+        "description": (
+            "From linkedin.com/developers → your app → Auth → "
+            "Client ID. Pairs with the client secret below. Make "
+            "sure the app has the Sign In With LinkedIn + Share on "
+            "LinkedIn products enabled."
+        ),
+        "env": "PILK_LINKEDIN_CLIENT_ID",
+    },
+    "linkedin_client_secret": {
+        "label": "LinkedIn — OAuth client secret",
+        "description": (
+            "From linkedin.com/developers → your app → Auth → "
+            "Client Secret."
+        ),
+        "env": "PILK_LINKEDIN_CLIENT_SECRET",
+    },
+    "x_client_id": {
+        "label": "X (Twitter) — OAuth client ID",
+        "description": (
+            "From developer.x.com → your project → your app → Keys "
+            "and tokens → OAuth 2.0 Client ID. This is a "
+            "confidential client (PKCE + client secret); the public "
+            "OAuth 2.0 client ID from the same page won't work."
+        ),
+        "env": "PILK_X_CLIENT_ID",
+    },
+    "x_client_secret": {
+        "label": "X (Twitter) — OAuth client secret",
+        "description": (
+            "From developer.x.com → your app → Keys and tokens → "
+            "OAuth 2.0 Client Secret. Visible only on first issue — "
+            "rotate from the same page if lost."
+        ),
+        "env": "PILK_X_CLIENT_SECRET",
+    },
+    "meta_client_id": {
+        "label": "Meta (Facebook / Instagram) — OAuth app ID",
+        "description": (
+            "App ID from developers.facebook.com → your app → "
+            "Settings → Basic → App ID. Powers Sign in with Facebook "
+            "/ Instagram Business Login for posting + insights. "
+            "Different from the long-lived META_ACCESS_TOKEN used by "
+            "the Meta Ads agent."
+        ),
+        "env": "PILK_META_CLIENT_ID",
+    },
+    "meta_client_secret": {
+        "label": "Meta (Facebook / Instagram) — OAuth app secret",
+        "description": (
+            "App secret from developers.facebook.com → your app → "
+            "Settings → Basic → App Secret (click Show). Never leaves "
+            "pilkd."
+        ),
+        "env": "PILK_META_CLIENT_SECRET",
+    },
 }
 
 

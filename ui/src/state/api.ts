@@ -1140,11 +1140,16 @@ export async function setXAUUSDExecutionMode(
 // ── Brain (Obsidian-compatible long-term vault) ──────────────
 
 /** One markdown note in the vault. `folder` is empty for root-level
- * notes; nested notes carry a POSIX path like "daily/2026-04-20". */
+ * notes; nested notes carry a POSIX path like "daily/2026-04-20".
+ *
+ * `title` is the backend's best guess at a human-readable display
+ * title (first meaningful heading or first prose line). Falls back to
+ * `stem` for rendering when null / missing. */
 export interface BrainNote {
   path: string;
   folder: string;
   stem: string;
+  title?: string | null;
   size: number;
   mtime: string | null;
 }
