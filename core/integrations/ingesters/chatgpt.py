@@ -40,6 +40,14 @@ log = get_logger("pilkd.ingest.chatgpt")
 MAX_TURNS_PER_CONVERSATION = 300
 MAX_TURN_CHARS = 2400
 
+# ChatGPT's export used to land a single ``conversations.json`` at the
+# root of the zip. Large accounts now get a sharded layout —
+# ``conversations-000.json``, ``conversations-001.json``, … — each
+# holding a slice of the full array. Match both. The basename is
+# checked (not the full archive path) so a nested layout like
+# ``export/conversations-000.json`` still works.
+_CONVERSATIONS_JSON_RE = re.compile(r"^conversations(?:-\d+)?\.json$")
+
 
 @dataclass(frozen=True)
 class ChatGPTTurn:
@@ -61,43 +69,84 @@ class ChatGPTIngestError(Exception):
     pass
 
 
+def _parse_conversations_bytes(src: Path, member: str, raw: bytes) -> list[dict]:
+    """Parse one ``conversations.json`` blob into a list of raw
+    conversation dicts. Shared by the zip + raw-json loaders so error
+    messages all point at the same failure mode."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ChatGPTIngestError(f"bad JSON in {src} ({member}): {e}") from e
+    if not isinstance(data, list):
+        raise ChatGPTIngestError(
+            f"{src} ({member}): conversations.json root is not a list"
+        )
+    return data
+
+
 def _load_conversations_json(src: Path) -> list[dict]:
     """Accept a path to a .zip (from ChatGPT data-export) or directly
-    to a conversations.json file. Return the parsed array."""
+    to a conversations.json file. Return the merged conversation list.
+
+    Handles the current sharded export format — ChatGPT now splits
+    very large accounts' conversations across ``conversations-000.
+    json``, ``conversations-001.json``, … instead of a single
+    ``conversations.json``. We match both layouts and concatenate the
+    shards in numeric order so the final list mirrors what a single-
+    file export would have produced.
+    """
     if not src.exists():
         raise ChatGPTIngestError(f"not found: {src}")
     if src.is_file() and src.suffix.lower() == ".zip":
         try:
             with zipfile.ZipFile(src) as zf:
-                target = None
-                for name in zf.namelist():
-                    if name.endswith("conversations.json"):
-                        target = name
-                        break
-                if target is None:
+                members = [
+                    name for name in zf.namelist()
+                    if _CONVERSATIONS_JSON_RE.fullmatch(Path(name).name or "")
+                ]
+                if not members:
+                    # Surface a short sample of the zip contents so the
+                    # next format change is obvious rather than opaque.
+                    sample = ", ".join(sorted(zf.namelist())[:6]) or "(empty)"
                     raise ChatGPTIngestError(
-                        f"{src}: zip contains no conversations.json"
+                        f"{src}: zip contains no conversations.json "
+                        f"(saw: {sample})"
                     )
-                with zf.open(target) as fh:
-                    raw = fh.read()
+                # Sort by the numeric suffix so shards merge in order —
+                # ``conversations.json`` (unsharded) sorts to 0 and ends
+                # up first when both layouts somehow coexist.
+                members.sort(key=_shard_sort_key)
+                data: list[dict] = []
+                for member in members:
+                    with zf.open(member) as fh:
+                        raw = fh.read()
+                    data.extend(_parse_conversations_bytes(src, member, raw))
+                if len(members) > 1:
+                    log.info(
+                        "chatgpt_export_merged_shards",
+                        source=str(src),
+                        shards=len(members),
+                        conversations=len(data),
+                    )
+                return data
         except zipfile.BadZipFile as e:
             raise ChatGPTIngestError(f"bad zip: {src}: {e}") from e
-    elif src.is_file() and src.suffix.lower() == ".json":
-        raw = src.read_bytes()
-    else:
-        raise ChatGPTIngestError(
-            f"{src}: expected a .zip or conversations.json, got "
-            f"{src.suffix}"
-        )
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise ChatGPTIngestError(f"bad JSON in {src}: {e}") from e
-    if not isinstance(data, list):
-        raise ChatGPTIngestError(
-            f"{src}: conversations.json root is not a list"
-        )
-    return data
+    if src.is_file() and src.suffix.lower() == ".json":
+        return _parse_conversations_bytes(src, src.name, src.read_bytes())
+    raise ChatGPTIngestError(
+        f"{src}: expected a .zip or conversations.json, got {src.suffix}"
+    )
+
+
+def _shard_sort_key(name: str) -> tuple[int, str]:
+    """Numeric-aware order for ``conversations-NNN.json`` shards.
+    ``conversations.json`` (no number) sorts before any numbered shard.
+    """
+    base = Path(name).name
+    m = re.fullmatch(r"conversations(?:-(\d+))?\.json", base)
+    if m and m.group(1) is not None:
+        return (int(m.group(1)), name)
+    return (-1, name)
 
 
 def _ts_to_dt(raw: object) -> datetime | None:
