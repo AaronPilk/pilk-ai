@@ -51,12 +51,14 @@ def test_unknown_falls_back_to_haiku() -> None:
     assert route_model("") == HAIKU
 
 
-def test_opus_selection_is_logged(caplog) -> None:  # type: ignore[no-untyped-def]
-    """The log line is structured so operator can audit Opus spend."""
-    import logging
-    caplog.set_level(logging.INFO)
+def test_opus_selection_is_logged(capsys) -> None:  # type: ignore[no-untyped-def]
+    """The log line is structured so operator can audit Opus spend.
+
+    structlog is wired to stdout (not stdlib logging) on this project,
+    so we read captured stdout rather than caplog.
+    """
     route_model(TaskType.MAX, caller="unit_test")
-    # structlog pipes through stdlib; the raw message string should
-    # mention opus + the caller tag at least once in the captured log.
-    joined = "\n".join(r.getMessage() for r in caplog.records)
-    assert "opus" in joined.lower() or OPUS in joined or "model_router_opus_selected" in joined
+    captured = capsys.readouterr().out
+    assert "model_router_opus_selected" in captured
+    assert "unit_test" in captured
+    assert OPUS in captured
