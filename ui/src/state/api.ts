@@ -1223,14 +1223,26 @@ export async function fetchBrainBacklinks(
   return r.json();
 }
 
-/** Upload a PDF or .txt file into the vault as a new note. `folder` is
- * a vault-relative folder (e.g. `"playbooks"`); `label` becomes the
- * note title and file stem. Server extracts the text and writes a .md. */
+/** Upload a PDF, .txt, or ChatGPT-export .zip into the vault.
+ *
+ * PDF / .txt → server writes one note at the chosen folder / label.
+ * .zip (ChatGPT export) → server extracts `conversations.json` and
+ * writes one markdown note per conversation under
+ * `ingested/chatgpt/`. `label` + `folder` are ignored for zips.
+ *
+ * Response is always `{notes: [...]}`. `imported` reports how many
+ * notes were written (1 for single files, N for a ChatGPT import).
+ * `source_kind` is `"pdf" | "text" | "chatgpt_export"` so the UI
+ * can show a toast specific to what just happened. */
 export async function uploadBrainNote(
   file: File,
   label: string,
   folder: string,
-): Promise<{ note: BrainNote }> {
+): Promise<{
+  notes: BrainNote[];
+  imported: number;
+  source_kind: "pdf" | "text" | "chatgpt_export";
+}> {
   const body = new FormData();
   body.append("file", file);
   body.append("label", label);
