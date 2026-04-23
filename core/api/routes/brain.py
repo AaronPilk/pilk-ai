@@ -33,6 +33,7 @@ so the UI can render its own tree without a second round-trip.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import re
 import shutil
@@ -45,6 +46,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from pydantic import BaseModel, Field
 
 from core.brain import Vault
+from core.brain.chatgpt_index import build_index as _build_chatgpt_index
 from core.logging import get_logger
 
 log = get_logger("pilkd.brain.route")
@@ -769,6 +771,25 @@ def _archive_chatgpt_zip(
     return rel
 
 
+async def _rebuild_chatgpt_index(vault_root: Path) -> int:
+    """Rebuild the ``ingested/chatgpt/_index.jsonl`` side-index after a
+    ChatGPT export upload so memory hydration sees the fresh
+    conversations immediately.
+
+    The underlying build is a synchronous walk + JSONL write; offload
+    to a worker thread so the FastAPI event loop stays responsive to
+    other requests while a large export is being indexed. A build
+    failure is logged and the response falls back to 0 rather than
+    failing the whole upload — the nightly rebuild will recover the
+    index on its own schedule.
+    """
+    try:
+        return await asyncio.to_thread(_build_chatgpt_index, vault_root)
+    except Exception as e:  # pragma: no cover — defensive, index is best-effort
+        log.warning("brain_upload_chatgpt_index_rebuild_failed", error=str(e))
+        return 0
+
+
 def _ingest_chatgpt_zip_path(
     vault: Vault, zip_path: Path, filename: str
 ) -> list[dict[str, Any]]:
@@ -984,11 +1005,20 @@ async def upload_note(
             # than pretend we did).
             archive_rel = _archive_chatgpt_zip(vault, tmp_path, filename)
             notes = _ingest_chatgpt_zip_path(vault, tmp_path, filename)
+            # Refresh the JSONL side-index so memory hydration picks up
+            # the newly-written conversations on the very next turn.
+            # Without this, fresh uploads stay invisible until the
+            # nightly 03:00 rebuild (or a pilkd restart). Run in a
+            # worker thread so the filesystem scan doesn't stall the
+            # event loop; upload-path UX is "toast after index is
+            # live" so we do await completion.
+            index_total = await _rebuild_chatgpt_index(vault.root)
             return {
                 "notes": notes,
                 "source_kind": "chatgpt_export",
                 "imported": len(notes),
                 "archive_path": archive_rel,
+                "chatgpt_index_entries": index_total,
             }
 
         # ── .pdf / .txt branches ─────────────────────────────
