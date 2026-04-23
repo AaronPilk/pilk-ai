@@ -537,8 +537,9 @@ def _ingest_chatgpt_zip_path(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Zip doesn't look like a ChatGPT export — expected a "
-                f"`conversations.json` at the root ({e})."
+                "Zip doesn't look like a ChatGPT export — expected "
+                f"`conversations.json` (or sharded `conversations-NNN.json`) "
+                f"inside ({e})."
             ),
         ) from e
     if not conversations:

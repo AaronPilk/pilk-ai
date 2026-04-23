@@ -329,6 +329,60 @@ def test_parse_export_rejects_bad_zip(tmp_path: Path) -> None:
         parse_export(bogus)
 
 
+def test_parse_export_reads_sharded_zip(tmp_path: Path) -> None:
+    """New-format ChatGPT exports split the conversation list across
+    ``conversations-000.json``, ``conversations-001.json``, …. We
+    merge the shards in numeric order rather than failing."""
+    def _mk(cid: str, text: str, ts: float) -> dict:
+        return _conv(
+            cid,
+            f"conv-{cid}",
+            {
+                "n1": {
+                    "id": "n1", "parent": None, "children": [],
+                    "message": {
+                        "author": {"role": "user"},
+                        "content": {"parts": [text]},
+                        "create_time": ts,
+                    },
+                },
+            },
+            ts=ts,
+        )
+
+    out = tmp_path / "sharded-export.zip"
+    with zipfile.ZipFile(out, "w") as zf:
+        # Deliberately write shard 1 before shard 0 to prove we sort.
+        zf.writestr(
+            "conversations-001.json",
+            _make_export_json([_mk("b", "second", 1_700_000_200.0)]),
+        )
+        zf.writestr(
+            "conversations-000.json",
+            _make_export_json([_mk("a", "first", 1_700_000_100.0)]),
+        )
+        # Random sibling file that must NOT be picked up.
+        zf.writestr("user.json", b"{}")
+
+    convs = parse_export(out)
+    # Both shards merged — ordering is by updated_at DESC (parse_export
+    # sorts newest-first), so the shard-1 conversation comes first.
+    assert [c.conversation_id for c in convs] == ["b", "a"]
+    assert {c.turns[0].text for c in convs} == {"first", "second"}
+
+
+def test_parse_export_rejects_zip_without_conversations(tmp_path: Path) -> None:
+    """A zip that contains neither ``conversations.json`` nor any
+    ``conversations-NNN.json`` shard raises with a sample of what it
+    actually had, so the operator can tell which file they picked."""
+    bogus = tmp_path / "not-chatgpt.zip"
+    with zipfile.ZipFile(bogus, "w") as zf:
+        zf.writestr("README.md", b"hi")
+        zf.writestr("data.csv", b"a,b,c")
+    with pytest.raises(ChatGPTIngestError, match="saw: "):
+        parse_export(bogus)
+
+
 def test_render_conversation_note_path_shape(tmp_path: Path) -> None:
     """The filename stem encodes the update_time + a sanitised title,
     so Obsidian's file browser sorts by date naturally."""
