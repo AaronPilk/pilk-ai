@@ -643,6 +643,17 @@ class Settings(BaseSettings):
         default="ask",
         validation_alias=AliasChoices("PILK_PREMIUM_GATE", "PREMIUM_GATE"),
     )
+    # Drives the Claude Max subscription usage bar in the dashboard
+    # header. Anthropic does not publish the real cap; 225 is the
+    # ballpark Max-plan 5-hour soft limit reported by the community.
+    # When you start hitting the cap, adjust this down to match what
+    # Anthropic actually enforces on your account.
+    max_messages_per_5h: int = Field(
+        default=225,
+        validation_alias=AliasChoices(
+            "PILK_MAX_MESSAGES_PER_5H", "MAX_MESSAGES_PER_5H",
+        ),
+    )
 
     # ── Google / Gmail integration ───────────────────────────────
     # Path to the OAuth client secret JSON downloaded from Google

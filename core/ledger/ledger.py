@@ -109,6 +109,45 @@ class Ledger:
             await conn.commit()
         return usd
 
+    async def subscription_usage(
+        self, *, window_hours: int = 5,
+    ) -> dict[str, Any]:
+        """Count turns billed against the Claude Max subscription within a
+        rolling window.
+
+        Anthropic doesn't expose the real subscription quota, so we
+        estimate usage by counting every LLM entry with
+        ``tier_provider='claude_code'`` that occurred in the last
+        ``window_hours`` hours. Combined with a caller-tunable
+        ``estimated_cap`` on the consumer side, that's close enough to
+        drive a traffic-light UI indicator.
+
+        Returns ``{count, window_hours, window_start, oldest_at}`` —
+        the consumer supplies the cap and computes the percentage.
+        """
+        now = datetime.now(UTC)
+        window_start = (now - timedelta(hours=window_hours)).isoformat()
+        async with connect(self.db_path) as conn, conn.execute(
+            """
+            SELECT COUNT(*),
+                   MIN(occurred_at)
+            FROM cost_entries
+            WHERE kind = 'llm'
+              AND occurred_at >= ?
+              AND json_extract(metadata_json, '$.tier_provider') = 'claude_code'
+            """,
+            (window_start,),
+        ) as cur:
+            row = await cur.fetchone()
+        count = int(row[0]) if row and row[0] is not None else 0
+        oldest = row[1] if row and row[1] else None
+        return {
+            "count": count,
+            "window_hours": window_hours,
+            "window_start": window_start,
+            "oldest_at": oldest,
+        }
+
     async def summary(self) -> dict[str, float]:
         now = datetime.now(UTC)
         day_start = (now - timedelta(days=1)).isoformat()
