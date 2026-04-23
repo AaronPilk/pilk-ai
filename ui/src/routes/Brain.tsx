@@ -1,25 +1,32 @@
-/** Brain — Apple-style card grid over the knowledge vault.
+/** Brain — CRM-style three-panel knowledge manager.
  *
- * Left sidebar — category selector (All Notes / Daily / Sessions /
- * Clients / People / Projects / Ideas / Memory / Ingested / Playbooks).
+ * Layout:
  *
- * Main column — a card grid of the active category's notes, grouped
- * by recency (Today / Yesterday / This Week / This Month / Earlier).
- * Each group paginates independently so a category with 600 ingested
- * emails doesn't force the operator into a 20-second scroll — they
- * see ~12 recent cards per group and can click "Show more" for the
- * long tail. Global search filters across all categories in real
- * time (client-side, no extra API call per keystroke).
+ *   ┌──────────────┬────────────────────────────────────────────┐
+ *   │ sidebar      │ top bar  (title · search · Upload)         │
+ *   │ — Sales Ops  ├────────────────────────────────────────────┤
+ *   │ — Clients    │ 2-3 column card grid (24 per page)         │
+ *   │ — Trading    │ prev / next pagination                     │
+ *   │ — Personal   │                                            │
+ *   │ — Projects   │                                            │
+ *   │ — Chat Arch. │                                            │
+ *   │ — Inbox      │                                            │
+ *   │ — All Notes  │                                            │
+ *   └──────────────┴────────────────────────────────────────────┘
  *
- * Clicking a card opens the note in a centered modal reader that
- * floats over the grid rather than pushing content aside — same
- * pattern Apple Mail uses for reading a single message. The reader
- * supports inline edit / delete for real notes; memory-store
- * projections are read-only (edit them from the Memory tab).
+ * Clicking a card opens a centered reader modal with the rendered
+ * markdown body, backlinks, and delete-with-confirm. Uploads land in
+ * the active category's upload_folder; ingester-owned categories
+ * (chat_archive / inbox) disable the button.
  *
- * Writes flow through the same Vault on the backend that the agent's
- * `brain_note_write` tool uses, so nothing added here is hidden from
- * PILK during future conversations.
+ * Data endpoints (all new in this PR):
+ *   GET /brain/categories         — sidebar
+ *   GET /brain/notes              — paginated grid (category + q)
+ *   GET /brain/notes/{path}       — detail pane
+ *
+ * Mutations (upload / delete) reuse the existing endpoints, which
+ * share the same Vault object PILK's own brain_note_write tool uses,
+ * so everything added here is visible to future agent reasoning.
  */
 import {
   useCallback,
@@ -31,929 +38,609 @@ import {
 } from "react";
 import {
   deleteBrainNote,
-  fetchBrainBacklinks,
-  fetchBrainNote,
-  fetchBrainNotes,
-  fetchMemory,
-  updateBrainNote,
+  fetchBrainCategories,
+  fetchBrainNoteDetail,
+  fetchBrainNotesPage,
   uploadBrainNote,
   type BrainBacklink,
+  type BrainCategory,
   type BrainNote,
-  type MemoryEntry,
-  type MemoryKind,
+  type BrainNoteDetail,
 } from "../state/api";
 
-// Virtual-path scheme for memory-store projections. Never collides
-// with a real vault path (vault rejects `:` in names).
-const MEMORY_VIRTUAL_PREFIX = "memory://";
+// ── Chat Archive topic clustering ───────────────────────────────────
 
-function isMemoryVirtualPath(p: string): boolean {
-  return p.startsWith(MEMORY_VIRTUAL_PREFIX);
-}
-
-function memoryVirtualPath(id: string): string {
-  return `${MEMORY_VIRTUAL_PREFIX}${id}`;
-}
-
-const MEMORY_KIND_LABEL: Record<MemoryKind, string> = {
-  preference: "Preference",
-  standing_instruction: "Standing Instruction",
-  fact: "Fact",
-  pattern: "Pattern",
-};
-
-function memoryToNote(entry: MemoryEntry): BrainNote {
-  const label = entry.title || MEMORY_KIND_LABEL[entry.kind];
-  return {
-    path: memoryVirtualPath(entry.id),
-    folder: "memory",
-    stem: label,
-    title: label,
-    size: (entry.body || "").length,
-    mtime: entry.updated_at || entry.created_at || null,
-  };
-}
-
-function memoryToBody(entry: MemoryEntry): string {
-  const header = `# ${entry.title || MEMORY_KIND_LABEL[entry.kind]}\n`;
-  const meta = `> ${MEMORY_KIND_LABEL[entry.kind]} · source: ${entry.source || "unknown"}`;
-  const body = (entry.body || "").trim();
-  return `${header}\n${meta}\n\n${body}\n`;
-}
-
-// ── Category model ─────────────────────────────────────────────────
-
-type CategoryId =
-  | "daily"
-  | "sessions"
-  | "clients"
-  | "people"
-  | "projects"
-  | "ideas"
-  | "memory"
-  | "ingested"
-  | "playbooks"
-  | "all";
-
-type Category = {
-  id: CategoryId;
-  label: string;
-  folders: string[];        // folder prefixes that belong to this category
-  uploadFolder: string;     // default folder when uploading into this category
-};
-
-const CATEGORIES: Category[] = [
-  { id: "all", label: "All Notes", folders: [], uploadFolder: "ingested" },
-  { id: "daily", label: "Daily Notes", folders: ["daily"], uploadFolder: "daily" },
-  { id: "sessions", label: "Sessions", folders: ["sessions"], uploadFolder: "sessions" },
-  { id: "clients", label: "Clients", folders: ["clients"], uploadFolder: "clients" },
-  { id: "people", label: "People", folders: ["people", "contacts"], uploadFolder: "people" },
-  { id: "projects", label: "Projects", folders: ["projects"], uploadFolder: "projects" },
-  { id: "ideas", label: "Ideas", folders: ["ideas"], uploadFolder: "ideas" },
-  { id: "memory", label: "Memory", folders: ["memory"], uploadFolder: "memory" },
-  { id: "ingested", label: "Ingested", folders: ["ingested"], uploadFolder: "ingested" },
-  { id: "playbooks", label: "Playbooks", folders: ["playbooks"], uploadFolder: "playbooks" },
+/** Keyword rules mirror the backend's classify_topic() so the UI
+ * shows the same buckets the index uses. Priority-ordered. */
+const TOPIC_RULES: Array<{ id: string; label: string; re: RegExp }> = [
+  {
+    id: "trading", label: "Trading",
+    re: /\b(xauusd|gold|forex|trade|trading|chart|candle|pip|scalp|bullish|bearish)\b/i,
+  },
+  {
+    id: "brand", label: "Brand Building",
+    re: /\b(nv|brand|branding|logo|packaging|label|palette|typography|visual\s+identity)\b/i,
+  },
+  {
+    id: "business", label: "Business Ideas",
+    re: /\b(pitch|revenue|offer|saas|startup|funnel|lead|mrr|arr|pricing|churn)\b/i,
+  },
+  {
+    id: "personal", label: "Personal",
+    re: /\b(health|relationship|relationships|mindset|diet|workout|journal|therapy)\b/i,
+  },
+  {
+    id: "tech", label: "Tech / Dev",
+    re: /\b(code|coding|api|deploy|agent|python|javascript|typescript|react|fastapi|docker)\b/i,
+  },
 ];
 
-function topFolder(path: string): string {
-  return path.split("/", 1)[0] || "";
-}
-
-/** Display title for a card / reader header. Backend-derived `title`
- * (first heading / first prose line) wins; stem is the fallback so
- * notes without a useful body still render something. */
-function noteDisplayTitle(note: BrainNote): string {
-  const t = (note.title || "").trim();
-  if (t) return t;
-  return note.stem;
-}
-
-function categoryOf(note: BrainNote): CategoryId {
-  const top = topFolder(note.folder || note.path);
-  for (const c of CATEGORIES) {
-    if (c.id === "all") continue;
-    if (c.folders.includes(top)) return c.id;
+function classifyTopic(note: BrainNote): string {
+  const hay = `${note.title || ""} ${note.stem || ""}`;
+  for (const rule of TOPIC_RULES) {
+    if (rule.re.test(hay)) return rule.id;
   }
-  return "all";
+  return "general";
 }
 
-// ── Root component ─────────────────────────────────────────────────
+// ── helpers ─────────────────────────────────────────────────────────
 
-export default function Brain() {
-  const [notes, setNotes] = useState<BrainNote[]>([]);
-  const [memoryById, setMemoryById] = useState<Map<string, MemoryEntry>>(
-    () => new Map(),
-  );
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+function formatDate(s: string | null): string {
+  if (!s) return "";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) {
+    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+  return d.toLocaleDateString(undefined, {
+    month: "short", day: "numeric",
+    year: d.getFullYear() === now.getFullYear() ? undefined : "numeric",
+  });
+}
 
-  const [activeCategory, setActiveCategory] = useState<CategoryId>("all");
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// ── main ────────────────────────────────────────────────────────────
+
+export default function Brain(): JSX.Element {
+  const [categories, setCategories] = useState<BrainCategory[]>([]);
+  const [activeCategory, setActiveCategory] = useState<string>("all");
+  const [activeTopic, setActiveTopic] = useState<string>("all");
+  const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
-  const [toast, setToast] = useState<string | null>(null);
-  const [uploadOpen, setUploadOpen] = useState(false);
+  const [notes, setNotes] = useState<BrainNote[]>([]);
+  const [pagination, setPagination] = useState({
+    total: 0, pages: 1, pageSize: 24,
+  });
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [showUpload, setShowUpload] = useState(false);
 
-  const load = useCallback(async () => {
+  const loadCategories = useCallback(async () => {
     try {
-      // Fetch the vault + the structured memory store in parallel.
-      // Memory errors are non-fatal — a missing memory store shouldn't
-      // take the whole Brain page down.
-      const [vault, memory] = await Promise.allSettled([
-        fetchBrainNotes(),
-        fetchMemory(),
-      ]);
-      if (vault.status === "fulfilled") {
-        setNotes(vault.value.notes);
-      }
-      if (memory.status === "fulfilled") {
-        const m = new Map<string, MemoryEntry>();
-        for (const e of memory.value.entries) m.set(e.id, e);
-        setMemoryById(m);
-      }
-      if (vault.status === "rejected") {
-        setErr(
-          vault.reason instanceof Error
-            ? vault.reason.message
-            : String(vault.reason),
-        );
-      } else {
-        setErr(null);
-      }
+      const r = await fetchBrainCategories();
+      setCategories(r.categories);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  const loadNotes = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetchBrainNotesPage({
+        category: activeCategory,
+        page,
+        pageSize: 24,
+        q: query.trim() || undefined,
+      });
+      setNotes(r.notes);
+      setPagination({
+        total: r.total, pages: r.pages, pageSize: r.page_size,
+      });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeCategory, page, query]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { loadCategories(); }, [loadCategories]);
+  useEffect(() => { loadNotes(); }, [loadNotes]);
+  useEffect(() => { setActiveTopic("all"); setPage(1); }, [activeCategory]);
+  useEffect(() => { setPage(1); }, [query]);
 
-  // Auto-dismiss toast.
-  useEffect(() => {
-    if (!toast) return;
-    const t = window.setTimeout(() => setToast(null), 2400);
-    return () => window.clearTimeout(t);
-  }, [toast]);
-
-  // Memory store entries projected as virtual BrainNotes. They live
-  // in the Memory category alongside any real `memory/*.md` files.
-  const memoryNotes = useMemo(() => {
-    const out: BrainNote[] = [];
-    for (const e of memoryById.values()) out.push(memoryToNote(e));
-    return out;
-  }, [memoryById]);
-
-  // Everything we surface in the UI — real vault files plus virtual
-  // memory-store projections. Kept as one collection so filtering,
-  // search, and counts all work uniformly.
-  const allNotes = useMemo(
-    () => [...notes, ...memoryNotes],
-    [notes, memoryNotes],
+  const activeCategoryMeta = useMemo(
+    () => categories.find((c) => c.id === activeCategory) ?? null,
+    [categories, activeCategory],
   );
 
-  const counts = useMemo(() => {
-    const m: Record<CategoryId, number> = {
-      all: allNotes.length,
-      daily: 0,
-      sessions: 0,
-      clients: 0,
-      people: 0,
-      projects: 0,
-      ideas: 0,
-      memory: 0,
-      ingested: 0,
-      playbooks: 0,
-    };
-    for (const n of allNotes) m[categoryOf(n)] += 1;
-    return m;
-  }, [allNotes]);
+  const isChatArchive = activeCategory === "chat_archive";
+  const filteredNotes = useMemo(() => {
+    if (!isChatArchive || activeTopic === "all") return notes;
+    return notes.filter((n) => classifyTopic(n) === activeTopic);
+  }, [notes, isChatArchive, activeTopic]);
 
-  // Filter + sort the list for the middle column.
-  const listed = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let rows = allNotes;
-    if (activeCategory !== "all") {
-      rows = rows.filter((n) => categoryOf(n) === activeCategory);
-    }
-    if (q.length > 0) {
-      rows = rows.filter((n) => {
-        // Memory virtual paths aren't meaningful to the operator, so
-        // don't include them in the haystack — search on title/folder.
-        const pathHay = isMemoryVirtualPath(n.path) ? "" : n.path;
-        const hay = (
-          (n.title || "") + " " + n.stem + " " + n.folder + " " + pathHay
-        ).toLowerCase();
-        return hay.includes(q);
-      });
-    }
-    return [...rows].sort((a, b) => {
-      if (!a.mtime && !b.mtime) return a.stem.localeCompare(b.stem);
-      if (!a.mtime) return 1;
-      if (!b.mtime) return -1;
-      return b.mtime.localeCompare(a.mtime);
-    });
-  }, [allNotes, activeCategory, query]);
-
-  // Keep the selected note valid when the category / filter changes.
-  useEffect(() => {
-    if (selectedPath && !listed.some((n) => n.path === selectedPath)) {
-      setSelectedPath(null);
-    }
-  }, [listed, selectedPath]);
-
-  const activeCategoryObj =
-    CATEGORIES.find((c) => c.id === activeCategory) ?? CATEGORIES[0];
-
-  const handleNoteDeleted = useCallback((path: string) => {
-    setNotes((prev) => prev.filter((n) => n.path !== path));
-    setSelectedPath((cur) => (cur === path ? null : cur));
-    setToast("Note deleted");
-  }, []);
-
-  const handleNoteSaved = useCallback((updated: BrainNote) => {
-    setNotes((prev) =>
-      prev.map((n) => (n.path === updated.path ? { ...n, ...updated } : n)),
-    );
-    setToast("Saved");
-  }, []);
-
-  const handleUploaded = useCallback(
-    (
-      notes: BrainNote[],
-      info: {
-        imported: number;
-        source_kind: "pdf" | "text" | "chatgpt_export";
-        archive_path?: string;
-      },
-    ) => {
-      setNotes((prev) => {
-        const paths = new Set(notes.map((n) => n.path));
-        const without = prev.filter((n) => !paths.has(n.path));
-        return [...notes, ...without];
-      });
-      // For single-note uploads (PDF / text) auto-open the new note
-      // so the operator sees it immediately. For ChatGPT batch imports
-      // we jump to the Ingested category so they can browse what
-      // just landed — opening a single conversation wouldn't tell
-      // them anything about the other 299.
-      if (info.source_kind === "chatgpt_export") {
-        setActiveCategory("ingested");
-        setSelectedPath(null);
-        const count =
-          info.imported === 1
-            ? "1 ChatGPT conversation"
-            : `${info.imported} ChatGPT conversations`;
-        setToast(
-          info.archive_path
-            ? `Imported ${count} · raw zip saved to ${info.archive_path}`
-            : `Imported ${count}`,
-        );
-      } else if (notes.length > 0) {
-        setSelectedPath(notes[0].path);
-        setToast("Uploaded to Brain");
-      }
-      setUploadOpen(false);
-      // Refresh in the background so sizes/mtimes match the server's truth.
-      void load();
+  const onUploaded = useCallback(
+    async (msg: string) => {
+      setShowUpload(false);
+      await loadCategories();
+      await loadNotes();
+      setErr(msg);
+      setTimeout(() => setErr((e) => (e === msg ? null : e)), 3500);
     },
-    [load],
+    [loadCategories, loadNotes],
+  );
+
+  const onDeleted = useCallback(
+    async (path: string) => {
+      try {
+        await deleteBrainNote(path);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+        return;
+      }
+      setSelectedPath(null);
+      await loadCategories();
+      await loadNotes();
+    },
+    [loadCategories, loadNotes],
   );
 
   return (
-    <div className="brain3">
-      <aside className="brain3-sidebar">
-        <div className="brain3-sidebar-head">Brain</div>
-        <nav className="brain3-cat-list">
-          {CATEGORIES.map((c) => {
-            const count = counts[c.id];
-            const active = c.id === activeCategory;
-            return (
-              <button
-                key={c.id}
-                type="button"
-                className={
-                  active
-                    ? "brain3-cat brain3-cat--active"
-                    : "brain3-cat"
-                }
-                onClick={() => {
-                  setActiveCategory(c.id);
-                  setQuery("");
-                }}
-              >
-                <span className="brain3-cat-label">{c.label}</span>
-                <span className="brain3-cat-count">{count}</span>
-              </button>
-            );
-          })}
-        </nav>
-      </aside>
-
-      <section className="brain3-main">
-        <header className="brain3-topbar">
-          <div className="brain3-topbar-title-wrap">
-            <h1 className="brain3-topbar-title">
-              {activeCategoryObj.label}
-            </h1>
-            <p className="brain3-topbar-sub">
-              {loading
-                ? "Reading vault…"
-                : query
-                  ? `${listed.length} ${listed.length === 1 ? "match" : "matches"} for "${query}"`
-                  : `${listed.length} ${listed.length === 1 ? "note" : "notes"}`}
-            </p>
+    <div className="brain3-root">
+      <Sidebar
+        categories={categories}
+        active={activeCategory}
+        onPick={setActiveCategory}
+      />
+      <main className="brain3-main">
+        <TopBar
+          categoryLabel={activeCategoryMeta?.label ?? "All Notes"}
+          categoryIcon={activeCategoryMeta?.icon ?? "📁"}
+          total={pagination.total}
+          query={query}
+          onQuery={setQuery}
+          onUpload={() => setShowUpload(true)}
+          uploadEnabled={
+            !!(activeCategoryMeta?.upload_folder) || activeCategory === "all"
+          }
+        />
+        {isChatArchive && (
+          <TopicChips active={activeTopic} onPick={setActiveTopic} />
+        )}
+        {err && <div className="brain3-banner">{err}</div>}
+        {loading ? (
+          <div className="brain3-empty">Loading…</div>
+        ) : filteredNotes.length === 0 ? (
+          <div className="brain3-empty">
+            No notes in this category{query ? " matching your search" : ""}.
           </div>
-          <div className="brain3-topbar-actions">
-            <div className="brain3-search-wrap">
-              <svg
-                className="brain3-search-icon"
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                aria-hidden="true"
-              >
-                <path
-                  d="M11 11l3 3M7 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                />
-              </svg>
-              <input
-                type="search"
-                className="brain3-search"
-                placeholder="Search…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
+        ) : (
+          <div className="brain3-grid">
+            {filteredNotes.map((n) => (
+              <NoteCard
+                key={n.path}
+                note={n}
+                onOpen={() => setSelectedPath(n.path)}
               />
-            </div>
-            <button
-              type="button"
-              className="btn btn--primary brain3-upload-btn"
-              onClick={() => setUploadOpen(true)}
-            >
-              Upload to Brain
-            </button>
+            ))}
           </div>
-        </header>
-
-        {err && <div className="brain3-error">{err}</div>}
-
-        <div className="brain3-scroll">
-          {loading ? (
-            <div className="brain3-empty">Reading vault…</div>
-          ) : listed.length === 0 ? (
-            <div className="brain3-empty">
-              {query
-                ? "No matches for your search."
-                : activeCategory === "all"
-                  ? "Vault is empty. Upload a doc or let PILK start writing notes."
-                  : "Nothing in this category yet."}
-            </div>
-          ) : (
-            <CardGrid
-              notes={listed}
-              onOpen={(p) => setSelectedPath(p)}
-            />
-          )}
-        </div>
-      </section>
+        )}
+        {pagination.pages > 1 && (
+          <Pagination
+            page={page}
+            pages={pagination.pages}
+            onPage={setPage}
+          />
+        )}
+      </main>
 
       {selectedPath && (
-        <NoteReader
-          key={selectedPath}
+        <DetailModal
           path={selectedPath}
-          note={allNotes.find((n) => n.path === selectedPath) ?? null}
-          memoryEntry={
-            isMemoryVirtualPath(selectedPath)
-              ? memoryById.get(
-                  selectedPath.slice(MEMORY_VIRTUAL_PREFIX.length),
-                ) ?? null
-              : null
-          }
-          onDeleted={handleNoteDeleted}
-          onSaved={handleNoteSaved}
           onClose={() => setSelectedPath(null)}
+          onDeleted={onDeleted}
         />
       )}
-
-      {uploadOpen && (
+      {showUpload && activeCategoryMeta && (
         <UploadModal
-          defaultCategory={activeCategory === "all" ? "ingested" : activeCategory}
-          onClose={() => setUploadOpen(false)}
-          onUploaded={handleUploaded}
+          category={activeCategoryMeta}
+          onClose={() => setShowUpload(false)}
+          onUploaded={onUploaded}
         />
       )}
-
-      {toast && <div className="brain3-toast">{toast}</div>}
     </div>
   );
 }
 
-// ── Card grid with time-grouped, paginated sections ────────────────
-//
-// Split the notes into Today / Yesterday / This Week / This Month /
-// Earlier buckets so a category with hundreds of notes doesn't
-// demand an endless scroll. Each group paginates independently —
-// we default to ``INITIAL_PER_GROUP`` cards per group and let the
-// operator click "Show N more" to load the long tail incrementally.
+// ── sidebar ─────────────────────────────────────────────────────────
 
-const INITIAL_PER_GROUP = 12;
-const PAGE_STEP = 24;
-
-type TimeGroup = {
-  key: string;
-  label: string;
-  notes: BrainNote[];
-};
-
-function groupNotesByRecency(notes: BrainNote[]): TimeGroup[] {
-  const now = Date.now();
-  const DAY = 86400_000;
-  const buckets: Record<string, BrainNote[]> = {
-    today: [],
-    yesterday: [],
-    week: [],
-    month: [],
-    earlier: [],
-  };
-  for (const n of notes) {
-    if (!n.mtime) {
-      buckets.earlier.push(n);
-      continue;
-    }
-    const age = now - Date.parse(n.mtime);
-    if (age < DAY) buckets.today.push(n);
-    else if (age < 2 * DAY) buckets.yesterday.push(n);
-    else if (age < 7 * DAY) buckets.week.push(n);
-    else if (age < 30 * DAY) buckets.month.push(n);
-    else buckets.earlier.push(n);
-  }
-  const out: TimeGroup[] = [
-    { key: "today", label: "Today", notes: buckets.today },
-    { key: "yesterday", label: "Yesterday", notes: buckets.yesterday },
-    { key: "week", label: "This Week", notes: buckets.week },
-    { key: "month", label: "This Month", notes: buckets.month },
-    { key: "earlier", label: "Earlier", notes: buckets.earlier },
-  ];
-  return out.filter((g) => g.notes.length > 0);
-}
-
-function CardGrid({
-  notes,
-  onOpen,
+function Sidebar({
+  categories, active, onPick,
 }: {
-  notes: BrainNote[];
-  onOpen: (path: string) => void;
-}) {
-  // Per-group pagination state. Keyed by group label so pagination
-  // survives re-renders as long as the same group exists; when the
-  // filter changes and groups differ, untracked groups fall back to
-  // the default initial count.
-  const [shownByGroup, setShownByGroup] = useState<Record<string, number>>(
-    {},
-  );
-
-  // Reset pagination whenever the underlying set of notes changes
-  // identity (i.e. category switch or search typed) so the operator
-  // starts at the top of each new context instead of carrying an
-  // expanded "Earlier" bucket from the previous view.
-  useEffect(() => {
-    setShownByGroup({});
-  }, [notes]);
-
-  const groups = useMemo(() => groupNotesByRecency(notes), [notes]);
-
+  categories: BrainCategory[];
+  active: string;
+  onPick: (id: string) => void;
+}): JSX.Element {
   return (
-    <div className="brain3-groups">
-      {groups.map((g) => {
-        const shown = shownByGroup[g.key] ?? INITIAL_PER_GROUP;
-        const visible = g.notes.slice(0, shown);
-        const remaining = g.notes.length - visible.length;
-        return (
-          <section key={g.key} className="brain3-group">
-            <header className="brain3-group-head">
-              <h2 className="brain3-group-title">{g.label}</h2>
-              <span className="brain3-group-count">
-                {g.notes.length}
-              </span>
-            </header>
-            <div className="brain3-card-grid">
-              {visible.map((n) => (
-                <NoteCard
-                  key={n.path}
-                  note={n}
-                  onClick={() => onOpen(n.path)}
-                />
-              ))}
-            </div>
-            {remaining > 0 && (
-              <div className="brain3-group-more">
-                <button
-                  type="button"
-                  className="brain3-show-more"
-                  onClick={() =>
-                    setShownByGroup((prev) => ({
-                      ...prev,
-                      [g.key]: shown + PAGE_STEP,
-                    }))
-                  }
-                >
-                  Show {Math.min(remaining, PAGE_STEP)} more
-                  <span className="brain3-show-more-total">
-                    of {remaining}
-                  </span>
-                </button>
-              </div>
-            )}
-          </section>
-        );
-      })}
+    <aside className="brain3-sidebar">
+      <div className="brain3-sidebar-title">Brain</div>
+      <nav className="brain3-sidebar-list">
+        {categories.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            className={
+              "brain3-sidebar-item" +
+              (c.id === active ? " brain3-sidebar-item--active" : "")
+            }
+            onClick={() => onPick(c.id)}
+          >
+            <span className="brain3-sidebar-icon">{c.icon}</span>
+            <span className="brain3-sidebar-label">{c.label}</span>
+            <span className="brain3-sidebar-count">{c.count}</span>
+          </button>
+        ))}
+      </nav>
+    </aside>
+  );
+}
+
+// ── top bar ─────────────────────────────────────────────────────────
+
+function TopBar({
+  categoryLabel, categoryIcon, total, query, onQuery, onUpload, uploadEnabled,
+}: {
+  categoryLabel: string;
+  categoryIcon: string;
+  total: number;
+  query: string;
+  onQuery: (v: string) => void;
+  onUpload: () => void;
+  uploadEnabled: boolean;
+}): JSX.Element {
+  return (
+    <header className="brain3-topbar">
+      <div className="brain3-topbar-title">
+        <span aria-hidden="true" className="brain3-topbar-icon">
+          {categoryIcon}
+        </span>
+        <span>{categoryLabel}</span>
+        <span className="brain3-topbar-count">{total}</span>
+      </div>
+      <div className="brain3-topbar-right">
+        <div className="brain3-search">
+          <span aria-hidden="true">🔍</span>
+          <input
+            type="search"
+            className="brain3-search-input"
+            placeholder="Search this category"
+            value={query}
+            onChange={(e) => onQuery(e.target.value)}
+          />
+        </div>
+        <button
+          type="button"
+          className="brain3-upload-btn"
+          onClick={onUpload}
+          disabled={!uploadEnabled}
+          title={
+            uploadEnabled
+              ? "Upload to this category"
+              : "Ingester-owned category — uploads don't apply"
+          }
+        >
+          Upload
+        </button>
+      </div>
+    </header>
+  );
+}
+
+// ── topic chips (Chat Archive) ─────────────────────────────────────
+
+function TopicChips({
+  active, onPick,
+}: {
+  active: string;
+  onPick: (id: string) => void;
+}): JSX.Element {
+  const chips = [
+    { id: "all", label: "All" },
+    ...TOPIC_RULES.map((r) => ({ id: r.id, label: r.label })),
+    { id: "general", label: "General" },
+  ];
+  return (
+    <div className="brain3-chips">
+      {chips.map((c) => (
+        <button
+          key={c.id}
+          type="button"
+          className={
+            "brain3-chip" + (c.id === active ? " brain3-chip--active" : "")
+          }
+          onClick={() => onPick(c.id)}
+        >
+          {c.label}
+        </button>
+      ))}
     </div>
   );
 }
+
+// ── grid card ──────────────────────────────────────────────────────
 
 function NoteCard({
-  note,
-  onClick,
+  note, onOpen,
 }: {
   note: BrainNote;
-  onClick: () => void;
-}) {
-  const topFolderName = topFolder(note.folder || note.path);
+  onOpen: () => void;
+}): JSX.Element {
+  const title = note.title || note.stem;
+  const subtitle = note.title ? note.stem : note.folder;
   return (
-    <button type="button" className="brain3-card" onClick={onClick}>
-      <div className="brain3-card-head">
-        <span
-          className="brain3-card-badge"
-          data-tone={folderTone(topFolderName)}
-        >
-          {prettyFolder(note.folder)}
-        </span>
-        <span className="brain3-card-time">
-          {note.mtime ? relativeTime(note.mtime) : "—"}
-        </span>
-      </div>
-      <div className="brain3-card-title">{noteDisplayTitle(note)}</div>
-      {note.title && note.title !== note.stem && (
-        <div className="brain3-card-subtitle">{note.stem}</div>
+    <button type="button" className="brain3-card" onClick={onOpen}>
+      <div className="brain3-card-title">{title}</div>
+      {subtitle && subtitle !== title && (
+        <div className="brain3-card-subtitle">{subtitle}</div>
       )}
-      <div className="brain3-card-foot">
-        <span className="brain3-card-size">{formatSize(note.size)}</span>
+      <div className="brain3-card-meta">
+        <span>{formatDate(note.mtime)}</span>
+        <span aria-hidden="true">·</span>
+        <span>{formatSize(note.size)}</span>
       </div>
     </button>
   );
 }
 
-function folderTone(folder: string): string {
-  // Map each category to a muted accent so cards are visually
-  // clusterable at a glance without looking like Skittles.
-  const map: Record<string, string> = {
-    daily: "blue",
-    sessions: "violet",
-    clients: "green",
-    people: "pink",
-    contacts: "pink",
-    projects: "amber",
-    ideas: "yellow",
-    memory: "teal",
-    ingested: "gray",
-    playbooks: "indigo",
-  };
-  return map[folder] || "gray";
-}
+// ── pagination ─────────────────────────────────────────────────────
 
-// ── Note reader modal (centered over the card grid) ──────────────
-
-function NoteReader({
-  path,
-  note,
-  memoryEntry,
-  onDeleted,
-  onSaved,
-  onClose,
+function Pagination({
+  page, pages, onPage,
 }: {
-  path: string;
-  note: BrainNote | null;
-  memoryEntry: MemoryEntry | null;
-  onDeleted: (path: string) => void;
-  onSaved: (updated: BrainNote) => void;
-  onClose: () => void;
-}) {
-  // Escape closes the reader. We check `confirmDelete` via ref so a
-  // stale closure doesn't dismiss the reader when the user is really
-  // trying to dismiss a confirm dialog nested inside it.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
-  const isMemory = isMemoryVirtualPath(path);
-  const [body, setBody] = useState<string | null>(null);
-  const [bodyLoading, setBodyLoading] = useState(true);
-  const [backlinks, setBacklinks] = useState<BrainBacklink[] | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    setEditing(false);
-    setErr(null);
-
-    // Memory-store projections render straight from the cached entry —
-    // no network call, no backlinks. The Memory tab remains the place
-    // to edit them.
-    if (isMemory) {
-      if (memoryEntry) {
-        const rendered = memoryToBody(memoryEntry);
-        setBody(rendered);
-        setDraft(rendered);
-      } else {
-        setBody(null);
-      }
-      setBacklinks([]);
-      setBodyLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setBodyLoading(true);
-    setBody(null);
-    setBacklinks(null);
-
-    fetchBrainNote(path)
-      .then((r) => {
-        if (cancelled) return;
-        setBody(r.body);
-        setDraft(r.body);
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setErr(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => {
-        if (!cancelled) setBodyLoading(false);
-      });
-
-    fetchBrainBacklinks(path)
-      .then((r) => {
-        if (!cancelled) setBacklinks(r.links);
-      })
-      .catch(() => {
-        if (!cancelled) setBacklinks([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [path, isMemory, memoryEntry]);
-
-  const save = async () => {
-    setSaving(true);
-    setErr(null);
-    try {
-      const r = await updateBrainNote(path, draft);
-      setBody(draft);
-      setEditing(false);
-      onSaved(r.note);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const doDelete = async () => {
-    setDeleting(true);
-    setErr(null);
-    try {
-      await deleteBrainNote(path);
-      onDeleted(path);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setDeleting(false);
-    }
-  };
-
+  page: number;
+  pages: number;
+  onPage: (n: number) => void;
+}): JSX.Element {
   return (
-    <div
-      className="brain3-reader-backdrop"
-      onClick={(e) => {
-        // Backdrop click closes — but not when the click started
-        // inside the reader (e.g. text selection dragged onto the
-        // backdrop), which would feel broken.
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <article
-        className="brain3-reader"
-        role="dialog"
-        aria-modal="true"
-        onClick={(e) => e.stopPropagation()}
+    <div className="brain3-pagination">
+      <button
+        type="button"
+        className="brain3-pagination-btn"
+        onClick={() => onPage(Math.max(1, page - 1))}
+        disabled={page <= 1}
       >
-        <header className="brain3-reader-head">
-          <div className="brain3-reader-title-wrap">
-            <h2 className="brain3-reader-title">
-              {note
-                ? noteDisplayTitle(note)
-                : isMemory
-                  ? "Memory entry"
-                  : path.replace(/\.md$/, "")}
-            </h2>
-            <div className="brain3-reader-meta">
-              <span>
-                {isMemory
-                  ? memoryEntry
-                    ? `Memory · ${MEMORY_KIND_LABEL[memoryEntry.kind]}`
-                    : "Memory"
-                  : prettyFolder(
-                      note?.folder ?? path.split("/").slice(0, -1).join("/"),
-                    )}
-              </span>
-              {note?.mtime && <span>·</span>}
-              {note?.mtime && <span>{formatDate(note.mtime)}</span>}
-            </div>
-          </div>
-          <div className="brain3-reader-actions">
-            {isMemory ? (
-              <>
-                <span className="brain3-reader-hint">
-                  Managed in Memory tab
-                </span>
-                <button
-                  type="button"
-                  className="brain3-reader-close"
-                  onClick={onClose}
-                  aria-label="Close"
-                >
-                  ×
-                </button>
-              </>
-            ) : !editing ? (
-              <>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => setEditing(true)}
-                  disabled={bodyLoading || body === null}
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  className="btn brain3-danger"
-                  onClick={() => setConfirmDelete(true)}
-                  disabled={deleting}
-                >
-                  Delete
-                </button>
-                <button
-                  type="button"
-                  className="brain3-reader-close"
-                  onClick={onClose}
-                  aria-label="Close"
-                >
-                  ×
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => {
-                    setEditing(false);
-                    setDraft(body ?? "");
-                  }}
-                  disabled={saving}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  onClick={save}
-                  disabled={saving}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </>
-            )}
-          </div>
-        </header>
-
-        {err && <div className="brain3-error">{err}</div>}
-
-        <div className="brain3-reader-body">
-          {bodyLoading ? (
-            <div className="brain3-empty">Loading…</div>
-          ) : editing ? (
-            <textarea
-              className="brain3-reader-editor"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              spellCheck
-            />
-          ) : body === null ? (
-            <div className="brain3-empty">Couldn't load this note.</div>
-          ) : (
-            <MarkdownBody source={body} />
-          )}
-        </div>
-
-        {backlinks && backlinks.length > 0 && !editing && (
-          <footer className="brain3-reader-backlinks">
-            <div className="brain3-backlinks-head">Linked from</div>
-            <ul className="brain3-backlinks-list">
-              {backlinks.map((b, i) => (
-                <li key={`${b.path}-${b.line}-${i}`}>
-                  <span className="brain3-backlink-title">
-                    {stemFromPath(b.path)}
-                  </span>
-                  <span className="brain3-backlink-snippet">{b.snippet}</span>
-                </li>
-              ))}
-            </ul>
-          </footer>
-        )}
-
-        {confirmDelete && (
-          <ConfirmDialog
-            message={`Delete "${note?.stem ?? path}"? This removes the file from the vault.`}
-            confirmLabel={deleting ? "Deleting…" : "Delete"}
-            busy={deleting}
-            onCancel={() => setConfirmDelete(false)}
-            onConfirm={doDelete}
-          />
-        )}
-      </article>
+        ← Prev
+      </button>
+      <div className="brain3-pagination-label">
+        Page {page} of {pages}
+      </div>
+      <button
+        type="button"
+        className="brain3-pagination-btn"
+        onClick={() => onPage(Math.min(pages, page + 1))}
+        disabled={page >= pages}
+      >
+        Next →
+      </button>
     </div>
   );
 }
 
-// ── Upload modal ───────────────────────────────────────────────────
+// ── detail modal ───────────────────────────────────────────────────
+
+function DetailModal({
+  path, onClose, onDeleted,
+}: {
+  path: string;
+  onClose: () => void;
+  onDeleted: (path: string) => void;
+}): JSX.Element {
+  const [detail, setDetail] = useState<BrainNoteDetail | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDetail(null);
+    setErr(null);
+    fetchBrainNoteDetail(path)
+      .then((d) => {
+        if (!cancelled) setDetail(d);
+      })
+      .catch((e) => {
+        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="brain3-modal-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="brain3-modal" role="dialog" aria-modal="true">
+        <header className="brain3-modal-head">
+          <div className="brain3-modal-title">
+            {detail?.note.title || detail?.note.stem || path}
+          </div>
+          <button
+            type="button"
+            className="brain3-modal-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </header>
+        {err && <div className="brain3-banner">{err}</div>}
+        {!detail && !err && <div className="brain3-empty">Loading…</div>}
+        {detail && (
+          <>
+            <div className="brain3-modal-meta">
+              {detail.note.folder && <span>{detail.note.folder}</span>}
+              {detail.note.mtime && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span>{formatDate(detail.note.mtime)}</span>
+                </>
+              )}
+              <span aria-hidden="true">·</span>
+              <span>{formatSize(detail.note.size)}</span>
+            </div>
+            <article className="brain3-modal-body">
+              <MarkdownRender body={detail.body} />
+            </article>
+            {detail.backlinks.length > 0 && (
+              <aside className="brain3-backlinks">
+                <div className="brain3-backlinks-title">Backlinks</div>
+                <ul>
+                  {detail.backlinks.map((bl: BrainBacklink) => (
+                    <li key={`${bl.path}-${bl.line}`}>
+                      <span className="brain3-backlinks-path">{bl.path}</span>
+                      {bl.snippet && (
+                        <span className="brain3-backlinks-snippet">
+                          {bl.snippet}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </aside>
+            )}
+            <footer className="brain3-modal-foot">
+              {confirmDelete ? (
+                <div className="brain3-confirm">
+                  <span>Delete this note?</span>
+                  <button
+                    type="button"
+                    className="brain3-btn brain3-btn--danger"
+                    onClick={() => onDeleted(path)}
+                  >
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    className="brain3-btn"
+                    onClick={() => setConfirmDelete(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="brain3-btn brain3-btn--subtle"
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  Delete
+                </button>
+              )}
+            </footer>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Small dep-free renderer. Handles headings, bulleted lists, and
+// paragraphs — that's what >95% of our vault notes are. Anything
+// richer (tables, images) renders as plain text, which is acceptable
+// for the reader pane given it's a preview, not an editor.
+function MarkdownRender({ body }: { body: string }): JSX.Element {
+  const clean = body.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, "");
+  const blocks = clean.split(/\n{2,}/);
+  return (
+    <>
+      {blocks.map((block, i) => {
+        const h = /^(#{1,6})\s+(.+)$/.exec(block.trim());
+        if (h) {
+          const level = Math.min(h[1].length, 4);
+          const Tag = `h${level}` as keyof JSX.IntrinsicElements;
+          return <Tag key={i}>{h[2]}</Tag>;
+        }
+        if (block.trim().startsWith("- ")) {
+          const items = block
+            .split("\n")
+            .filter((l) => l.trim().startsWith("- "));
+          return (
+            <ul key={i}>
+              {items.map((l, j) => (
+                <li key={j}>{l.trim().replace(/^-\s+/, "")}</li>
+              ))}
+            </ul>
+          );
+        }
+        return <p key={i}>{block}</p>;
+      })}
+    </>
+  );
+}
+
+// ── upload modal ───────────────────────────────────────────────────
 
 function UploadModal({
-  defaultCategory,
-  onClose,
-  onUploaded,
+  category, onClose, onUploaded,
 }: {
-  defaultCategory: CategoryId;
+  category: BrainCategory;
   onClose: () => void;
-  onUploaded: (
-    notes: BrainNote[],
-    info: {
-      imported: number;
-      source_kind: "pdf" | "text" | "chatgpt_export";
-      archive_path?: string;
-    },
-  ) => void;
-}) {
+  onUploaded: (msg: string) => void;
+}): JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [label, setLabel] = useState("");
-  const [category, setCategory] = useState<CategoryId>(
-    defaultCategory === "all" ? "ingested" : defaultCategory,
-  );
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // A .zip upload is currently always a ChatGPT export — the backend
-  // picks the destination folder from the export data, so we hide the
-  // label + category selectors when the operator picks a zip.
   const isZip = !!file && /\.zip$/i.test(file.name);
 
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] ?? null;
     setFile(f);
     if (f && !label && !/\.zip$/i.test(f.name)) {
-      setLabel(f.name.replace(/\.(pdf|txt)$/i, ""));
+      setLabel(f.name.replace(/\.(pdf|txt|md|docx)$/i, ""));
     }
   };
 
   const submit = async () => {
     if (!file) {
-      setErr("Pick a PDF, .txt, or .zip file first.");
+      setErr("Pick a file first.");
       return;
     }
-    const cat = CATEGORIES.find((c) => c.id === category) ?? CATEGORIES[0];
-    const folder = isZip ? "" : cat.uploadFolder;
+    const folder = isZip ? "" : category.upload_folder ?? "";
     const effectiveLabel = isZip ? "" : (label.trim() || file.name);
     setUploading(true);
     setErr(null);
     try {
       const r = await uploadBrainNote(file, effectiveLabel, folder);
-      onUploaded(r.notes, {
-        imported: r.imported,
-        source_kind: r.source_kind,
-        archive_path: r.archive_path,
-      });
+      const count = r.imported;
+      const msg =
+        r.source_kind === "chatgpt_export"
+          ? `Imported ${count} ChatGPT conversations — raw zip archived at ${r.archive_path ?? "ingested/chatgpt-archive/"}`
+          : `Ingested into ${category.label} — ${count} note${count === 1 ? "" : "s"} created`;
+      onUploaded(msg);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -963,82 +650,70 @@ function UploadModal({
 
   return (
     <div
-      className="brain2-modal-backdrop"
+      className="brain3-modal-backdrop"
       onClick={(e) => {
         if (e.target === e.currentTarget && !uploading) onClose();
       }}
     >
-      <div className="brain2-modal" role="dialog" aria-modal="true">
-        <header className="brain2-modal-head">
-          <div className="brain2-modal-title">Upload to Brain</div>
-          <div className="brain2-modal-sub">
-            Drop a PDF, a .txt note, or a ChatGPT export .zip. PILK
-            extracts the content and files it — a ChatGPT zip lands as
-            one note per conversation under Ingested.
+      <div className="brain3-modal brain3-modal--narrow" role="dialog" aria-modal="true">
+        <header className="brain3-modal-head">
+          <div className="brain3-modal-title">
+            Upload to {category.label}
           </div>
+          <button
+            type="button"
+            className="brain3-modal-close"
+            onClick={onClose}
+            disabled={uploading}
+            aria-label="Close"
+          >
+            ×
+          </button>
         </header>
-
-        <div className="brain2-modal-body">
-          <div className="brain2-field">
-            <label className="brain2-field-label">File</label>
+        <div className="brain3-modal-body">
+          <div className="brain3-field">
+            <label className="brain3-field-label">File</label>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.txt,.zip,application/pdf,text/plain,application/zip,application/x-zip-compressed"
+              accept=".pdf,.txt,.md,.zip,.docx,application/pdf,text/plain,application/zip"
               onChange={onFile}
-              className="brain2-file-input"
+              className="brain3-file-input"
             />
             {file && (
-              <div className="brain2-file-chip">
+              <div className="brain3-file-chip">
                 <span>{file.name}</span>
-                <span className="brain2-file-size">{formatSize(file.size)}</span>
+                <span className="brain3-file-size">
+                  {formatSize(file.size)}
+                </span>
               </div>
             )}
           </div>
-
           {isZip ? (
-            <div className="brain2-field">
-              <div className="brain2-detail-hint" style={{ marginTop: 4 }}>
-                ChatGPT export detected — each conversation will land as its own note under Ingested. Label + category are chosen automatically.
+            <div className="brain3-field">
+              <div className="brain3-hint">
+                ChatGPT export detected — each conversation will land as
+                its own note under Chat Archive.
               </div>
             </div>
           ) : (
-            <>
-              <div className="brain2-field">
-                <label className="brain2-field-label">What is this?</label>
-                <input
-                  type="text"
-                  className="brain2-input"
-                  placeholder="e.g. Sales script, product brief, reference doc"
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                />
-              </div>
-
-              <div className="brain2-field">
-                <label className="brain2-field-label">Category</label>
-                <select
-                  className="brain2-select"
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value as CategoryId)}
-                >
-                  {CATEGORIES.filter((c) => c.id !== "all").map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </>
+            <div className="brain3-field">
+              <label className="brain3-field-label">Title</label>
+              <input
+                type="text"
+                className="brain3-input"
+                placeholder="e.g. Sales script, product brief, reference"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+              />
+            </div>
           )}
-
-          {err && <div className="brain2-error">{err}</div>}
+          {err && <div className="brain3-banner">{err}</div>}
         </div>
-
-        <footer className="brain2-modal-foot">
+        <footer className="brain3-modal-foot">
           <button
             type="button"
-            className="btn"
+            className="brain3-btn"
             onClick={onClose}
             disabled={uploading}
           >
@@ -1046,302 +721,14 @@ function UploadModal({
           </button>
           <button
             type="button"
-            className="btn btn--primary"
+            className="brain3-btn brain3-btn--primary"
             onClick={submit}
-            disabled={uploading || !file}
+            disabled={!file || uploading}
           >
-            {uploading
-              ? isZip
-                ? "Importing…"
-                : "Uploading…"
-              : isZip
-                ? "Import to Brain"
-                : "Upload"}
+            {uploading ? "Uploading…" : isZip ? "Import to Brain" : "Upload"}
           </button>
         </footer>
       </div>
     </div>
   );
-}
-
-// ── Confirm dialog ────────────────────────────────────────────────
-
-function ConfirmDialog({
-  message,
-  confirmLabel,
-  busy,
-  onCancel,
-  onConfirm,
-}: {
-  message: string;
-  confirmLabel: string;
-  busy: boolean;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div
-      className="brain2-modal-backdrop"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !busy) onCancel();
-      }}
-    >
-      <div className="brain2-modal brain2-modal--small" role="dialog" aria-modal="true">
-        <div className="brain2-modal-body">
-          <div className="brain2-confirm-msg">{message}</div>
-        </div>
-        <footer className="brain2-modal-foot">
-          <button
-            type="button"
-            className="btn"
-            onClick={onCancel}
-            disabled={busy}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn brain2-danger"
-            onClick={onConfirm}
-            disabled={busy}
-          >
-            {confirmLabel}
-          </button>
-        </footer>
-      </div>
-    </div>
-  );
-}
-
-// ── Formatting helpers ────────────────────────────────────────────
-
-function prettyFolder(folder: string): string {
-  if (!folder) return "Root";
-  const top = folder.split("/", 1)[0] || folder;
-  const match = CATEGORIES.find(
-    (c) => c.id !== "all" && c.folders.includes(top),
-  );
-  if (match) {
-    const rest = folder.slice(top.length).replace(/^\//, "");
-    return rest ? `${match.label} · ${rest}` : match.label;
-  }
-  return folder;
-}
-
-function stemFromPath(p: string): string {
-  const parts = p.split("/");
-  const last = parts[parts.length - 1] || p;
-  return last.replace(/\.md$/, "");
-}
-
-function formatSize(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function relativeTime(iso: string): string {
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return "";
-  const secs = Math.max(0, (Date.now() - then) / 1000);
-  if (secs < 60) return "just now";
-  if (secs < 3600) return `${Math.round(secs / 60)}m`;
-  if (secs < 86400) return `${Math.round(secs / 3600)}h`;
-  if (secs < 86400 * 30) return `${Math.round(secs / 86400)}d`;
-  return iso.slice(0, 10);
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-// ── Markdown renderer ─────────────────────────────────────────────
-// Kept inline (rather than pulling in react-markdown) to stay
-// dependency-free and match the styled-badge treatment of
-// [[wikilinks]] used elsewhere in the app.
-
-function MarkdownBody({ source }: { source: string }) {
-  const blocks = useMemo(() => parseMarkdown(source), [source]);
-  return (
-    <div className="brain2-markdown">
-      {blocks.map((b, i) => renderBlock(b, i))}
-    </div>
-  );
-}
-
-type Block =
-  | { kind: "h1" | "h2" | "h3"; text: string }
-  | { kind: "p"; text: string }
-  | { kind: "ul"; items: string[] }
-  | { kind: "ol"; items: string[] }
-  | { kind: "pre"; text: string }
-  | { kind: "blockquote"; text: string }
-  | { kind: "hr" };
-
-function parseMarkdown(src: string): Block[] {
-  const lines = src.replace(/\r\n?/g, "\n").split("\n");
-  const blocks: Block[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line.trim() === "") {
-      i++;
-      continue;
-    }
-    if (line.startsWith("```")) {
-      const buf: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].startsWith("```")) {
-        buf.push(lines[i]);
-        i++;
-      }
-      i++;
-      blocks.push({ kind: "pre", text: buf.join("\n") });
-      continue;
-    }
-    if (/^\s*---+\s*$/.test(line)) {
-      blocks.push({ kind: "hr" });
-      i++;
-      continue;
-    }
-    const h = line.match(/^(#{1,3})\s+(.*)$/);
-    if (h) {
-      const level = h[1].length as 1 | 2 | 3;
-      blocks.push({ kind: `h${level}` as "h1" | "h2" | "h3", text: h[2] });
-      i++;
-      continue;
-    }
-    if (/^\s*>\s?/.test(line)) {
-      const buf: string[] = [];
-      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
-        buf.push(lines[i].replace(/^\s*>\s?/, ""));
-        i++;
-      }
-      blocks.push({ kind: "blockquote", text: buf.join(" ") });
-      continue;
-    }
-    if (/^\s*[-*]\s+/.test(line)) {
-      const items: string[] = [];
-      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^\s*[-*]\s+/, ""));
-        i++;
-      }
-      blocks.push({ kind: "ul", items });
-      continue;
-    }
-    if (/^\s*\d+\.\s+/.test(line)) {
-      const items: string[] = [];
-      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^\s*\d+\.\s+/, ""));
-        i++;
-      }
-      blocks.push({ kind: "ol", items });
-      continue;
-    }
-    const paraLines: string[] = [line];
-    i++;
-    while (
-      i < lines.length &&
-      lines[i].trim() !== "" &&
-      !lines[i].startsWith("#") &&
-      !lines[i].startsWith("```") &&
-      !/^\s*[-*]\s+/.test(lines[i]) &&
-      !/^\s*\d+\.\s+/.test(lines[i]) &&
-      !/^\s*>\s?/.test(lines[i])
-    ) {
-      paraLines.push(lines[i]);
-      i++;
-    }
-    blocks.push({ kind: "p", text: paraLines.join(" ") });
-  }
-  return blocks;
-}
-
-function renderBlock(b: Block, key: number): JSX.Element {
-  switch (b.kind) {
-    case "h1":
-      return <h1 key={key}>{renderInline(b.text)}</h1>;
-    case "h2":
-      return <h2 key={key}>{renderInline(b.text)}</h2>;
-    case "h3":
-      return <h3 key={key}>{renderInline(b.text)}</h3>;
-    case "p":
-      return <p key={key}>{renderInline(b.text)}</p>;
-    case "blockquote":
-      return <blockquote key={key}>{renderInline(b.text)}</blockquote>;
-    case "ul":
-      return (
-        <ul key={key}>
-          {b.items.map((it, j) => (
-            <li key={j}>{renderInline(it)}</li>
-          ))}
-        </ul>
-      );
-    case "ol":
-      return (
-        <ol key={key}>
-          {b.items.map((it, j) => (
-            <li key={j}>{renderInline(it)}</li>
-          ))}
-        </ol>
-      );
-    case "pre":
-      return (
-        <pre key={key}>
-          <code>{b.text}</code>
-        </pre>
-      );
-    case "hr":
-      return <hr key={key} />;
-  }
-}
-
-function renderInline(text: string): (string | JSX.Element)[] {
-  const parts: (string | JSX.Element)[] = [];
-  const pattern =
-    /(\[\[([^\]]+)\]\])|(\[([^\]]+)\]\(([^)]+)\))|(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(`([^`]+)`)/g;
-  let last = 0;
-  let match: RegExpExecArray | null;
-  let key = 0;
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > last) {
-      parts.push(text.slice(last, match.index));
-    }
-    if (match[1]) {
-      const raw = match[2];
-      const [target, display] = raw.split("|", 2);
-      parts.push(
-        <span key={key++} className="brain2-wikilink">
-          {(display ?? target).trim()}
-        </span>,
-      );
-    } else if (match[3]) {
-      parts.push(
-        <a
-          key={key++}
-          href={match[5]}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="brain2-link"
-        >
-          {match[4]}
-        </a>,
-      );
-    } else if (match[6]) {
-      parts.push(<strong key={key++}>{match[7]}</strong>);
-    } else if (match[8]) {
-      parts.push(<em key={key++}>{match[9]}</em>);
-    } else if (match[10]) {
-      parts.push(<code key={key++}>{match[11]}</code>);
-    }
-    last = match.index + match[0].length;
-  }
-  if (last < text.length) parts.push(text.slice(last));
-  return parts;
 }
