@@ -137,6 +137,22 @@ export async function fetchCostEntries(limit = 50): Promise<{ entries: CostEntry
   return r.json();
 }
 
+export interface SubscriptionUsage {
+  count: number;
+  estimated_cap: number;
+  pct: number;
+  window_hours: number;
+  window_start: string;
+  oldest_at: string | null;
+  severity: "ok" | "warn" | "hot";
+}
+
+export async function fetchSubscriptionUsage(): Promise<SubscriptionUsage> {
+  const r = await apiFetch(`/cost/subscription-usage`);
+  if (!r.ok) throw new Error(`GET /cost/subscription-usage failed: ${r.status}`);
+  return r.json();
+}
+
 export type AutonomyProfile =
   | "observer"
   | "assistant"

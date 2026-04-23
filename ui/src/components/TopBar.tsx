@@ -4,14 +4,21 @@ import {
   cancelAllRunning,
   fetchCostSummary,
   fetchSentinelSummary,
+  fetchSubscriptionUsage,
   pilk,
   useConnection,
   type CostSummary,
+  type SubscriptionUsage,
 } from "../state/api";
 import { isCloudMode } from "../lib/supabase";
 import { signOutAndReturnToPortal } from "../lib/AuthGate";
 import { useTheme } from "../lib/theme";
 import VoiceOrb from "./VoiceOrb";
+
+// Poll interval for the Claude Max usage bar. Every 30s is plenty —
+// plan turns fire a cost.updated event that forces a live refresh
+// whenever usage actually changes.
+const SUBSCRIPTION_USAGE_POLL_MS = 30_000;
 
 export default function TopBar() {
   const { status } = useConnection();
@@ -20,20 +27,34 @@ export default function TopBar() {
   const [summary, setSummary] = useState<CostSummary | null>(null);
   const [stopping, setStopping] = useState(false);
   const [sentinelCount, setSentinelCount] = useState(0);
+  const [subUsage, setSubUsage] = useState<SubscriptionUsage | null>(null);
   const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
+    const refreshSubscription = () =>
+      fetchSubscriptionUsage().then(setSubUsage).catch(() => {});
+
     fetchCostSummary().then(setSummary).catch(() => {});
     fetchSentinelSummary()
       .then((s) => setSentinelCount(s.unacked_count))
       .catch(() => {});
-    return pilk.onMessage((m) => {
+    refreshSubscription();
+
+    // Low-frequency heartbeat so the 5-hour window slides even when
+    // there's no traffic; cost.updated below also forces a refresh
+    // the moment a plan actually consumes a subscription turn.
+    const interval = window.setInterval(
+      refreshSubscription, SUBSCRIPTION_USAGE_POLL_MS,
+    );
+
+    const unsubscribe = pilk.onMessage((m) => {
       if (m.type === "plan.created") setRunning((n) => n + 1);
       else if (m.type === "plan.completed") {
         setRunning((n) => Math.max(0, n - 1));
         setStopping(false);
       } else if (m.type === "cost.updated") {
         fetchCostSummary().then(setSummary).catch(() => {});
+        refreshSubscription();
       } else if (m.type === "system.hello" && m.running_plan_id) {
         setRunning(1);
       } else if (m.type === "sentinel.incident") {
@@ -42,6 +63,11 @@ export default function TopBar() {
         setSentinelCount((n) => Math.max(0, n - 1));
       }
     });
+
+    return () => {
+      window.clearInterval(interval);
+      unsubscribe();
+    };
   }, []);
 
   const handleStopAll = async () => {
@@ -94,6 +120,26 @@ export default function TopBar() {
               ${summary ? summary.day_usd.toFixed(4) : "0.0000"}
             </span>
           </div>
+          {subUsage && (
+            <div
+              className={`topbar-stat topbar-stat--ring topbar-stat--ring-${subUsage.severity}`}
+              title={
+                `Claude Max — ${subUsage.count} of ~${subUsage.estimated_cap} ` +
+                `subscription turns in the rolling 5-hour window.`
+              }
+            >
+              <SubscriptionRing pct={subUsage.pct} />
+              <div className="topbar-stat-stack">
+                <span className="topbar-stat-label">Max</span>
+                <span className="topbar-stat-value">
+                  {subUsage.count}
+                  <span className="topbar-stat-denom">
+                    /{subUsage.estimated_cap}
+                  </span>
+                </span>
+              </div>
+            </div>
+          )}
           {sentinelCount > 0 && (
             <Link
               to="/sentinel"
@@ -133,5 +179,45 @@ export default function TopBar() {
         )}
       </div>
     </header>
+  );
+}
+
+// Thin SVG arc meter rendered next to the "Max" label in the top bar.
+// Apple-style: a subtle track circle + a sweeping stroke that animates
+// the current percentage in place. Stroke colour is driven by the
+// parent's severity class so it ramps green → amber → red without
+// swapping elements.
+const RING_R = 9;
+const RING_C = 2 * Math.PI * RING_R;
+
+function SubscriptionRing({ pct }: { pct: number }) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  const dash = (clamped / 100) * RING_C;
+  return (
+    <svg
+      className="topbar-ring"
+      width="22"
+      height="22"
+      viewBox="0 0 22 22"
+      aria-hidden="true"
+    >
+      <circle
+        className="topbar-ring-track"
+        cx="11"
+        cy="11"
+        r={RING_R}
+        fill="none"
+      />
+      <circle
+        className="topbar-ring-fill"
+        cx="11"
+        cy="11"
+        r={RING_R}
+        fill="none"
+        strokeDasharray={`${dash} ${RING_C - dash}`}
+        strokeDashoffset="0"
+        transform="rotate(-90 11 11)"
+      />
+    </svg>
   );
 }

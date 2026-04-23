@@ -341,6 +341,61 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Claude Max subscription usage — ring + count. The chip lives
+ * inside the shared .topbar-stats row so its label + value inherit
+ * the same typography as Running / Today, but it stacks its text
+ * vertically to the right of the SVG ring. Severity classes swap
+ * only the ring stroke so the rest of the chip stays neutral and
+ * Apple-quiet. */
+.topbar-stat--ring {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.topbar-stat--ring .topbar-stat-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  line-height: 1.1;
+}
+.topbar-stat-denom {
+  color: var(--text-faint);
+  font-weight: 400;
+  margin-left: 2px;
+  font-size: 11px;
+}
+.topbar-ring {
+  flex-shrink: 0;
+  overflow: visible;
+}
+.topbar-ring-track {
+  stroke: var(--border, rgba(120, 120, 128, 0.25));
+  stroke-width: 2;
+}
+.topbar-ring-fill {
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  /* SF-System-style ease-out; matches Apple's health-rings timing. */
+  transition:
+    stroke-dasharray 0.55s cubic-bezier(0.33, 1, 0.68, 1),
+    stroke 0.25s ease;
+}
+.topbar-stat--ring-ok .topbar-ring-fill {
+  stroke: #30d158; /* SF system green (dark-mode friendly) */
+}
+.topbar-stat--ring-warn .topbar-ring-fill {
+  stroke: #ffb020; /* SF amber */
+}
+.topbar-stat--ring-hot .topbar-ring-fill {
+  stroke: #ff453a; /* SF red */
+}
+@media (prefers-color-scheme: light) {
+  .topbar-stat--ring-ok .topbar-ring-fill { stroke: #34c759; }
+  .topbar-stat--ring-warn .topbar-ring-fill { stroke: #ff9500; }
+  .topbar-stat--ring-hot .topbar-ring-fill { stroke: #ff3b30; }
+}
+
 .content {
   flex: 1;
   min-height: 0;
