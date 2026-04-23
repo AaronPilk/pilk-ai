@@ -301,3 +301,158 @@ async def test_backlinks_503_when_vault_missing() -> None:
             _FakeRequest(None), path="anything.md"
         )
     assert exc.value.status_code == 503
+
+
+# ── CRM categories + paginated notes + detail ──────────────────────
+
+
+@pytest.fixture
+def crm_vault(tmp_path: Path) -> Vault:
+    """Seed a vault with notes in every CRM category so the listing
+    endpoints have realistic data to slice."""
+    v = Vault(tmp_path)
+    v.ensure_initialized()
+    fixtures = {
+        "ingested/gmail/thread-1.md": "# Inbox thread\n\nUnread email.\n",
+        "ingested/chatgpt/2024-01-05-gold.md": "# Gold scalp\n\nXAUUSD notes.\n",
+        "clients/skyway/offer-a.md": "# Offer A\n\nClient-facing brief.\n",
+        "sessions/2026-04-20.md": "# Session log\n\nDaily session.\n",
+        "daily/2026-04-21.md": "# Daily\n\nToday's log.\n",
+        "tg-telegram-notes.md": "# Telegram log\n\nChat transcript.\n",
+        "trading/xauusd-plan.md": "# XAUUSD plan\n\nTrade setup.\n",
+        "xauusd/position-log.md": "# XAUUSD positions\n\nPosition log.\n",
+        "ingested/uploads/sales-ops/script.md": "# Sales script\n\nOutbound copy.\n",
+        "ingested/uploads/projects/roadmap.md": "# Roadmap\n\nProject plan.\n",
+        "random-uncategorised.md": "# Random\n\nA note with no home.\n",
+    }
+    for rel, body in fixtures.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
+    return v
+
+
+@pytest.mark.asyncio
+async def test_list_categories_returns_counts(crm_vault: Vault) -> None:
+    r = await brain_route.list_categories(_FakeRequest(crm_vault))
+    by_id = {c["id"]: c for c in r["categories"]}
+    # Each bespoke category has at least one matching fixture.
+    assert by_id["inbox"]["count"] >= 1
+    assert by_id["chat_archive"]["count"] >= 1
+    assert by_id["clients"]["count"] >= 1
+    assert by_id["trading"]["count"] >= 2  # trading/ + xauusd/
+    assert by_id["sales_ops"]["count"] >= 1
+    assert by_id["projects"]["count"] >= 1
+    assert by_id["personal"]["count"] >= 3  # sessions, daily, tg-
+    # All Notes count >= the individual category count.
+    assert by_id["all"]["count"] >= by_id["inbox"]["count"]
+    assert r["page_size"] == brain_route.NOTES_PAGE_SIZE
+
+
+def test_classify_category_rules() -> None:
+    assert brain_route._classify_category("ingested/gmail/x.md") == "inbox"
+    assert brain_route._classify_category("ingested/chatgpt/x.md") == "chat_archive"
+    assert brain_route._classify_category("clients/acme/brief.md") == "clients"
+    assert brain_route._classify_category("trading/plan.md") == "trading"
+    assert brain_route._classify_category("xauusd/positions.md") == "trading"
+    assert brain_route._classify_category("sessions/log.md") == "personal"
+    assert brain_route._classify_category("daily/2026-04-20.md") == "personal"
+    assert brain_route._classify_category("tg-telegram.md") == "personal"
+    assert brain_route._classify_category(
+        "ingested/uploads/sales-ops/script.md",
+    ) == "sales_ops"
+    assert brain_route._classify_category(
+        "ingested/uploads/projects/plan.md",
+    ) == "projects"
+    assert brain_route._classify_category("random.md") == "all"
+
+
+@pytest.mark.asyncio
+async def test_list_notes_paginated_filters_by_category(
+    crm_vault: Vault,
+) -> None:
+    r = await brain_route.list_notes_paginated(
+        _FakeRequest(crm_vault), category="trading", page=1,
+        page_size=10, q="",
+    )
+    paths = [n["path"] for n in r["notes"]]
+    assert all(
+        p.startswith("trading/") or p.startswith("xauusd/")
+        for p in paths
+    ), paths
+    assert r["category"] == "trading"
+    assert r["page"] == 1
+    assert r["total"] == len(paths)
+
+
+@pytest.mark.asyncio
+async def test_list_notes_paginated_pagination_math(
+    crm_vault: Vault,
+) -> None:
+    r = await brain_route.list_notes_paginated(
+        _FakeRequest(crm_vault), category="all", page=1,
+        page_size=3, q="",
+    )
+    assert r["page_size"] == 3
+    assert len(r["notes"]) <= 3
+    assert r["pages"] >= 1
+    # total across all pages matches actual vault size (>= the fixture
+    # count — the Vault seeds a starter README).
+    assert r["total"] >= 11
+
+
+@pytest.mark.asyncio
+async def test_list_notes_paginated_query_filter(
+    crm_vault: Vault,
+) -> None:
+    r = await brain_route.list_notes_paginated(
+        _FakeRequest(crm_vault), category="all", page=1,
+        page_size=50, q="xauusd",
+    )
+    paths = [n["path"] for n in r["notes"]]
+    # 'xauusd' appears in trading/xauusd-plan.md + xauusd/position-log.md.
+    assert any("xauusd" in p.lower() for p in paths)
+    for p in paths:
+        # Every result must contain the needle somewhere visible.
+        assert "xauusd" in p.lower() or "xauusd" in (
+            (_row_title(r["notes"], p) or "").lower()
+        )
+
+
+def _row_title(rows: list, path: str) -> str | None:
+    for row in rows:
+        if row["path"] == path:
+            return row.get("title") or row.get("stem")
+    return None
+
+
+@pytest.mark.asyncio
+async def test_read_note_with_backlinks_returns_body_and_category(
+    crm_vault: Vault,
+) -> None:
+    r = await brain_route.read_note_with_backlinks(
+        _FakeRequest(crm_vault), path="clients/skyway/offer-a.md",
+    )
+    assert r["path"] == "clients/skyway/offer-a.md"
+    assert "Offer A" in r["body"]
+    assert r["category"] == "clients"
+    assert "note" in r
+    assert isinstance(r["backlinks"], list)
+
+
+@pytest.mark.asyncio
+async def test_read_note_with_backlinks_404s_on_missing(
+    crm_vault: Vault,
+) -> None:
+    with pytest.raises(HTTPException) as exc:
+        await brain_route.read_note_with_backlinks(
+            _FakeRequest(crm_vault), path="does/not/exist.md",
+        )
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_categories_requires_vault() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await brain_route.list_categories(_FakeRequest(None))
+    assert exc.value.status_code == 503

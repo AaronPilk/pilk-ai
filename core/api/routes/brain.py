@@ -192,6 +192,265 @@ async def list_notes(request: Request) -> dict[str, Any]:
     return {"notes": notes, "root": str(vault.root)}
 
 
+# ── CRM-style category layout ────────────────────────────────────────
+#
+# The Brain dashboard renders a three-panel CRM layout: sidebar of
+# categories (with counts) → grid of notes in the active category →
+# detail modal when a card is clicked. These endpoints feed that
+# layout without forcing the client to re-compute category membership
+# from raw paths on every interaction.
+
+# Ordered so more specific prefixes win over broad ones (e.g. a note
+# under clients/ must fall into `clients` even though it's also a
+# top-level folder; inbox matches only under ingested/gmail/).
+# ``name_prefix`` covers notes whose FILENAME stem starts with a
+# token (``tg-...`` → personal) rather than living under a folder.
+CATEGORIES: list[dict[str, Any]] = [
+    {
+        "id": "sales_ops", "label": "Sales Ops", "icon": "📋",
+        "prefixes": ["ingested/uploads/sales-ops/"],
+        "upload_folder": "ingested/uploads/sales-ops",
+    },
+    {
+        "id": "clients", "label": "Clients", "icon": "👥",
+        "prefixes": ["clients/"],
+        "upload_folder": "clients",
+    },
+    {
+        "id": "trading", "label": "Trading", "icon": "📈",
+        "prefixes": ["trading/", "xauusd/"],
+        "upload_folder": "trading",
+    },
+    {
+        "id": "personal", "label": "Personal", "icon": "🧠",
+        "prefixes": ["sessions/", "daily/"],
+        "name_prefixes": ["tg-"],
+        "upload_folder": "sessions",
+    },
+    {
+        "id": "projects", "label": "Projects", "icon": "🚀",
+        "prefixes": ["ingested/uploads/projects/"],
+        "upload_folder": "ingested/uploads/projects",
+    },
+    {
+        "id": "chat_archive", "label": "Chat Archive", "icon": "💬",
+        "prefixes": ["ingested/chatgpt/"],
+        # Chat Archive is ingester-owned — uploads don't land here.
+        "upload_folder": None,
+    },
+    {
+        "id": "inbox", "label": "Inbox", "icon": "📬",
+        "prefixes": ["ingested/gmail/"],
+        "upload_folder": None,
+    },
+]
+
+ALL_NOTES_ID = "all"
+NOTES_PAGE_SIZE = 24
+
+
+def _category_matches(cat: dict[str, Any], rel: str) -> bool:
+    if any(rel.startswith(pref) for pref in cat.get("prefixes", [])):
+        return True
+    filename = rel.rpartition("/")[-1]
+    return any(
+        filename.startswith(name_pref)
+        for name_pref in cat.get("name_prefixes", [])
+    )
+
+
+def _classify_category(rel: str) -> str:
+    """Return the category id for ``rel``. Falls through to ``all``
+    when no specific category matches."""
+    for cat in CATEGORIES:
+        if _category_matches(cat, rel):
+            return cat["id"]
+    return ALL_NOTES_ID
+
+
+def _filter_by_category(
+    rels: list[str], category: str,
+) -> list[str]:
+    """Narrow ``rels`` to just the active category. ``all`` (or missing
+    category) returns the full list — the sidebar "All Notes" view."""
+    if not category or category == ALL_NOTES_ID:
+        return rels
+    cat = next((c for c in CATEGORIES if c["id"] == category), None)
+    if cat is None:
+        return []
+    return [r for r in rels if _category_matches(cat, r)]
+
+
+def _row_matches_query(row: dict[str, Any], needle: str) -> bool:
+    """Cheap substring search over path + title + stem. Good enough
+    for the sidebar's inline filter box; the main brain_search endpoint
+    does body-text search when the operator wants it."""
+    n = needle.lower()
+    if n in row["path"].lower():
+        return True
+    title = (row.get("title") or "").lower()
+    if title and n in title:
+        return True
+    stem = (row.get("stem") or "").lower()
+    return bool(stem and n in stem)
+
+
+@router.get("/categories")
+async def list_categories(request: Request) -> dict[str, Any]:
+    """Sidebar feed: every category + its current note count, plus the
+    catch-all ``all`` entry whose count equals the vault total.
+
+    Counts are computed in a single vault.list() pass so a vault with
+    thousands of notes stays under a few milliseconds on the wire.
+    """
+    vault = _vault(request)
+    try:
+        rels = vault.list()
+    except (OSError, ValueError) as e:
+        log.warning("brain_categories_list_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    counts: dict[str, int] = {c["id"]: 0 for c in CATEGORIES}
+    counts[ALL_NOTES_ID] = len(rels)
+    for rel in rels:
+        for cat in CATEGORIES:
+            if _category_matches(cat, rel):
+                counts[cat["id"]] += 1
+                break
+    out = [
+        {
+            "id": cat["id"],
+            "label": cat["label"],
+            "icon": cat["icon"],
+            "count": counts[cat["id"]],
+            "upload_folder": cat.get("upload_folder"),
+        }
+        for cat in CATEGORIES
+    ]
+    out.append({
+        "id": ALL_NOTES_ID, "label": "All Notes", "icon": "📁",
+        "count": counts[ALL_NOTES_ID], "upload_folder": None,
+    })
+    return {"categories": out, "page_size": NOTES_PAGE_SIZE}
+
+
+@router.get("/notes")
+async def list_notes_paginated(
+    request: Request,
+    category: str = Query(default=ALL_NOTES_ID, max_length=40),
+    page: int = Query(default=1, ge=1, le=10_000),
+    q: str = Query(default="", max_length=SEARCH_MAX_CHARS),
+    page_size: int = Query(default=NOTES_PAGE_SIZE, ge=1, le=100),
+) -> dict[str, Any]:
+    """Paginated note list for the active sidebar category.
+
+    Returns ``{notes, page, page_size, total, pages, category}``.
+    Notes are sorted newest-first by ``mtime`` so the operator lands
+    on what they worked on most recently. ``q`` is an inline substring
+    filter over path / title / stem — not a body search; use
+    ``/brain/search`` for full-text. Missing ``mtime`` sorts to the
+    tail so stat-failure rows don't jump to the top.
+    """
+    vault = _vault(request)
+    try:
+        rels = vault.list()
+    except (OSError, ValueError) as e:
+        log.warning("brain_notes_list_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    filtered = _filter_by_category(rels, category)
+    rows = [_list_row(vault, r) for r in filtered]
+    needle = q.strip()
+    if needle:
+        rows = [r for r in rows if _row_matches_query(r, needle)]
+    rows.sort(
+        key=lambda r: (r.get("mtime") or ""),
+        reverse=True,
+    )
+    total = len(rows)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_rows = rows[start:end]
+    pages = max(1, (total + page_size - 1) // page_size)
+    return {
+        "notes": page_rows,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "pages": pages,
+        "category": category,
+        "query": needle,
+    }
+
+
+@router.get("/notes/{path:path}")
+async def read_note_with_backlinks(
+    request: Request, path: str,
+) -> dict[str, Any]:
+    """Full note content + inline backlinks for the detail modal.
+
+    Convenience wrapper over ``/brain/note`` + ``/brain/backlinks`` so
+    the dashboard opens a card in one round-trip. Backlinks are
+    tolerated on failure — a broken wiki-link graph shouldn't prevent
+    the note body from rendering.
+    """
+    vault = _vault(request)
+    if len(path) > 400:
+        raise HTTPException(status_code=400, detail="path too long")
+    try:
+        body = vault.read(path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except (ValueError, IsADirectoryError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except OSError as e:
+        log.warning("brain_read_failed", path=path, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    try:
+        rel = vault.resolve(path).relative_to(vault.root).as_posix()
+    except ValueError:
+        rel = path
+    row = _list_row(vault, rel)
+
+    # Backlinks — tolerant of any failure. A scroll of 200 notes with
+    # one broken link shouldn't 500 the detail pane.
+    back: list[dict[str, Any]] = []
+    try:
+        by_path, by_stem = _build_note_index(vault)
+        rels = vault.list()
+        for other in rels:
+            if other == rel:
+                continue
+            try:
+                other_body = vault.read(other)
+            except (OSError, ValueError, FileNotFoundError):
+                continue
+            for lineno, line in enumerate(other_body.splitlines(), start=1):
+                for raw in _extract_wikilinks(line):
+                    dest = _resolve_target(
+                        raw, by_path=by_path, by_stem=by_stem,
+                    )
+                    if dest == rel:
+                        back.append({
+                            "path": other,
+                            "line": lineno,
+                            "snippet": line.strip()[:200],
+                        })
+                        break
+                else:
+                    continue
+                break
+    except Exception as e:
+        log.warning("brain_detail_backlinks_failed", path=rel, error=str(e))
+
+    return {
+        "path": rel,
+        "body": body,
+        "size": len(body.encode("utf-8")),
+        "note": row,
+        "backlinks": back,
+        "category": _classify_category(rel),
+    }
+
+
 @router.get("/note")
 async def read_note(
     request: Request, path: str = Query(..., min_length=1, max_length=400)
