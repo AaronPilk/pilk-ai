@@ -57,14 +57,41 @@ _PREMIUM_RE = [re.compile(p, re.IGNORECASE) for p in _PREMIUM_PATTERNS]
 _LIGHT_RE = [re.compile(p, re.IGNORECASE) for p in _LIGHT_PATTERNS]
 
 
+# The Telegram bridge composes a rolling window into the goal string as
+# ``[Conversation so far — rolling window]\n… history …\n\n[New message]\n<msg>``.
+# If we classify over the whole blob, every "refactor"/"implement"/
+# "debug" said in recent scrollback keeps the tier pinned to PREMIUM —
+# so plain conversational turns ("what do you think?") keep hitting
+# Opus. Strip back to just the new message before classifying; other
+# callers pass a bare goal string and see a no-op.
+_NEW_MESSAGE_MARKER = "[New message]"
+
+
+def _latest_user_turn(goal: str) -> str:
+    """Return only the latest operator turn from a composed goal.
+
+    If ``goal`` contains the Telegram bridge's ``[New message]`` marker,
+    return everything after the first occurrence (trimmed). Otherwise
+    return ``goal`` unchanged. Keeps the classifier honest about what
+    the operator actually just asked for.
+    """
+    if not goal:
+        return ""
+    idx = goal.find(_NEW_MESSAGE_MARKER)
+    if idx == -1:
+        return goal
+    tail = goal[idx + len(_NEW_MESSAGE_MARKER):]
+    return tail.lstrip("\n\r ").rstrip()
+
+
 def classify_tier(goal: str) -> Tier:
     """Classify an incoming user goal into a tier.
 
     Precedence: premium keywords > light markers > length heuristic.
     """
-    if not goal:
+    g = _latest_user_turn(goal).strip() if goal else ""
+    if not g:
         return Tier.LIGHT
-    g = goal.strip()
 
     for rx in _PREMIUM_RE:
         if rx.search(g):
@@ -141,7 +168,9 @@ def tier_classifier(
     """
     signals: dict[str, int] = {}
     reason = "length_heuristic"
-    g = (goal or "").strip()
+    # Same rolling-window extraction as classify_tier — the rich
+    # classifier should score the latest turn, not the whole history.
+    g = _latest_user_turn(goal or "").strip()
 
     # Hard-short-circuit on premium keywords so the explicit signal
     # always wins even when the message is short.
