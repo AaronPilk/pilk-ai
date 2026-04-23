@@ -771,6 +771,13 @@ async def lifespan(app: FastAPI):
         from core.brain import chatgpt_index as _chatgpt_index
         app.state.chatgpt_index_task = _chatgpt_index.spawn_scheduler(brain.root)
 
+    # Planner providers are built inside the Anthropic-key branch below;
+    # keep a default empty map so the unconditional ``app.state.providers
+    # = providers`` at the end of lifespan doesn't UnboundLocalError on
+    # the no-key path (CI runs this way, as does any fresh install
+    # before the operator pastes their key in).
+    providers: dict[str, Any] = {}
+
     if settings.anthropic_api_key:
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         registry.register(make_llm_ask_tool(client, ledger, settings.llm_ask_model))
