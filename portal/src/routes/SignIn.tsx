@@ -81,6 +81,17 @@ export default function SignIn() {
           </form>
         )}
       </div>
+      {/* Footer is public-facing + required by Google's OAuth consent
+          verification — the home page must link to the privacy policy.
+          Both /privacy and /policy resolve to the same static page via
+          portal/public/_redirects. */}
+      <footer className="portal-footer">
+        <a className="portal-footer-link" href="/privacy">Privacy</a>
+        <span aria-hidden="true">·</span>
+        <a className="portal-footer-link" href="/policy">Policy</a>
+        <span aria-hidden="true">·</span>
+        <a className="portal-footer-link" href="/data-deletion">Data deletion</a>
+      </footer>
     </div>
   );
 }
