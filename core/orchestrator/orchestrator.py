@@ -527,6 +527,7 @@ class Orchestrator:
                     store=self.memory,
                     vault=self.vault,
                     topic_hints=topics,
+                    chatgpt_query=rc.goal,
                 )
             except Exception as e:  # never block a run on hydration
                 log.warning("memory_hydrate_failed", error=str(e))

@@ -312,3 +312,25 @@ a {
   color: var(--text-faint);
   font-size: 12.5px;
 }
+
+.portal-footer {
+  margin-top: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #86868B;
+}
+
+.portal-footer-link {
+  color: #86868B;
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(134, 134, 139, 0.4);
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.portal-footer-link:hover {
+  color: #0071E3;
+  border-bottom-color: #0071E3;
+}

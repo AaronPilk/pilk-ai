@@ -152,6 +152,8 @@ async def hydrate(
     store: MemoryStore,
     vault: Vault | None,
     topic_hints: Iterable[str] | None = None,
+    chatgpt_query: str | None = None,
+    chatgpt_top_k: int = 3,
     token_cap: int = DEFAULT_TOKEN_CAP,
     daily_window_days: int = DEFAULT_DAILY_WINDOW_DAYS,
     now: datetime | None = None,
@@ -163,6 +165,13 @@ async def hydrate(
     side only. ``topic_hints`` is usually the output of
     :func:`extract_topics` on the last three user messages, but any
     iterable of strings works.
+
+    ``chatgpt_query`` is typically the raw operator message for the
+    current turn. When provided + a vault is attached + the ChatGPT
+    index has been built, the top-``chatgpt_top_k`` matching
+    conversations get rendered as a ``[Past context from your ChatGPT
+    history]`` section. Missing index or no-match returns no section —
+    hydration never fails on index lookup.
     """
     clock = now or datetime.now(UTC)
     try:
@@ -190,6 +199,12 @@ async def hydrate(
         vault is not None and hints
     ) else []
 
+    chatgpt_snippets: list[tuple[str, str]] = []
+    if vault is not None and chatgpt_query and chatgpt_top_k > 0:
+        chatgpt_snippets = _collect_chatgpt_snippets(
+            vault, chatgpt_query, top_k=chatgpt_top_k,
+        )
+
     stats = {
         "standing_instructions": len(by_kind[MemoryKind.STANDING_INSTRUCTION.value]),
         "facts": len(by_kind[MemoryKind.FACT.value]),
@@ -197,6 +212,7 @@ async def hydrate(
         "preferences": len(by_kind[MemoryKind.PREFERENCE.value]),
         "daily_notes": len(daily_notes),
         "topical_notes": len(topical),
+        "chatgpt_history": len(chatgpt_snippets),
     }
 
     sections = _render_sections(
@@ -206,6 +222,7 @@ async def hydrate(
         preferences=by_kind[MemoryKind.PREFERENCE.value],
         daily_notes=daily_notes,
         topical_notes=topical,
+        chatgpt_snippets=chatgpt_snippets,
     )
 
     body = _apply_budget(sections, token_cap=token_cap)
@@ -254,6 +271,7 @@ def _render_sections(
     preferences: list[MemoryEntry],
     daily_notes: list[tuple[str, str]],
     topical_notes: list[tuple[str, str]],
+    chatgpt_snippets: list[tuple[str, str]] | None = None,
 ) -> list[_Section]:
     """Turn each category into a labelled section in priority order."""
     sections: list[_Section] = []
@@ -315,6 +333,23 @@ def _render_sections(
                 header="## Related brain notes",
                 lines=lines,
                 drop_priority=3,
+            ))
+    if chatgpt_snippets:
+        lines = []
+        for title, snippet in chatgpt_snippets:
+            text = (snippet or "").strip()
+            if not text:
+                continue
+            lines.append(f"- **{title}** — {text}")
+        if lines:
+            # First thing to drop under pressure — the structured
+            # memory + vault notes carry more signal than a historical
+            # ChatGPT thread that might be tangentially relevant.
+            sections.append(_Section(
+                label="chatgpt_history",
+                header="## Past context from your ChatGPT history",
+                lines=lines,
+                drop_priority=2,
             ))
     return sections
 
@@ -444,6 +479,44 @@ def _title_from_path(path: str) -> str:
     if name.lower().endswith(".md"):
         name = name[:-3]
     return name or path
+
+
+#: Cap on the preview chars rendered per ChatGPT history hit — the
+#: index already stores 300-char previews but we render a tighter cut
+#: here so three hits stay well under a few hundred tokens.
+_CHATGPT_SNIPPET_CHARS = 180
+
+
+def _collect_chatgpt_snippets(
+    vault: Vault, query: str, *, top_k: int,
+) -> list[tuple[str, str]]:
+    """Return ``(title, snippet)`` tuples from the ChatGPT side-index.
+
+    Pulls top-``top_k`` matches for ``query`` via
+    :func:`core.brain.chatgpt_index.query_chatgpt_vault`. Every
+    failure mode (missing index, no hits, index-file corruption) is
+    swallowed and returns ``[]`` so hydration never blocks on this
+    optional signal.
+    """
+    # Local import to keep hydration importable without the index
+    # module at module-load time (avoids any future cycle).
+    try:
+        from core.brain.chatgpt_index import query_chatgpt_vault
+    except Exception:  # pragma: no cover — defensive
+        return []
+    try:
+        hits = query_chatgpt_vault(vault.root, query, top_k=top_k)
+    except Exception as e:  # pragma: no cover — defensive
+        log.warning("memory_hydrate_chatgpt_query_failed", error=str(e))
+        return []
+    out: list[tuple[str, str]] = []
+    for h in hits:
+        title = h.entry.title or _title_from_path(h.entry.path)
+        snippet = (h.entry.preview or "").strip()
+        if len(snippet) > _CHATGPT_SNIPPET_CHARS:
+            snippet = snippet[:_CHATGPT_SNIPPET_CHARS].rstrip() + "…"
+        out.append((title, snippet))
+    return out
 
 
 __all__ = [

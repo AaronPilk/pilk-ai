@@ -763,6 +763,14 @@ async def lifespan(app: FastAPI):
             query=settings.brain_auto_ingest_gmail_query,
         )
 
+    # Keep the ChatGPT per-conversation index warm. Builds once on
+    # boot (so a just-ingested export is queryable before the first
+    # nightly run) and rebuilds at 03:00 local. Fire-and-forget —
+    # the task swallows its own exceptions and keeps the daemon alive.
+    if settings.chatgpt_index_enabled:
+        from core.brain import chatgpt_index as _chatgpt_index
+        app.state.chatgpt_index_task = _chatgpt_index.spawn_scheduler(brain.root)
+
     if settings.anthropic_api_key:
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         registry.register(make_llm_ask_tool(client, ledger, settings.llm_ask_model))

@@ -1283,6 +1283,80 @@ export async function deleteBrainNote(
   return r.json();
 }
 
+// ── CRM-style Brain tab endpoints ──────────────────────────────
+
+export interface BrainCategory {
+  id: string;
+  label: string;
+  icon: string;
+  count: number;
+  /** Vault-relative folder that the Upload button should write into
+   * for this category, or null for ingester-owned categories
+   * (chat_archive / inbox) where uploads don't make sense. */
+  upload_folder: string | null;
+}
+
+export async function fetchBrainCategories(): Promise<{
+  categories: BrainCategory[];
+  page_size: number;
+}> {
+  const r = await apiFetch(`/brain/categories`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export interface BrainNotesPage {
+  notes: BrainNote[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+  category: string;
+  query: string;
+}
+
+export async function fetchBrainNotesPage(
+  opts: {
+    category?: string;
+    page?: number;
+    pageSize?: number;
+    q?: string;
+  } = {},
+): Promise<BrainNotesPage> {
+  const params = new URLSearchParams();
+  if (opts.category) params.set("category", opts.category);
+  if (opts.page) params.set("page", String(opts.page));
+  if (opts.pageSize) params.set("page_size", String(opts.pageSize));
+  if (opts.q) params.set("q", opts.q);
+  const qs = params.toString();
+  const r = await apiFetch(`/brain/notes${qs ? `?${qs}` : ""}`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export interface BrainNoteDetail {
+  path: string;
+  body: string;
+  size: number;
+  note: BrainNote;
+  backlinks: BrainBacklink[];
+  category: string;
+}
+
+export async function fetchBrainNoteDetail(
+  path: string,
+): Promise<BrainNoteDetail> {
+  // `/notes/<path>` is a path-style endpoint (supports slashes in the
+  // note path). URL-encode each segment so sub-folders survive.
+  const encoded = path
+    .split("/")
+    .map((seg) => encodeURIComponent(seg))
+    .join("/");
+  const r = await apiFetch(`/brain/notes/${encoded}`);
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
 // ── Telegram (PILK push channel) ───────────────────────────────
 
 /** Shape returned by GET /telegram/bot-info. `configured` means the

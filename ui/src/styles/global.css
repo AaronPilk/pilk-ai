@@ -8222,3 +8222,609 @@ body {
   color: var(--text-dim);
   margin-left: 6px;
 }
+
+/* ── Brain v3 — CRM-style three-panel layout ─────────────────────
+   Apple Settings + Notion aesthetic. System font stack, #F5F5F7
+   card bg, #0071E3 CTA blue, 12px radius, 0 2px 8px soft shadows.
+   --------------------------------------------------------------- */
+
+.brain3-root {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+  background: #FFFFFF;
+  color: #1D1D1F;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+               "Inter", system-ui, sans-serif;
+}
+
+.brain3-sidebar {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 20px 12px;
+  overflow-y: auto;
+  background: #FBFBFD;
+}
+
+.brain3-sidebar-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #86868B;
+  padding: 0 8px 12px;
+}
+
+.brain3-sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.brain3-sidebar-item {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: #1D1D1F;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.brain3-sidebar-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.brain3-sidebar-item--active {
+  background: rgba(0, 113, 227, 0.12);
+  color: #0071E3;
+}
+
+.brain3-sidebar-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.brain3-sidebar-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.brain3-sidebar-count {
+  font-size: 12px;
+  color: #86868B;
+  font-variant-numeric: tabular-nums;
+}
+
+.brain3-sidebar-item--active .brain3-sidebar-count {
+  color: #0071E3;
+}
+
+.brain3-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 24px 28px;
+  gap: 16px;
+}
+
+.brain3-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.brain3-topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.brain3-topbar-icon {
+  font-size: 20px;
+}
+
+.brain3-topbar-count {
+  font-size: 13px;
+  color: #86868B;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #F5F5F7;
+}
+
+.brain3-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brain3-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #F5F5F7;
+  border-radius: 8px;
+  padding: 6px 10px;
+  min-width: 240px;
+}
+
+.brain3-search-input {
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 14px;
+  color: #1D1D1F;
+  flex: 1;
+  min-width: 0;
+}
+
+.brain3-upload-btn {
+  background: #0071E3;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.brain3-upload-btn:hover:not(:disabled) {
+  background: #0062C1;
+}
+
+.brain3-upload-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.brain3-upload-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.brain3-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.brain3-chip {
+  background: #F5F5F7;
+  border: none;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1D1D1F;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.brain3-chip:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.brain3-chip--active {
+  background: #1D1D1F;
+  color: #FFFFFF;
+}
+
+.brain3-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.brain3-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #F5F5F7;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  min-height: 110px;
+}
+
+.brain3-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  background: #FFFFFF;
+}
+
+.brain3-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1D1D1F;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.brain3-card-subtitle {
+  font-size: 12px;
+  color: #86868B;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brain3-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #86868B;
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.brain3-empty {
+  padding: 60px 20px;
+  text-align: center;
+  color: #86868B;
+  font-size: 14px;
+}
+
+.brain3-banner {
+  background: rgba(0, 113, 227, 0.08);
+  border: 1px solid rgba(0, 113, 227, 0.2);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #0071E3;
+}
+
+.brain3-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 20px 0 10px;
+}
+
+.brain3-pagination-btn {
+  background: #F5F5F7;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1D1D1F;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.brain3-pagination-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.brain3-pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.brain3-pagination-label {
+  font-size: 13px;
+  color: #86868B;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Modals — shared for detail + upload */
+
+.brain3-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  z-index: 200;
+}
+
+.brain3-modal {
+  width: min(820px, 100%);
+  max-height: calc(100vh - 64px);
+  background: #FFFFFF;
+  border-radius: 16px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.brain3-modal--narrow {
+  width: min(520px, 100%);
+}
+
+.brain3-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.brain3-modal-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1D1D1F;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brain3-modal-close {
+  background: transparent;
+  border: none;
+  color: #86868B;
+  font-size: 22px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.brain3-modal-close:hover {
+  color: #1D1D1F;
+}
+
+.brain3-modal-meta {
+  display: flex;
+  gap: 6px;
+  padding: 10px 24px 0;
+  font-size: 12px;
+  color: #86868B;
+}
+
+.brain3-modal-body {
+  padding: 16px 24px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.brain3-modal-body p {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1D1D1F;
+  margin: 0 0 12px;
+}
+
+.brain3-modal-body h1,
+.brain3-modal-body h2,
+.brain3-modal-body h3,
+.brain3-modal-body h4 {
+  margin: 16px 0 8px;
+  color: #1D1D1F;
+  font-weight: 600;
+}
+
+.brain3-modal-body h1 { font-size: 22px; }
+.brain3-modal-body h2 { font-size: 18px; }
+.brain3-modal-body h3 { font-size: 16px; }
+.brain3-modal-body h4 { font-size: 14px; }
+
+.brain3-modal-body ul {
+  margin: 0 0 12px;
+  padding-left: 20px;
+}
+
+.brain3-modal-body li {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1D1D1F;
+}
+
+.brain3-backlinks {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 14px 24px;
+  background: #FBFBFD;
+}
+
+.brain3-backlinks-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #86868B;
+  margin-bottom: 8px;
+}
+
+.brain3-backlinks ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.brain3-backlinks li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.brain3-backlinks-path {
+  color: #0071E3;
+  font-weight: 500;
+}
+
+.brain3-backlinks-snippet {
+  color: #86868B;
+  font-size: 12px;
+}
+
+.brain3-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 24px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.brain3-btn {
+  background: #F5F5F7;
+  color: #1D1D1F;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.brain3-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.brain3-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.brain3-btn--primary {
+  background: #0071E3;
+  color: #FFFFFF;
+}
+
+.brain3-btn--primary:hover:not(:disabled) {
+  background: #0062C1;
+}
+
+.brain3-btn--danger {
+  background: #FF3B30;
+  color: #FFFFFF;
+}
+
+.brain3-btn--danger:hover:not(:disabled) {
+  background: #D73027;
+}
+
+.brain3-btn--subtle {
+  color: #FF3B30;
+}
+
+.brain3-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #1D1D1F;
+}
+
+.brain3-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.brain3-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #86868B;
+}
+
+.brain3-file-input,
+.brain3-input {
+  background: #F5F5F7;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #1D1D1F;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+.brain3-input:focus {
+  border-color: #0071E3;
+}
+
+.brain3-file-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #FBFBFD;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #1D1D1F;
+}
+
+.brain3-file-size {
+  color: #86868B;
+  font-variant-numeric: tabular-nums;
+}
+
+.brain3-hint {
+  font-size: 13px;
+  color: #86868B;
+  line-height: 1.5;
+  background: #FBFBFD;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+/* Mobile: collapse sidebar to a horizontal strip above the main.
+   Good enough for secondary phone-side access; the desktop view is
+   the primary target. */
+@media (max-width: 720px) {
+  .brain3-root {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .brain3-sidebar {
+    border-right: none;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    max-height: 140px;
+  }
+  .brain3-sidebar-list {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+  .brain3-sidebar-item {
+    min-width: 140px;
+  }
+  .brain3-main {
+    padding: 16px;
+  }
+  .brain3-topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .brain3-search { min-width: 0; width: 100%; }
+}
