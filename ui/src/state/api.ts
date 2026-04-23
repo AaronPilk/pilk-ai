@@ -1242,6 +1242,10 @@ export async function uploadBrainNote(
   notes: BrainNote[];
   imported: number;
   source_kind: "pdf" | "text" | "chatgpt_export";
+  /** For ChatGPT zip uploads, the vault-relative path where the
+   * raw zip was archived verbatim alongside the extracted notes.
+   * Undefined for PDF / text uploads. */
+  archive_path?: string;
 }> {
   const body = new FormData();
   body.append("file", file);

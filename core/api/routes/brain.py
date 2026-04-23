@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import contextlib
 import re
+import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -427,6 +428,14 @@ _STREAM_CHUNK_BYTES = 1 * 1024 * 1024
 # degrades gracefully if pypdf isn't installed in some slim env.
 _SUPPORTED_UPLOAD_SUFFIXES = (".pdf", ".txt", ".zip")
 
+# Where uploaded ChatGPT zips get archived verbatim, alongside the
+# extracted per-conversation markdown notes. Having the raw export
+# preserved means the operator can re-run the ingester later (e.g.
+# if we add richer extraction) without asking ChatGPT for another
+# export. Lives outside the vault's Obsidian-facing tree but under
+# the same root so backups cover it.
+_CHATGPT_ARCHIVE_DIR = "ingested/chatgpt-archive"
+
 
 class NotePatch(BaseModel):
     path: str = Field(..., min_length=1, max_length=400)
@@ -464,6 +473,41 @@ def _unique_note_path(vault: Vault, folder: str, stem: str) -> str:
         if not resolved.exists():
             return resolved.relative_to(vault.root).as_posix()
     raise HTTPException(status_code=409, detail="cannot allocate unique note path")
+
+
+def _archive_chatgpt_zip(
+    vault: Vault, source_zip: Path, filename: str
+) -> str:
+    """Copy the uploaded zip into the vault's chatgpt-archive folder
+    verbatim so the operator has a bit-for-bit backup of the original
+    ChatGPT export. Returns the archive path relative to the vault
+    root — caller surfaces it in the response for a "saved to …"
+    toast in the UI.
+
+    Timestamped so re-uploads never clobber each other. Sanitised
+    stem because the Vault's path rules only allow a safe character
+    class, and we want this to live next to the Obsidian-native
+    notes rather than in some untouchable sibling dir.
+    """
+    now = datetime.now(UTC)
+    base_stem = Path(filename or "chatgpt-export").stem
+    safe_stem = _slugify_for_filename(base_stem)[:60] or "export"
+    archive_dir = vault.root / _CHATGPT_ARCHIVE_DIR
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    dest_name = f"{now.strftime('%Y-%m-%d-%H%M%S')}-{safe_stem}.zip"
+    dest = archive_dir / dest_name
+    # copyfile preserves the tempfile so the caller's unlink still
+    # runs cleanly; we accept the duplicated disk write because it's
+    # the price of an independent backup copy.
+    shutil.copyfile(source_zip, dest)
+    rel = dest.relative_to(vault.root).as_posix()
+    log.info(
+        "brain_upload_chatgpt_archived",
+        source=filename or "chatgpt.zip",
+        archive_path=rel,
+        bytes=dest.stat().st_size,
+    )
+    return rel
 
 
 def _ingest_chatgpt_zip_path(
@@ -673,11 +717,18 @@ async def upload_note(
     try:
         # ── .zip branch (ChatGPT export for now) ──────────────
         if is_zip:
+            # Archive the raw zip verbatim BEFORE parsing so a crash
+            # in the ingester still leaves the operator with an
+            # untouched backup of their export. Archive failures are
+            # fatal (we'd rather tell the operator we couldn't save
+            # than pretend we did).
+            archive_rel = _archive_chatgpt_zip(vault, tmp_path, filename)
             notes = _ingest_chatgpt_zip_path(vault, tmp_path, filename)
             return {
                 "notes": notes,
                 "source_kind": "chatgpt_export",
                 "imported": len(notes),
+                "archive_path": archive_rel,
             }
 
         # ── .pdf / .txt branches ─────────────────────────────
