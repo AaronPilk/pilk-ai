@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PILK — Data Deletion Instructions</title>
+    <meta
+      name="description"
+      content="How to delete your PILK data: disconnect accounts in-app, revoke access at each provider, or email aaron@skyway.media for full deletion."
+    />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --text: #15181f;
+        --text-dim: #565c6b;
+        --bg: #f7f8fb;
+        --border: rgba(10, 14, 32, 0.10);
+        --accent: #5d77da;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --text: #eef0f5;
+          --text-dim: #a2a8b8;
+          --bg: #0a0b10;
+          --border: rgba(255, 255, 255, 0.12);
+          --accent: #8ba7ff;
+        }
+      }
+      html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+        line-height: 1.6;
+        font-size: 16px;
+        -webkit-font-smoothing: antialiased;
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 56px 24px 96px;
+      }
+      h1 {
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin: 0 0 8px;
+      }
+      .eyebrow {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        margin-bottom: 24px;
+      }
+      .updated { color: var(--text-dim); margin: 0 0 32px; font-size: 14px; }
+      h2 {
+        font-size: 18px;
+        font-weight: 700;
+        margin: 36px 0 8px;
+      }
+      p, li { color: var(--text); }
+      a { color: inherit; text-decoration: underline; }
+      ol { padding-left: 22px; }
+      ol li { margin: 6px 0; }
+      .mailto {
+        display: inline-block;
+        padding: 10px 18px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #fff;
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 14px;
+        margin: 8px 0 16px;
+      }
+      .callout {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px 18px;
+        margin: 16px 0;
+        font-size: 14.5px;
+      }
+      hr { border: 0; border-top: 1px solid var(--border); margin: 48px 0 24px; }
+      footer { font-size: 13px; color: var(--text-dim); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">PILK</div>
+      <h1>Data Deletion Instructions</h1>
+      <p class="updated">Last updated: April 22, 2026</p>
+
+      <p>
+        You can delete any data that PILK has collected about you — OAuth
+        tokens, connected-account profile data, and any content you
+        had PILK process or store. There are three ways to do it.
+      </p>
+
+      <h2>Option 1 — Disconnect in the PILK dashboard (fastest)</h2>
+      <ol>
+        <li>Sign in to your PILK dashboard.</li>
+        <li>Open <strong>Settings → Accounts</strong>.</li>
+        <li>
+          Click <strong>Disconnect</strong> next to the account you want
+          to remove.
+        </li>
+      </ol>
+      <p>
+        Disconnecting immediately deletes the OAuth token and the
+        profile snapshot PILK had stored for that account. Any content
+        previously read from the account and saved to PILK's internal
+        memory remains until you use Option 3.
+      </p>
+
+      <h2>Option 2 — Revoke access at the provider</h2>
+      <p>
+        If you can't reach the dashboard, you can cut PILK off directly
+        from the service. The token PILK holds will stop working within
+        minutes.
+      </p>
+      <ol>
+        <li>
+          <strong>Meta (Facebook / Instagram):</strong>
+          <a href="https://www.facebook.com/settings?tab=business_tools">facebook.com/settings?tab=business_tools</a>
+          → find PILK → <em>Remove</em>.
+        </li>
+        <li>
+          <strong>Google:</strong>
+          <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>
+          → find PILK → <em>Remove access</em>.
+        </li>
+        <li>
+          <strong>Slack:</strong> your workspace's
+          <em>Apps</em> settings → find PILK → <em>Remove</em>.
+        </li>
+        <li>
+          <strong>LinkedIn:</strong>
+          <a href="https://www.linkedin.com/mypreferences/d/data-sharing-for-permitted-services">LinkedIn Permitted services</a>
+          → find PILK → <em>Remove</em>.
+        </li>
+        <li>
+          <strong>X (Twitter):</strong>
+          <em>Settings → Security and account access → Apps and
+          sessions → Connected apps</em> → find PILK →
+          <em>Revoke access</em>.
+        </li>
+      </ol>
+
+      <h2>Option 3 — Request full deletion</h2>
+      <p>
+        For full deletion — including any internal memory, logs, or
+        stored content PILK may hold about you — email us:
+      </p>
+      <a class="mailto" href="mailto:aaron@skyway.media?subject=PILK%20data%20deletion%20request">
+        Email aaron@skyway.media
+      </a>
+      <p>
+        Include the email address, phone number, or account handle(s)
+        associated with your connected accounts so we can match and
+        delete the right records.
+      </p>
+
+      <div class="callout">
+        <strong>Response time:</strong> we process every verified
+        deletion request within 30 days and reply to confirm once
+        it's done.
+      </div>
+
+      <hr />
+      <footer>
+        See also:
+        <a href="/privacy">Privacy Policy</a> ·
+        <a href="/">PILK Dashboard</a>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -1,1 +1,9 @@
+# Static pages must be matched BEFORE the SPA catch-all, otherwise
+# /privacy and /data-deletion would get rewritten to index.html and
+# render the React app shell. These two URLs are linked from Meta's
+# app settings and need to be reachable without logging in.
+/privacy         /privacy.html         200
+/data-deletion   /data-deletion.html   200
+
+# Everything else falls through to the SPA shell.
 /*   /index.html   200
