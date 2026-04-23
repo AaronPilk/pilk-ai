@@ -1,15 +1,12 @@
-# Static pages must be matched BEFORE the SPA catch-all, otherwise
-# these URLs would get rewritten to index.html and render the React
-# app shell. They're linked from external app-verification consoles
-# (Meta, Google OAuth, LinkedIn, X) and need to be reachable without
-# logging in.
+# /privacy and /data-deletion are served automatically by Cloudflare
+# Pages' auto-clean-URL behavior: privacy.html + data-deletion.html
+# in this directory are reachable at /privacy and /data-deletion with
+# no rule required. Adding 200-rewrite rules to the .html paths here
+# creates an infinite loop against that auto-clean-URL redirect.
 #
-# /policy is an alias for /privacy because that's the path registered
-# in the Google OAuth consent screen — verification fails when
-# /policy returns the same HTML as the home page (the SPA shell).
-/privacy         /privacy.html         200
-/policy          /privacy.html         200
-/data-deletion   /data-deletion.html   200
+# /policy is registered as the privacy URL in the Google OAuth consent
+# screen, but we want /privacy to be canonical. 301 the browser there.
+/policy    /privacy    301
 
-# Everything else falls through to the SPA shell.
+# SPA catch-all — everything else falls through to the React shell.
 /*   /index.html   200
