@@ -280,7 +280,11 @@ export default function Brain() {
   const handleUploaded = useCallback(
     (
       notes: BrainNote[],
-      info: { imported: number; source_kind: "pdf" | "text" | "chatgpt_export" },
+      info: {
+        imported: number;
+        source_kind: "pdf" | "text" | "chatgpt_export";
+        archive_path?: string;
+      },
     ) => {
       setNotes((prev) => {
         const paths = new Set(notes.map((n) => n.path));
@@ -295,10 +299,14 @@ export default function Brain() {
       if (info.source_kind === "chatgpt_export") {
         setActiveCategory("ingested");
         setSelectedPath(null);
-        setToast(
+        const count =
           info.imported === 1
-            ? "Imported 1 ChatGPT conversation"
-            : `Imported ${info.imported} ChatGPT conversations`,
+            ? "1 ChatGPT conversation"
+            : `${info.imported} ChatGPT conversations`;
+        setToast(
+          info.archive_path
+            ? `Imported ${count} · raw zip saved to ${info.archive_path}`
+            : `Imported ${count}`,
         );
       } else if (notes.length > 0) {
         setSelectedPath(notes[0].path);
@@ -900,7 +908,11 @@ function UploadModal({
   onClose: () => void;
   onUploaded: (
     notes: BrainNote[],
-    info: { imported: number; source_kind: "pdf" | "text" | "chatgpt_export" },
+    info: {
+      imported: number;
+      source_kind: "pdf" | "text" | "chatgpt_export";
+      archive_path?: string;
+    },
   ) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -937,7 +949,11 @@ function UploadModal({
     setErr(null);
     try {
       const r = await uploadBrainNote(file, effectiveLabel, folder);
-      onUploaded(r.notes, { imported: r.imported, source_kind: r.source_kind });
+      onUploaded(r.notes, {
+        imported: r.imported,
+        source_kind: r.source_kind,
+        archive_path: r.archive_path,
+      });
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
