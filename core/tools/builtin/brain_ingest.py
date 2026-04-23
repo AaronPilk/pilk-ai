@@ -275,7 +275,13 @@ def _chatgpt_ingest_tool(vault: Vault) -> Tool:
             "`ingested/chatgpt/`. Forked branches are dropped; only "
             "the thread the operator actually saw is retained. "
             "Idempotent by conversation id — re-running overwrites "
-            "the note at the derived path."
+            "the note at the derived path. "
+            "IMPORTANT: if the operator says they already uploaded "
+            "their ChatGPT export through the dashboard's 'Upload to "
+            "Brain' flow, the conversations are already in "
+            "`ingested/chatgpt/` as per-conversation notes — search "
+            "them with `brain_search` / `brain_note_read` rather than "
+            "asking for a zip path."
         ),
         input_schema={
             "type": "object",
