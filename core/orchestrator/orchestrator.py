@@ -573,6 +573,13 @@ class Orchestrator:
                     # so the metadata is accurate.
                     tier_choice.gated = False
                     tier_choice.reason = "gate_declined"
+            if _apply_vision_bypass(tier_choice, rc.attachments):
+                log.info(
+                    "vision_bypass_claude_code",
+                    plan_id=plan_id,
+                    tier=tier_choice.tier.value,
+                    model=tier_choice.model,
+                )
             planner_model = tier_choice.model
             requested_provider = tier_choice.provider
             tier_meta: dict[str, Any] = tier_choice.to_public()
@@ -792,6 +799,31 @@ _THROWAWAY_PATTERNS = (
     "sounds good", "yep", "yes", "nope", "no", "hi", "hello", "hey",
     "good morning", "good night",
 )
+
+
+def _apply_vision_bypass(
+    tier_choice: Any, attachments: list[ChatAttachment],
+) -> bool:
+    """Route a vision-bearing turn off ``claude_code`` onto Anthropic.
+
+    The Claude Code CLI provider shells out to ``claude`` as a
+    subprocess and has no vision surface — an image attachment on a
+    turn otherwise routed there would silently drop the image. We
+    keep the tier + model intact (the API accepts the same model
+    names) and only swap the provider, mutating in place because
+    ``TierChoice`` is mutable by design (see governor.py).
+
+    Returns True when the bypass fired (caller logs it), False when
+    nothing needed to change.
+    """
+    if tier_choice.provider != "claude_code":
+        return False
+    if not any(a.kind == "image" for a in attachments):
+        return False
+    tier_choice.provider = "anthropic"
+    if tier_choice.reason in (None, "rule", "override"):
+        tier_choice.reason = "vision_bypass"
+    return True
 
 
 def _extract_summary(text: str | None, *, limit: int = 160) -> str:

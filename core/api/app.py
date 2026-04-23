@@ -778,6 +778,8 @@ async def lifespan(app: FastAPI):
         providers = build_providers(
             anthropic_client=client,
             openai_api_key=settings.openai_api_key,
+            gemini_api_key=settings.gemini_planner_api_key,
+            grok_api_key=settings.grok_api_key,
             claude_code_binary=settings.claude_code_binary,
             enable_claude_code_chat=settings.enable_claude_code_chat,
         )
@@ -1080,6 +1082,11 @@ async def lifespan(app: FastAPI):
     app.state.orchestrator_tasks = set()
     app.state.browser_sessions = browser_sessions
     app.state.governor = governor
+    # Surface the registered provider map so /governor/status can list
+    # which planner providers are actually wired (API-key-gated). The
+    # orchestrator holds its own reference; this one is for the HTTP
+    # surface only.
+    app.state.providers = providers
     app.state.memory = memory
     app.state.brain = brain
     app.state.computer_control = computer_control_gate

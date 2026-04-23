@@ -54,6 +54,29 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("OPENAI_API_KEY", "PILK_OPENAI_API_KEY"),
     )
+    # Google Gemini for the planner provider. Uses Gemini's OpenAI-
+    # compatible endpoint so the OpenAI provider's code path backs it
+    # too. Get a key at https://aistudio.google.com/apikey.
+    # Falls through common env names (GOOGLE_API_KEY) so a single
+    # Google credential covers both this and nano_banana_api_key for
+    # image gen.
+    gemini_planner_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PILK_GEMINI_PLANNER_API_KEY",
+            "GEMINI_PLANNER_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+        ),
+    )
+    # xAI Grok for the planner provider. Uses xAI's OpenAI-compatible
+    # endpoint at api.x.ai. Get a key at https://console.x.ai.
+    grok_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PILK_GROK_API_KEY", "GROK_API_KEY", "XAI_API_KEY",
+        ),
+    )
     elevenlabs_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("ELEVENLABS_API_KEY", "PILK_ELEVENLABS_API_KEY"),
@@ -541,24 +564,33 @@ class Settings(BaseSettings):
     )
 
     # ── Governor: tiered model routing + cost caps ────────────────
-    # Tier slot shape: (provider, model). Batch C executes only the
-    # Anthropic provider; a non-anthropic provider is architecturally
-    # accepted and logged as a fallback until the OpenAI execution path
-    # lands in Batch D. Defaults intentionally map every tier to a
-    # concrete Claude model so a fresh install routes sanely.
-    # LIGHT tier defaults to the Claude Code CLI provider — the
-    # operator's Max/Pro subscription covers those calls at $0
-    # marginal cost. The provider only registers when the `claude`
-    # binary is on PATH; when it's missing, build_providers skips it
-    # and the orchestrator transparently falls back to the Anthropic
-    # API path (using tier_light_model). Set the provider back to
-    # "anthropic" explicitly to opt out of subscription-first chat.
+    # Tier slot shape: (provider, model). Each tier targets a backend
+    # picked for the right load profile:
+    #
+    #   LIGHT    → OpenAI gpt-4o-mini. Cheap (~$0.15/M input), fast,
+    #              and crucially on a SEPARATE rate-limit bucket from
+    #              Anthropic — so high-volume conversational chatter
+    #              never eats the Max-subscription budget that
+    #              STANDARD relies on. Falls back to whichever
+    #              provider the orchestrator can resolve when the
+    #              OpenAI key is missing (anthropic API → claude_code
+    #              CLI → nothing).
+    #   STANDARD → Claude Code CLI (Max subscription, $0 marginal).
+    #              Bulk balanced reasoning rides the plan the
+    #              operator already pays $200/mo for. Image-bearing
+    #              turns auto-bypass to the Anthropic API (the CLI
+    #              has no vision surface).
+    #   PREMIUM  → Anthropic API (Opus). Rare deep-reasoning work;
+    #              kept on the API so adaptive thinking + vision
+    #              stay first-class.
+    #
+    # Override any slot via the matching env vars below.
     tier_light_provider: str = Field(
-        default="claude_code",
+        default="openai",
         validation_alias=AliasChoices("PILK_TIER_LIGHT_PROVIDER", "TIER_LIGHT_PROVIDER"),
     )
     tier_light_model: str = Field(
-        default="claude-haiku-4-5",
+        default="gpt-4o-mini",
         validation_alias=AliasChoices("PILK_TIER_LIGHT_MODEL", "TIER_LIGHT_MODEL"),
     )
     # Master switch for the whole subscription-backed chat path. Off
@@ -572,7 +604,15 @@ class Settings(BaseSettings):
         ),
     )
     tier_standard_provider: str = Field(
-        default="anthropic",
+        # Default to the Claude Code CLI — same subscription path LIGHT
+        # already uses — so balanced-tier work (the bulk of real
+        # orchestrator traffic) runs against the operator's Max plan
+        # instead of burning API credits. Anthropic still registers as
+        # a fallback for image turns (the orchestrator bypasses
+        # claude_code when vision is needed) and for setups without
+        # the claude binary on PATH. Set back to "anthropic" to opt
+        # out of subscription-first balanced chat.
+        default="claude_code",
         validation_alias=AliasChoices(
             "PILK_TIER_STANDARD_PROVIDER", "TIER_STANDARD_PROVIDER"
         ),

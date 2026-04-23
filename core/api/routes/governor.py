@@ -30,6 +30,12 @@ async def governor_status(request: Request) -> dict:
         return {"enabled": False}
     snap = await gov.snapshot()
     snap["enabled"] = True
+    # Include the names of every planner provider that registered at
+    # boot. A provider only lands here when its API key (or subscription
+    # binary, for claude_code) is available — so the Settings UI can
+    # show the operator exactly which backends are wired.
+    providers = getattr(request.app.state, "providers", {}) or {}
+    snap["registered_providers"] = sorted(providers.keys())
     return snap
 
 

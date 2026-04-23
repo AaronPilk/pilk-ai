@@ -86,6 +86,51 @@ const OVERRIDE_LABELS: Record<OverrideMode, string> = {
   premium: "Force Deep",
 };
 
+// Planner providers PILK knows how to register, shown in Settings so
+// the operator can see which ones have a credential wired. "Installed"
+// means build_providers registered the provider at boot; unconfigured
+// ones render dim with a hint about the env var that unlocks them.
+// The optional ``billing`` tag surfaces how each provider is paid
+// for so the operator can see at a glance which tiers are running
+// against their Max subscription vs. per-token API credits.
+const ALL_PLANNER_PROVIDERS: Array<{
+  name: string;
+  label: string;
+  installHint: string;
+  billing?: "subscription" | "api";
+}> = [
+  {
+    name: "claude_code",
+    label: "Claude Code CLI (Max subscription)",
+    installHint: "claude binary on PATH + PILK_ENABLE_CLAUDE_CODE_CHAT=1",
+    billing: "subscription",
+  },
+  {
+    name: "anthropic",
+    label: "Anthropic API (Claude)",
+    installHint: "ANTHROPIC_API_KEY",
+    billing: "api",
+  },
+  {
+    name: "openai",
+    label: "OpenAI API (GPT)",
+    installHint: "OPENAI_API_KEY",
+    billing: "api",
+  },
+  {
+    name: "gemini",
+    label: "Google Gemini API",
+    installHint: "GEMINI_API_KEY",
+    billing: "api",
+  },
+  {
+    name: "grok",
+    label: "xAI Grok API",
+    installHint: "XAI_API_KEY",
+    billing: "api",
+  },
+];
+
 const VOICE_RATES: Array<{ value: number; label: string }> = [
   { value: 1.0, label: "Normal" },
   { value: 1.15, label: "Brisk" },
@@ -597,6 +642,53 @@ export default function Settings() {
               <code>PILK_TIER_STANDARD_MODEL</code> /{" "}
               <code>PILK_TIER_PREMIUM_MODEL</code> in <code>.env</code>. In-UI
               editing arrives in a follow-up batch.
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">Planner providers</div>
+            </div>
+            <div className="governor-providers">
+              {ALL_PLANNER_PROVIDERS.map((p) => {
+                const installed = (gov.registered_providers ?? []).includes(p.name);
+                const subscription = p.billing === "subscription";
+                return (
+                  <div
+                    key={p.name}
+                    className={
+                      "governor-provider" +
+                      (installed ? " governor-provider--on" : "") +
+                      (subscription ? " governor-provider--subscription" : "")
+                    }
+                    title={
+                      installed
+                        ? `${p.label} is wired: ${p.installHint}`
+                        : `${p.label} is not configured — ${p.installHint}`
+                    }
+                  >
+                    <div className="governor-provider-dot" aria-hidden="true" />
+                    <div className="governor-provider-name">
+                      {p.label}
+                      {subscription ? (
+                        <span className="governor-provider-tag">Subscription</span>
+                      ) : null}
+                    </div>
+                    <div className="governor-provider-status">
+                      {installed ? "Installed" : "Not configured"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="settings-note">
+              A provider appears as <strong>Installed</strong> once its
+              credential lands in <code>.env</code> and pilkd restarts.
+              Tiers tagged <em>Subscription</em> run against your Claude
+              Max plan (no API credits). Flip any tier between providers
+              by editing <code>PILK_TIER_LIGHT_PROVIDER</code> /{" "}
+              <code>PILK_TIER_STANDARD_PROVIDER</code> /{" "}
+              <code>PILK_TIER_PREMIUM_PROVIDER</code>. Turns with image
+              attachments auto-route to the Anthropic API since the
+              subscription CLI has no vision surface.
             </div>
 
             <div className="settings-row">
