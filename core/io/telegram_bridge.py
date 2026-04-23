@@ -557,7 +557,15 @@ class TelegramBridge:
         while True:
             try:
                 await asyncio.wait_for(
-                    self._orchestrator.run(prompt),
+                    # Pin Telegram conversational turns to LIGHT (Haiku).
+                    # Anthropic Tier 1 only allows 30k ITPM for Sonnet,
+                    # which a first-turn orchestrator prompt (system +
+                    # tools + memory hydration) can exceed on its own.
+                    # Haiku has a 50k ITPM cap and is plenty capable for
+                    # the conversational use Telegram gets; specialist
+                    # agents invoked from Telegram still honor their
+                    # manifest preferred_tier pins.
+                    self._orchestrator.run(prompt, preferred_tier="light"),
                     timeout=ORCHESTRATOR_WAIT_TIMEOUT_S,
                 )
                 return None

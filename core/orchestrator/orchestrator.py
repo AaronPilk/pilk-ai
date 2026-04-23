@@ -326,6 +326,7 @@ class Orchestrator:
         goal: str,
         *,
         attachments: list[ChatAttachment] | None = None,
+        preferred_tier: str | None = None,
     ) -> None:
         """Free chat path. No agent; shared workspace."""
         ctx = RunContext(
@@ -338,6 +339,7 @@ class Orchestrator:
             sandbox_capabilities=frozenset(),
             metadata={},
             attachments=list(attachments or []),
+            preferred_tier=preferred_tier,
         )
         await self._execute(ctx)
 
