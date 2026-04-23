@@ -406,7 +406,7 @@ async def test_bridge_routes_callback_query_to_handler(
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        async def run(self, goal: str) -> None:
+        async def run(self, goal: str, **kwargs: object) -> None:
             self.calls.append(goal)
 
     hub = Hub()
@@ -441,7 +441,7 @@ async def test_bridge_allows_callback_updates_in_getupdates(
     seen_allowed: list = []
 
     class _Orch:
-        async def run(self, goal: str) -> None:
+        async def run(self, goal: str, **kwargs: object) -> None:
             del goal
 
     hub = Hub()

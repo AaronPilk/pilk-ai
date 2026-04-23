@@ -82,7 +82,7 @@ class _FakeOrchestrator:
         self.delay = delay
         self.calls: list[str] = []
 
-    async def run(self, goal: str) -> None:
+    async def run(self, goal: str, **kwargs: object) -> None:
         self.calls.append(goal)
         if self.delay:
             await asyncio.sleep(self.delay)
@@ -611,7 +611,7 @@ async def test_busy_retry_recovers_within_budget(
             super().__init__(hub, reply_text="finally")
             self._rejected = 0
 
-        async def run(self, goal: str) -> None:
+        async def run(self, goal: str, **kwargs: object) -> None:
             self.calls.append(goal)
             if self._rejected < 2:
                 self._rejected += 1
