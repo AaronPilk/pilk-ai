@@ -10,6 +10,7 @@ from core.tools.builtin.code_task import make_code_task_tool
 from core.tools.builtin.computer_control import COMPUTER_CONTROL_TOOLS
 from core.tools.builtin.creative import (
     CREATIVE_TOOLS,
+    dalle_generate_tool,
     higgsfield_generate_tool,
     nano_banana_generate_tool,
 )
@@ -82,6 +83,7 @@ __all__ = [
     "arcads_list_products_tool",
     "arcads_video_generate_tool",
     "arcads_video_status_tool",
+    "dalle_generate_tool",
     "finance_deposit_tool",
     "finance_transfer_tool",
     "finance_withdraw_tool",

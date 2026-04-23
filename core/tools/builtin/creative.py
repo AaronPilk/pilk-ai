@@ -1,17 +1,22 @@
 """Creative-content toolkit: image + video generation.
 
-Two thin wrappers used by the `creative_content_agent`:
+Three thin wrappers used by the `creative_content_agent`:
 
     * `nano_banana_generate` — Google's `gemini-2.5-flash-image` (a.k.a.
       "Nano Banana"). One synchronous call → inline base64 image bytes →
       written to the workspace as a PNG.
+
+    * `dalle_generate` — OpenAI's DALL-E 3. Same call pattern as Nano
+      Banana but routed via OpenAI's images endpoint. Use when the
+      operator wants stylized illustration / photorealism and Gemini's
+      literal prompt-following isn't the right fit.
 
     * `higgsfield_generate` — Higgsfield Cloud cinematic text→video /
       image→video. Async generation with a status URL; we poll every 5s
       up to a hard cap, then download the resulting MP4 into the
       workspace.
 
-Both tools follow the rest of the toolkit's conventions:
+All three follow the rest of the toolkit's conventions:
     * Dashboard-paste secrets win over env vars (resolve_secret).
     * Missing key → clean ``is_error`` outcome telling the operator
       exactly which integration to set up.
@@ -20,7 +25,7 @@ Both tools follow the rest of the toolkit's conventions:
     * Outputs are scoped to the agent's sandbox workspace, never the
       shared workspace, when the caller is sandboxed.
 
-Risk class is NET_WRITE for both — these calls cost real money and
+Risk class is NET_WRITE for all — these calls cost real money and
 emit non-idempotent jobs into a third party.
 """
 
@@ -42,6 +47,8 @@ from core.tools.registry import Tool, ToolContext, ToolOutcome
 
 GEMINI_BASE = "https://generativelanguage.googleapis.com"
 NANO_BANANA_MODEL = "gemini-2.5-flash-image"
+OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
+DALLE_MODEL = "dall-e-3"
 DEFAULT_TIMEOUT_S = 60.0
 HIGGSFIELD_POLL_INTERVAL_S = 5.0
 HIGGSFIELD_MAX_WAIT_S = 600.0  # 10 min cap; videos rarely take longer
@@ -52,6 +59,15 @@ ASPECT_TO_GEMINI = {
     "4:3": "4:3",
     "3:4": "3:4",
 }
+# DALL-E 3 only supports three sizes. Map each to a friendly aspect
+# label so the agent picks by intent ("16:9") rather than memorising
+# pixel grids.
+DALLE_ASPECT_TO_SIZE = {
+    "1:1": "1024x1024",
+    "16:9": "1792x1024",
+    "9:16": "1024x1792",
+}
+DALLE_QUALITIES = ("standard", "hd")
 
 
 def _secret(name: str, fallback: str | None) -> str | None:
@@ -222,6 +238,173 @@ nano_banana_generate_tool = Tool(
     },
     risk=RiskClass.NET_WRITE,
     handler=_nano_banana_generate,
+)
+
+
+# ── DALL-E 3 (OpenAI images endpoint) ─────────────────────────────
+
+
+async def _dalle_generate(args: dict, ctx: ToolContext) -> ToolOutcome:
+    prompt = str(args.get("prompt") or "").strip()
+    if not prompt:
+        return ToolOutcome(
+            content="dalle_generate requires a 'prompt'.",
+            is_error=True,
+        )
+    aspect = str(args.get("aspect_ratio") or "1:1")
+    if aspect not in DALLE_ASPECT_TO_SIZE:
+        return ToolOutcome(
+            content=(
+                f"aspect_ratio '{aspect}' not supported by DALL-E 3. "
+                f"Use one of {sorted(DALLE_ASPECT_TO_SIZE)}."
+            ),
+            is_error=True,
+        )
+    quality = str(args.get("quality") or "standard").lower()
+    if quality not in DALLE_QUALITIES:
+        return ToolOutcome(
+            content=(
+                f"quality '{quality}' is not valid. Use 'standard' "
+                "(default, ~$0.04/image) or 'hd' (~$0.08/image)."
+            ),
+            is_error=True,
+        )
+
+    api_key = _secret("openai_api_key", get_settings().openai_api_key)
+    if not api_key:
+        return ToolOutcome(
+            content=(
+                "DALL-E 3 is not configured. Add an OpenAI API key in "
+                "Settings → API Keys (or set OPENAI_API_KEY)."
+            ),
+            is_error=True,
+        )
+
+    body = {
+        "model": DALLE_MODEL,
+        "prompt": prompt,
+        "n": 1,  # DALL-E 3 only supports one image per call.
+        "size": DALLE_ASPECT_TO_SIZE[aspect],
+        "quality": quality,
+        # b64_json keeps everything in-memory and matches the byte-
+        # writing path Nano Banana already uses; we never expose
+        # OpenAI's signed-URL temporary host.
+        "response_format": "b64_json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_S) as client:
+            resp = await client.post(
+                OPENAI_IMAGES_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+    except (httpx.HTTPError, TimeoutError) as e:
+        return ToolOutcome(
+            content=f"dalle_generate failed: {type(e).__name__}: {e}",
+            is_error=True,
+        )
+
+    if resp.status_code >= 400:
+        return ToolOutcome(
+            content=(
+                f"DALL-E 3 error {resp.status_code}: {resp.text[:500]}"
+            ),
+            is_error=True,
+            data={"status": resp.status_code},
+        )
+
+    payload = resp.json()
+    items = payload.get("data") or []
+    b64 = items[0].get("b64_json") if items else None
+    if not b64:
+        return ToolOutcome(
+            content=(
+                "DALL-E 3 returned no image bytes. "
+                f"Raw response: {str(payload)[:500]}"
+            ),
+            is_error=True,
+            data={"response": payload},
+        )
+
+    try:
+        image_bytes = base64.b64decode(b64)
+    except (ValueError, TypeError) as e:
+        return ToolOutcome(
+            content=f"DALL-E 3 returned invalid base64: {e}",
+            is_error=True,
+        )
+
+    out_dir = _workspace_root(ctx)
+    name = f"{int(time.time())}-dalle-{_slugify(prompt)}.png"
+    out_path = out_dir / name
+    out_path.write_bytes(image_bytes)
+    rel = out_path.relative_to(out_dir.parent)
+
+    # OpenAI surfaces the rewritten prompt that DALL-E actually used —
+    # worth surfacing because it often differs noticeably from what
+    # the agent sent and helps debug bad-output cases.
+    revised_prompt = items[0].get("revised_prompt") or ""
+
+    return ToolOutcome(
+        content=(
+            f"Generated DALL-E 3 image ({len(image_bytes)} bytes) "
+            f"saved to {rel}. Prompt: {prompt}"
+        ),
+        data={
+            "path": str(rel),
+            "absolute_path": str(out_path),
+            "bytes": len(image_bytes),
+            "aspect_ratio": aspect,
+            "size": DALLE_ASPECT_TO_SIZE[aspect],
+            "quality": quality,
+            "model": DALLE_MODEL,
+            "revised_prompt": revised_prompt,
+        },
+    )
+
+
+dalle_generate_tool = Tool(
+    name="dalle_generate",
+    description=(
+        "Generate an image from a text prompt using OpenAI DALL-E 3. "
+        "Saves a PNG to the agent workspace under creative/ and returns "
+        "the relative path. Pick this when the request leans stylized / "
+        "photorealistic / illustrative; pick nano_banana_generate for "
+        "literal layout-faithful renders. Requires OPENAI_API_KEY."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "prompt": {
+                "type": "string",
+                "description": "Free-text image description.",
+            },
+            "aspect_ratio": {
+                "type": "string",
+                "enum": sorted(DALLE_ASPECT_TO_SIZE),
+                "description": (
+                    "Output aspect ratio. DALL-E 3 only supports 1:1 "
+                    "(1024x1024), 16:9 (1792x1024), 9:16 (1024x1792). "
+                    "Default 1:1."
+                ),
+            },
+            "quality": {
+                "type": "string",
+                "enum": list(DALLE_QUALITIES),
+                "description": (
+                    "'standard' (~$0.04/image) or 'hd' (~$0.08/image, "
+                    "noticeably sharper detail). Default 'standard'."
+                ),
+            },
+        },
+        "required": ["prompt"],
+    },
+    risk=RiskClass.NET_WRITE,
+    handler=_dalle_generate,
 )
 
 
@@ -454,4 +637,6 @@ higgsfield_generate_tool = Tool(
 )
 
 
-CREATIVE_TOOLS.extend([nano_banana_generate_tool, higgsfield_generate_tool])
+CREATIVE_TOOLS.extend(
+    [nano_banana_generate_tool, dalle_generate_tool, higgsfield_generate_tool]
+)

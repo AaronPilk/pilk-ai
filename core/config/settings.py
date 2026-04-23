@@ -564,24 +564,33 @@ class Settings(BaseSettings):
     )
 
     # ── Governor: tiered model routing + cost caps ────────────────
-    # Tier slot shape: (provider, model). Batch C executes only the
-    # Anthropic provider; a non-anthropic provider is architecturally
-    # accepted and logged as a fallback until the OpenAI execution path
-    # lands in Batch D. Defaults intentionally map every tier to a
-    # concrete Claude model so a fresh install routes sanely.
-    # LIGHT tier defaults to the Claude Code CLI provider — the
-    # operator's Max/Pro subscription covers those calls at $0
-    # marginal cost. The provider only registers when the `claude`
-    # binary is on PATH; when it's missing, build_providers skips it
-    # and the orchestrator transparently falls back to the Anthropic
-    # API path (using tier_light_model). Set the provider back to
-    # "anthropic" explicitly to opt out of subscription-first chat.
+    # Tier slot shape: (provider, model). Each tier targets a backend
+    # picked for the right load profile:
+    #
+    #   LIGHT    → OpenAI gpt-4o-mini. Cheap (~$0.15/M input), fast,
+    #              and crucially on a SEPARATE rate-limit bucket from
+    #              Anthropic — so high-volume conversational chatter
+    #              never eats the Max-subscription budget that
+    #              STANDARD relies on. Falls back to whichever
+    #              provider the orchestrator can resolve when the
+    #              OpenAI key is missing (anthropic API → claude_code
+    #              CLI → nothing).
+    #   STANDARD → Claude Code CLI (Max subscription, $0 marginal).
+    #              Bulk balanced reasoning rides the plan the
+    #              operator already pays $200/mo for. Image-bearing
+    #              turns auto-bypass to the Anthropic API (the CLI
+    #              has no vision surface).
+    #   PREMIUM  → Anthropic API (Opus). Rare deep-reasoning work;
+    #              kept on the API so adaptive thinking + vision
+    #              stay first-class.
+    #
+    # Override any slot via the matching env vars below.
     tier_light_provider: str = Field(
-        default="claude_code",
+        default="openai",
         validation_alias=AliasChoices("PILK_TIER_LIGHT_PROVIDER", "TIER_LIGHT_PROVIDER"),
     )
     tier_light_model: str = Field(
-        default="claude-haiku-4-5",
+        default="gpt-4o-mini",
         validation_alias=AliasChoices("PILK_TIER_LIGHT_MODEL", "TIER_LIGHT_MODEL"),
     )
     # Master switch for the whole subscription-backed chat path. Off
