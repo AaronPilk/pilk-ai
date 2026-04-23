@@ -8,6 +8,7 @@ from core.tools.builtin.arcads import (
 from core.tools.builtin.browser import BrowserSessionManager, make_browser_tools
 from core.tools.builtin.code_task import make_code_task_tool
 from core.tools.builtin.computer_control import COMPUTER_CONTROL_TOOLS
+from core.tools.builtin.delegate import make_delegate_to_agent_tool
 from core.tools.builtin.creative import (
     CREATIVE_TOOLS,
     dalle_generate_tool,
@@ -95,6 +96,7 @@ __all__ = [
     "make_agent_create_tool",
     "make_browser_tools",
     "make_code_task_tool",
+    "make_delegate_to_agent_tool",
     "make_llm_ask_tool",
     "make_memory_delete_tool",
     "make_memory_list_tool",

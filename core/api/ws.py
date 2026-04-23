@@ -25,6 +25,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from core.chat import AttachmentError
 from core.logging import get_logger
 from core.orchestrator.orchestrator import ChatAttachment
+from core.orchestrator.router import classify_agent
 
 router = APIRouter()
 log = get_logger("pilkd.ws")
@@ -114,9 +115,48 @@ async def websocket(ws: WebSocket) -> None:
                     continue
                 # Keep a strong reference on app state so GC doesn't cancel mid-run.
                 tasks: set[asyncio.Task] = ws.app.state.orchestrator_tasks
-                task = asyncio.create_task(
-                    orchestrator.run(text, attachments=attachments)
-                )
+                # Pre-route: if the goal unambiguously fits a single
+                # registered specialist AND has no attachments (vision
+                # work stays with the Pilk planner for tier routing),
+                # skip Pilk entirely and dispatch straight to the
+                # agent. Keeps tokens small on obvious asks; Pilk still
+                # handles everything ambiguous or multi-step.
+                agents_registry = ws.app.state.agents
+                routed_agent: str | None = None
+                if (
+                    not attachments
+                    and agents_registry is not None
+                ):
+                    match = classify_agent(
+                        text,
+                        agents_registry.manifests().values(),
+                    )
+                    if match is not None:
+                        name, score = match
+                        try:
+                            agents_registry.get(name)
+                        except LookupError:
+                            routed_agent = None
+                        else:
+                            routed_agent = name
+                            hub = ws.app.state.hub
+                            await hub.broadcast(
+                                "chat.routing",
+                                {
+                                    "goal": text[:400],
+                                    "routed_to": name,
+                                    "confidence": round(score, 3),
+                                    "via": "classifier",
+                                },
+                            )
+                if routed_agent is not None:
+                    task = asyncio.create_task(
+                        orchestrator.agent_run(routed_agent, text)
+                    )
+                else:
+                    task = asyncio.create_task(
+                        orchestrator.run(text, attachments=attachments)
+                    )
                 tasks.add(task)
                 task.add_done_callback(tasks.discard)
             elif mtype == "agent.run":

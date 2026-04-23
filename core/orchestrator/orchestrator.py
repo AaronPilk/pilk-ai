@@ -76,10 +76,20 @@ Creating agents (the COO flow):
 - system_prompt for the new agent: tight and specific. What it does,
   what it doesn't do, how it reports results.
 
-Routing work to existing agents:
-- Before doing a task yourself, check whether a registered agent is the
-  right specialist. If so, offer to delegate: "I'll pass this to
-  sales_agent — okay?"
+Routing work to existing agents (critical):
+- You are the orchestrator. Agents are the workers. Running the full
+  Pilk context on every task — even tasks a specialist agent is built
+  for — is expensive. Delegate aggressively.
+- A catalog of registered agents is injected at the top of your
+  system prompt on every run. Read it. If any agent's purpose fits
+  the current task, call delegate_to_agent(agent_name, task, reason).
+  The specialist takes over with its own system prompt, tool subset,
+  and sandbox; you do not need to replicate their work.
+- Only execute a task yourself when no agent fits — e.g. short
+  one-off questions, cross-cutting coordination, or agent creation.
+- When you delegate, keep your reply to the user brief: one sentence
+  naming the agent and the task. The specialist's own output will
+  follow.
 
 Rules of engagement:
 - Prefer the cheapest adequate action. Read before you edit. Use
@@ -235,10 +245,61 @@ class Orchestrator:
         self._running_plan_id: str | None = None
         self._cancel_event: asyncio.Event | None = None
         self._cancel_reason: str = ""
+        # Delegations requested by Pilk via ``delegate_to_agent`` during
+        # the current plan. Drained *after* the plan's lock is released
+        # so the specialist's ``agent_run`` can acquire it cleanly.
+        # Ordered — if Pilk hands off to multiple agents in one plan
+        # they run sequentially.
+        self._pending_delegations: list[tuple[str, str]] = []
 
     @property
     def running_plan_id(self) -> str | None:
         return self._running_plan_id
+
+    def queue_delegation(self, agent_name: str, task: str) -> None:
+        """Queue a delegation to run after the current plan ends.
+
+        Called by the ``delegate_to_agent`` tool handler. We cannot run
+        ``agent_run`` synchronously from inside the handler — the
+        orchestrator lock is held by Pilk's own plan — so we stash the
+        request and let ``_execute`` drain it after the lock is
+        released.
+        """
+        self._pending_delegations.append((agent_name, task))
+
+    def _agent_catalog_block(self) -> str:
+        """One-paragraph catalog of registered specialist agents.
+
+        Prepended to Pilk's system prompt on each run so the planner
+        has the list of delegation targets in-context. Agents don't
+        receive this block (they can't delegate further in this
+        architecture) — it's only built for the top-level chat path.
+        Returns empty string when no agents are registered, so the
+        prompt stays clean for bare-bones deployments.
+        """
+        if self.agents is None:
+            return ""
+        manifests = self.agents.manifests()
+        if not manifests:
+            return ""
+        lines: list[str] = []
+        for name in sorted(manifests):
+            if name == "sentinel":
+                # Infrastructure agent; users don't delegate to it.
+                continue
+            m = manifests[name]
+            desc = (m.description or "").strip().splitlines()[0] if m.description else ""
+            desc = desc[:140]
+            lines.append(f"- {name} — {desc}" if desc else f"- {name}")
+        if not lines:
+            return ""
+        header = (
+            "Registered specialist agents — delegate to one of these via "
+            "delegate_to_agent(agent_name, task, reason) whenever a task "
+            "fits their purpose. Delegate aggressively; running the full "
+            "Pilk context for specialist work is expensive."
+        )
+        return f"{header}\n\n" + "\n".join(lines)
 
     async def cancel_plan(self, plan_id: str, *, reason: str = "") -> bool:
         """Request cancellation of `plan_id` if it is the running plan.
@@ -421,6 +482,47 @@ class Orchestrator:
                 self._running_plan_id = None
                 self._cancel_event = None
                 self._cancel_reason = ""
+        # Pilk's plan is done and the lock is released. If he called
+        # ``delegate_to_agent`` during the run, pick up the handoff(s)
+        # now and kick off the specialist(s) sequentially. Only the
+        # top-level chat path drains — agent runs can't delegate.
+        if rc.agent_name is None and self._pending_delegations:
+            await self._drain_pending_delegations()
+
+    async def _drain_pending_delegations(self) -> None:
+        """Run queued delegations in order, stopping on first failure.
+
+        Each ``agent_run`` re-acquires the orchestrator lock cleanly
+        because ``_execute``'s ``async with self._lock`` block has
+        exited. A failed delegation is logged and broadcast; we stop
+        draining rather than continuing to queue more work onto a
+        broken state.
+        """
+        while self._pending_delegations:
+            agent_name, task = self._pending_delegations.pop(0)
+            await self.broadcast(
+                "delegation.started",
+                {"agent_name": agent_name, "task": task[:400]},
+            )
+            try:
+                await self.agent_run(agent_name, task)
+            except Exception as e:
+                log.exception("delegation_failed", agent=agent_name)
+                await self.broadcast(
+                    "delegation.failed",
+                    {
+                        "agent_name": agent_name,
+                        "error": f"{type(e).__name__}: {e}",
+                    },
+                )
+                # Drop the rest — if one handoff broke, running the
+                # next would just stack errors on top.
+                self._pending_delegations.clear()
+                return
+            await self.broadcast(
+                "delegation.completed",
+                {"agent_name": agent_name},
+            )
 
     async def _fail(self, plan_id: str, reason: str) -> None:
         final = await self.plans.finish_plan(plan_id, status="failed")
@@ -515,6 +617,16 @@ class Orchestrator:
             if brief:
                 effective_system_prompt = (
                     f"{brief}\n\n{rc.system_prompt}"
+                )
+
+        # Agent catalog: Pilk's delegation targets. Only injected on
+        # the top-level chat path (agents themselves can't delegate
+        # further, so the catalog would be noise inside an agent run).
+        if rc.agent_name is None:
+            catalog = self._agent_catalog_block()
+            if catalog:
+                effective_system_prompt = (
+                    f"{catalog}\n\n{effective_system_prompt}"
                 )
 
         # Cross-session memory hydration. Builds a compact

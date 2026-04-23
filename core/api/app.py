@@ -138,6 +138,7 @@ from core.tools.builtin import (
     make_agent_create_tool,
     make_browser_tools,
     make_code_task_tool,
+    make_delegate_to_agent_tool,
     make_llm_ask_tool,
     make_memory_delete_tool,
     make_memory_list_tool,
@@ -696,6 +697,19 @@ async def lifespan(app: FastAPI):
 
     orchestrator: Orchestrator | None = None
     client: anthropic.AsyncAnthropic | None = None
+
+    # Delegation tool — Pilk's way to hand a task off to a registered
+    # specialist. The tool needs the orchestrator at call time, but
+    # we register tools before the orchestrator is built, so we pass a
+    # zero-arg callable that closes over the ``orchestrator`` local
+    # and reads its current value at invoke time.
+    registry.register(
+        make_delegate_to_agent_tool(
+            agent_registry=agents,
+            orchestrator_ref=lambda: orchestrator,
+            broadcast=broadcast,
+        )
+    )
     # Memory write tool — scoped WRITE_LOCAL so the orchestrator can
     # save user-stated preferences / facts / patterns during the
     # "Talk to PILK" interview (and anywhere else it's natural to
