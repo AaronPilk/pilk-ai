@@ -90,35 +90,44 @@ const OVERRIDE_LABELS: Record<OverrideMode, string> = {
 // the operator can see which ones have a credential wired. "Installed"
 // means build_providers registered the provider at boot; unconfigured
 // ones render dim with a hint about the env var that unlocks them.
+// The optional ``billing`` tag surfaces how each provider is paid
+// for so the operator can see at a glance which tiers are running
+// against their Max subscription vs. per-token API credits.
 const ALL_PLANNER_PROVIDERS: Array<{
   name: string;
   label: string;
   installHint: string;
+  billing?: "subscription" | "api";
 }> = [
   {
-    name: "anthropic",
-    label: "Anthropic (Claude)",
-    installHint: "ANTHROPIC_API_KEY",
+    name: "claude_code",
+    label: "Claude Code CLI (Max subscription)",
+    installHint: "claude binary on PATH + PILK_ENABLE_CLAUDE_CODE_CHAT=1",
+    billing: "subscription",
   },
   {
-    name: "claude_code",
-    label: "Claude Code CLI (subscription)",
-    installHint: "claude binary on PATH + PILK_ENABLE_CLAUDE_CODE_CHAT=1",
+    name: "anthropic",
+    label: "Anthropic API (Claude)",
+    installHint: "ANTHROPIC_API_KEY",
+    billing: "api",
   },
   {
     name: "openai",
-    label: "OpenAI (GPT)",
+    label: "OpenAI API (GPT)",
     installHint: "OPENAI_API_KEY",
+    billing: "api",
   },
   {
     name: "gemini",
-    label: "Google Gemini",
+    label: "Google Gemini API",
     installHint: "GEMINI_API_KEY",
+    billing: "api",
   },
   {
     name: "grok",
-    label: "xAI Grok",
+    label: "xAI Grok API",
     installHint: "XAI_API_KEY",
+    billing: "api",
   },
 ];
 
@@ -641,12 +650,14 @@ export default function Settings() {
             <div className="governor-providers">
               {ALL_PLANNER_PROVIDERS.map((p) => {
                 const installed = (gov.registered_providers ?? []).includes(p.name);
+                const subscription = p.billing === "subscription";
                 return (
                   <div
                     key={p.name}
                     className={
                       "governor-provider" +
-                      (installed ? " governor-provider--on" : "")
+                      (installed ? " governor-provider--on" : "") +
+                      (subscription ? " governor-provider--subscription" : "")
                     }
                     title={
                       installed
@@ -655,7 +666,12 @@ export default function Settings() {
                     }
                   >
                     <div className="governor-provider-dot" aria-hidden="true" />
-                    <div className="governor-provider-name">{p.label}</div>
+                    <div className="governor-provider-name">
+                      {p.label}
+                      {subscription ? (
+                        <span className="governor-provider-tag">Subscription</span>
+                      ) : null}
+                    </div>
                     <div className="governor-provider-status">
                       {installed ? "Installed" : "Not configured"}
                     </div>
@@ -665,11 +681,14 @@ export default function Settings() {
             </div>
             <div className="settings-note">
               A provider appears as <strong>Installed</strong> once its
-              API key lands in <code>.env</code> and pilkd restarts.
-              Flip any tier to a registered provider by editing{" "}
-              <code>PILK_TIER_LIGHT_PROVIDER</code> /{" "}
+              credential lands in <code>.env</code> and pilkd restarts.
+              Tiers tagged <em>Subscription</em> run against your Claude
+              Max plan (no API credits). Flip any tier between providers
+              by editing <code>PILK_TIER_LIGHT_PROVIDER</code> /{" "}
               <code>PILK_TIER_STANDARD_PROVIDER</code> /{" "}
-              <code>PILK_TIER_PREMIUM_PROVIDER</code>.
+              <code>PILK_TIER_PREMIUM_PROVIDER</code>. Turns with image
+              attachments auto-route to the Anthropic API since the
+              subscription CLI has no vision surface.
             </div>
 
             <div className="settings-row">

@@ -595,7 +595,15 @@ class Settings(BaseSettings):
         ),
     )
     tier_standard_provider: str = Field(
-        default="anthropic",
+        # Default to the Claude Code CLI — same subscription path LIGHT
+        # already uses — so balanced-tier work (the bulk of real
+        # orchestrator traffic) runs against the operator's Max plan
+        # instead of burning API credits. Anthropic still registers as
+        # a fallback for image turns (the orchestrator bypasses
+        # claude_code when vision is needed) and for setups without
+        # the claude binary on PATH. Set back to "anthropic" to opt
+        # out of subscription-first balanced chat.
+        default="claude_code",
         validation_alias=AliasChoices(
             "PILK_TIER_STANDARD_PROVIDER", "TIER_STANDARD_PROVIDER"
         ),
