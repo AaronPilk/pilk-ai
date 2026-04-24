@@ -194,6 +194,8 @@ async def hydrate(
         vault, window=daily_window_days, now=clock,
     ) if vault is not None else []
 
+    persona_notes = _collect_persona_notes(vault) if vault is not None else []
+
     hints = [h for h in (topic_hints or []) if h]
     topical = _collect_topical_notes(vault, hints) if (
         vault is not None and hints
@@ -211,6 +213,7 @@ async def hydrate(
         "patterns": len(by_kind[MemoryKind.PATTERN.value]),
         "preferences": len(by_kind[MemoryKind.PREFERENCE.value]),
         "daily_notes": len(daily_notes),
+        "persona_notes": len(persona_notes),
         "topical_notes": len(topical),
         "chatgpt_history": len(chatgpt_snippets),
     }
@@ -221,6 +224,7 @@ async def hydrate(
         patterns=by_kind[MemoryKind.PATTERN.value],
         preferences=by_kind[MemoryKind.PREFERENCE.value],
         daily_notes=daily_notes,
+        persona_notes=persona_notes,
         topical_notes=topical,
         chatgpt_snippets=chatgpt_snippets,
     )
@@ -270,12 +274,34 @@ def _render_sections(
     patterns: list[MemoryEntry],
     preferences: list[MemoryEntry],
     daily_notes: list[tuple[str, str]],
-    topical_notes: list[tuple[str, str]],
+    persona_notes: list[tuple[str, str]] | None = None,
+    topical_notes: list[tuple[str, str]] | None = None,
     chatgpt_snippets: list[tuple[str, str]] | None = None,
 ) -> list[_Section]:
     """Turn each category into a labelled section in priority order."""
     sections: list[_Section] = []
-    # Standing instructions — ALWAYS first, never truncated.
+    # Persona — the evolving self-portrait + operator portrait. Sits
+    # above standing instructions so PILK starts every turn already
+    # speaking from the right voice. Treated as critical because losing
+    # it under budget pressure is the exact thing the operator
+    # complained about (generic corporate tone).
+    if persona_notes:
+        lines = []
+        for title, body in persona_notes:
+            snippet = (body or "").strip()
+            if not snippet:
+                continue
+            lines.append(f"### {title}")
+            lines.append(snippet)
+        if lines:
+            sections.append(_Section(
+                label="persona",
+                header="## Persona",
+                lines=lines,
+                drop_priority=99,
+                critical=True,
+            ))
+    # Standing instructions — never truncated.
     if standing:
         sections.append(_Section(
             label="standing_instructions",
@@ -407,6 +433,48 @@ def _apply_budget(sections: list[_Section], *, token_cap: int) -> str:
 
 
 # ── vault helpers ────────────────────────────────────────────────
+
+
+# Cap on the per-persona-note body we carry into context. The persona
+# files are meant to evolve slowly and stay compact; we trim to the
+# last ~40 lines so a runaway note can't swamp the preamble. Operators
+# who want a fuller read can still open the file in Obsidian.
+_PERSONA_MAX_LINES = 40
+_PERSONA_PATHS: tuple[tuple[str, str], ...] = (
+    ("persona/pilk.md", "PILK — self"),
+    ("persona/operator.md", "Operator"),
+)
+
+
+def _collect_persona_notes(vault: Vault) -> list[tuple[str, str]]:
+    """Return ``(label, body)`` for each persona note that exists.
+
+    Both files are optional. When neither exists we return an empty
+    list and hydration carries on without a Persona section — PILK
+    falls back to the system-prompt guidance alone. As soon as the
+    first ``brain_note_write`` lands a persona note, it shows up in
+    every subsequent turn's context.
+    """
+    out: list[tuple[str, str]] = []
+    for rel, label in _PERSONA_PATHS:
+        try:
+            body = vault.read(rel)
+        except FileNotFoundError:
+            continue
+        except Exception as e:  # pragma: no cover — defensive
+            log.warning(
+                "memory_hydrate_persona_read_failed",
+                path=rel,
+                error=str(e),
+            )
+            continue
+        lines = body.splitlines()
+        if len(lines) > _PERSONA_MAX_LINES:
+            lines = lines[-_PERSONA_MAX_LINES:]
+        trimmed = "\n".join(lines).strip()
+        if trimmed:
+            out.append((label, trimmed))
+    return out
 
 
 def _collect_daily_notes(
