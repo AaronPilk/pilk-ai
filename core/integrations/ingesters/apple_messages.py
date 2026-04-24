@@ -46,7 +46,7 @@ HARD_MAX_MESSAGES_PER_THREAD = 5_000
 # Group chat style from chat.style column (Messages internal constant).
 _STYLE_GROUP = 43
 # Handles that look like shortcode verification senders — purely
-# numeric sender ID, usually 3–7 digits, no ``@`` or ``+``.
+# numeric sender ID, usually 3-7 digits, no ``@`` or ``+``.
 _SHORTCODE_RE = re.compile(r"^\d{3,7}$")
 
 
@@ -290,7 +290,7 @@ def _is_shortcode(handle: str) -> bool:
 
 
 # Byte signature that precedes the NSString payload inside a Messages
-# ``attributedBody`` typedstream blob. Stable across macOS 13–15: the
+# ``attributedBody`` typedstream blob. Stable across macOS 13-15: the
 # stream emits NSString's class reference (0x94 0x84 0x01) followed by
 # ``+`` (0x2b) which kicks off the string's length-prefixed UTF-8.
 _NSSTRING_MARKER = b"\x94\x84\x01+"
@@ -338,11 +338,11 @@ def _extract_text_from_attributed_body(blob: bytes) -> str | None:
 
 
 __all__ = [
-    "AppleMessagesIngestError",
-    "ConversationThread",
     "DEFAULT_DB_PATH",
     "DEFAULT_SINCE_DAYS",
     "HARD_MAX_THREADS",
+    "AppleMessagesIngestError",
+    "ConversationThread",
     "MessageRow",
     "ScanResult",
     "render_thread_note",

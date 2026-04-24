@@ -35,7 +35,7 @@ _STOPWORDS: frozenset[str] = frozenset(
         "where", "which", "who", "why", "will", "with", "would", "you",
         "your", "yours", "now", "also", "any", "over", "into",
         "make", "made", "makes", "need", "needs", "want", "wants",
-        "pilk", "hey", "okay", "ok", "yeah", "yes", "no", "thanks",
+        "pilk", "okay", "ok", "yeah", "yes", "thanks",
     }
 )
 

@@ -477,9 +477,10 @@ def _should_escalate_to_pilk(
     """
     if remediation is not None and not remediation.ok:
         return True
-    if remediation is None and tresult.severity.rank() >= Severity.HIGH.rank():
-        return True
-    return False
+    return (
+        remediation is None
+        and tresult.severity.rank() >= Severity.HIGH.rank()
+    )
 
 
 async def _noop_restart(agent_name: str) -> RemediationResult:

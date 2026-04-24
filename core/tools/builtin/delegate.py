@@ -37,7 +37,7 @@ Broadcaster = Callable[[str, dict[str, Any]], Awaitable[None]]
 def make_delegate_to_agent_tool(
     *,
     agent_registry: AgentRegistry,
-    orchestrator_ref: Callable[[], "Orchestrator | None"],
+    orchestrator_ref: Callable[[], Orchestrator | None],
     broadcast: Broadcaster,
 ) -> Tool:
     """Build the ``delegate_to_agent`` tool.

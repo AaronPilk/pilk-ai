@@ -190,7 +190,7 @@ def test_scan_tolerates_malformed_lines(claude_home: Path) -> None:
 
 def test_scan_ignores_tool_result_feeds(claude_home: Path) -> None:
     """Regression: pre-fix the scanner counted every assistant entry
-    which over-counted tool-heavy sessions 5–20x. Ensure the new
+    which over-counted tool-heavy sessions 5-20x. Ensure the new
     scanner ignores tool_result user feeds + assistant rows when
     tallying the message counter."""
     now = datetime.now(UTC)

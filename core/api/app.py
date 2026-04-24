@@ -12,6 +12,7 @@ agent.run return a friendly error until a key is set.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -960,7 +961,13 @@ async def lifespan(app: FastAPI):
             "you found and did."
         )
         try:
-            asyncio.create_task(orchestrator.run(goal))
+            # Hold a strong ref on app state so the runtime doesn't
+            # GC the task mid-run (same pattern the chat WS handler
+            # uses for user-dispatched plans).
+            tasks: set[asyncio.Task] = app.state.orchestrator_tasks
+            task = asyncio.create_task(orchestrator.run(goal))
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
         except Exception as e:
             log.warning(
                 "sentinel_escalation_dispatch_failed",

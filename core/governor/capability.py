@@ -41,7 +41,7 @@ class Capability(StrEnum):
 
 
 # Goal-text length above which we start treating a request as
-# long-context. 15k chars ≈ 3–4k tokens of pasted content, which is
+# long-context. 15k chars ≈ 3-4k tokens of pasted content, which is
 # already a range where Gemini's context pricing pulls ahead.
 _LONG_CONTEXT_CHAR_THRESHOLD = 15_000
 
@@ -89,7 +89,7 @@ CAPABILITY_PROVIDER_MODELS: dict[Capability, dict[str, str]] = {
 
 
 def classify_capability(
-    goal: str, attachments: list["ChatAttachment"] | None = None,
+    goal: str, attachments: list[ChatAttachment] | None = None,
 ) -> CapabilityHint | None:
     """Inspect the goal + attachments for a capability signal.
 

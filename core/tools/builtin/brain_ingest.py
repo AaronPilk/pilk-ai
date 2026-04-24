@@ -40,6 +40,19 @@ from typing import TYPE_CHECKING, Any
 
 from core.brain import Vault
 from core.config import get_settings
+from core.integrations.ingesters.apple_messages import (
+    DEFAULT_SINCE_DAYS as MESSAGES_DEFAULT_SINCE_DAYS,
+)
+from core.integrations.ingesters.apple_messages import (
+    HARD_MAX_THREADS as MESSAGES_HARD_MAX_THREADS,
+)
+from core.integrations.ingesters.apple_messages import (
+    AppleMessagesIngestError,
+    scan_apple_messages,
+)
+from core.integrations.ingesters.apple_messages import (
+    render_thread_note as render_messages_thread_note,
+)
 from core.integrations.ingesters.chatgpt import (
     ChatGPTIngestError,
     parse_export,
@@ -60,13 +73,6 @@ from core.integrations.ingesters.docs import (
 )
 from core.integrations.ingesters.docs import (
     HARD_MAX_FILES as DOCS_HARD_MAX_FILES,
-)
-from core.integrations.ingesters.apple_messages import (
-    AppleMessagesIngestError,
-    DEFAULT_SINCE_DAYS as MESSAGES_DEFAULT_SINCE_DAYS,
-    HARD_MAX_THREADS as MESSAGES_HARD_MAX_THREADS,
-    render_thread_note as render_messages_thread_note,
-    scan_apple_messages,
 )
 from core.integrations.ingesters.docs import (
     DocsIngestError,

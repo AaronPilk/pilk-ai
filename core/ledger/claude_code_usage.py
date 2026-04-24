@@ -6,7 +6,7 @@ subscription cap is "messages per 5 hours" where a *message* is one
 operator-initiated prompt — NOT one assistant API call. Internally a
 single user prompt can produce many ``type=assistant`` lines (one
 per tool-use round-trip), so counting assistant entries over-counts
-by 5–20x in tool-heavy workflows and makes the ring wildly wrong.
+by 5-20x in tool-heavy workflows and makes the ring wildly wrong.
 
 What we actually count:
 

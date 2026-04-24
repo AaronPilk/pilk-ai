@@ -166,7 +166,7 @@ Daily notes:
 """
 
 
-def _extract_retry_after(exc: "anthropic.RateLimitError") -> float | None:
+def _extract_retry_after(exc: anthropic.RateLimitError) -> float | None:
     """Pull ``retry-after`` from an Anthropic rate-limit error if the
     SDK surfaced it. Returns seconds as a float, or ``None`` when the
     header is missing / unparseable — the caller falls back to a
@@ -197,7 +197,7 @@ class PlanCancelledError(RuntimeError):
         self.reason = reason
 
 
-class AgentBudgetExceeded(RuntimeError):
+class AgentBudgetExceededError(RuntimeError):
     """Raised when an agent's per-run or daily USD cap would be breached.
 
     Carries the cap vs. actual amounts so ``_fail`` can render a clear
@@ -568,7 +568,7 @@ class Orchestrator:
                         metadata={**rc.metadata, "agent_name": rc.agent_name},
                     )
                     await self.broadcast("plan.created", plan)
-                    exc = AgentBudgetExceeded(
+                    exc = AgentBudgetExceededError(
                         rc.agent_name, "daily", daily_cap, spent_today
                     )
                     await self.broadcast(
@@ -601,7 +601,7 @@ class Orchestrator:
             except PlanCancelledError as e:
                 log.info("plan_cancelled", plan_id=plan["id"], reason=e.reason)
                 await self._cancel(plan["id"], e.reason)
-            except AgentBudgetExceeded as e:
+            except AgentBudgetExceededError as e:
                 log.info(
                     "agent_budget_exceeded",
                     plan_id=plan["id"],
@@ -1070,7 +1070,7 @@ class Orchestrator:
                 # Let _execute's handler broadcast + fail the plan
                 # cleanly. Raising here skips message-append and tool
                 # dispatch for this turn, which is what we want.
-                raise AgentBudgetExceeded(
+                raise AgentBudgetExceededError(
                     rc.agent_name or "", "per_run",
                     run_budget_cap, run_usd_spent,
                 )
