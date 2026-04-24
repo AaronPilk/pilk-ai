@@ -66,6 +66,13 @@ AGENT_RUN_TIMEOUT_S = 60 * 60.0  # 1h
 
 AgentRunFn = Callable[[str, str], Awaitable[None]]
 BroadcastFn = Callable[[str, dict[str, Any]], Awaitable[None]]
+# ``(agent_name) -> (ready, missing_integration_names)``. Called before
+# we fire a trigger so an agent whose declared integrations haven't
+# been configured yet quietly skips instead of running uselessly every
+# tick — the exact failure mode that drove the "GHL keeps searching
+# even though GHL isn't set up" complaint. Returning ``None`` means
+# 'don't check'; the scheduler then fires unconditionally.
+IntegrationCheckFn = Callable[[str], tuple[bool, list[str]]]
 
 
 class TriggerScheduler:
@@ -85,12 +92,14 @@ class TriggerScheduler:
         broadcast: BroadcastFn,
         tick_seconds: float = DEFAULT_TICK_SECONDS,
         now_fn: Callable[[], datetime] | None = None,
+        integration_check: IntegrationCheckFn | None = None,
     ) -> None:
         self._registry = registry
         self._hub = hub
         self._agent_run = agent_run
         self._broadcast = broadcast
         self._tick_s = float(tick_seconds)
+        self._integration_check = integration_check
         # Injectable clock so tests can drive the cron tick deterministically.
         self._now = now_fn or (lambda: datetime.now(UTC))
         self._stop = asyncio.Event()
@@ -255,6 +264,49 @@ class TriggerScheduler:
                 name=manifest.name, source=source, reason=reason,
             )
             return {"status": "skipped", "reason": reason}
+
+        # Integration-readiness guard. Skip if the target agent
+        # declares integrations the operator hasn't configured yet.
+        # Prevents the "keeps searching GHL even though GHL isn't
+        # set up" burn loop — the trigger stays enabled in the
+        # manifest and will start firing automatically as soon as
+        # the credentials land.
+        if self._integration_check is not None and source != "manual":
+            try:
+                ready, missing = self._integration_check(manifest.agent_name)
+            except Exception as e:
+                log.warning(
+                    "integration_check_failed",
+                    name=manifest.name,
+                    agent=manifest.agent_name,
+                    error=str(e),
+                )
+                ready, missing = True, []
+            if not ready:
+                reason = f"missing integrations: {missing}"
+                await self._broadcast(
+                    "trigger.skipped",
+                    {
+                        "name": manifest.name,
+                        "agent_name": manifest.agent_name,
+                        "source": source,
+                        "reason": reason,
+                        "missing_integrations": missing,
+                        **context,
+                    },
+                )
+                log.info(
+                    "trigger_skipped",
+                    name=manifest.name,
+                    agent=manifest.agent_name,
+                    source=source,
+                    reason=reason,
+                )
+                return {
+                    "status": "skipped",
+                    "reason": reason,
+                    "missing_integrations": missing,
+                }
 
         async with self._fire_lock:
             fired_at = await self._registry.mark_fired(manifest.name)

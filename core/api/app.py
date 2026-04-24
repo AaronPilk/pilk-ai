@@ -12,6 +12,7 @@ agent.run return a friendly error until a key is set.
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -986,11 +987,47 @@ async def lifespan(app: FastAPI):
     )
     trigger_scheduler: TriggerScheduler | None = None
     if orchestrator is not None:
+        def _integration_check(agent_name: str) -> tuple[bool, list[str]]:
+            """Return (ready, missing) for the agent's declared
+            integrations. Unknown agents are treated as ready so the
+            scheduler doesn't swallow legitimate fires over a typo.
+
+            Missing names carry the spec's operator-facing ``label``
+            so the ``trigger.skipped`` broadcast is human-readable,
+            not a wall of internal row keys.
+            """
+            try:
+                manifest = agents.get(agent_name)
+            except Exception:
+                return (True, [])
+            missing: list[str] = []
+            for spec in manifest.integrations:
+                if spec.kind == "api_key":
+                    # env var fallback first — several providers
+                    # accept PILK_*/upper-case env overrides and
+                    # would be "configured" without a DB row.
+                    if os.getenv(spec.name.upper()):
+                        continue
+                    val = integration_secrets.get_value(spec.name)
+                    if not val:
+                        missing.append(spec.label or spec.name)
+                elif spec.kind == "oauth":
+                    from core.identity.accounts import AccountBinding
+                    binding = AccountBinding(
+                        provider=spec.name,
+                        role=spec.role or "user",
+                    )
+                    acct = accounts.resolve_binding(binding)
+                    if acct is None:
+                        missing.append(spec.label or spec.name)
+            return (len(missing) == 0, missing)
+
         trigger_scheduler = TriggerScheduler(
             registry=triggers,
             hub=hub,
             agent_run=orchestrator.agent_run,
             broadcast=broadcast,
+            integration_check=_integration_check,
         )
         await trigger_scheduler.start()
         log.info("trigger_scheduler_ready")
