@@ -467,6 +467,54 @@ class Orchestrator:
         )
         return f"{header}\n\n" + "\n".join(lines)
 
+    def _ai_engines_block(self) -> str:
+        """Snapshot of which planner providers + tiers are live right now.
+
+        Prepended on Pilk's runs so he notices when a new engine
+        lights up (Grok, Gemini, extra providers dropped in at
+        Settings → API keys) and can tell the operator what he can
+        newly do. Specialist agents don't see this block — they
+        follow manifest-pinned tiers and don't pick providers
+        themselves, so the infra view is noise for them.
+
+        Stable enough to sit inside the cached prefix: the list only
+        changes on daemon restart when a new key lands, so prompt
+        caching keeps its hit rate.
+        """
+        if self.governor is None or not self.providers:
+            return ""
+        tiers = self.governor.tiers
+        rows = [
+            f"- {tiers.light.label} (light tier): "
+            f"{tiers.light.provider} · {tiers.light.model}",
+            f"- {tiers.standard.label} (standard tier): "
+            f"{tiers.standard.provider} · {tiers.standard.model}",
+            f"- {tiers.premium.label} (premium tier): "
+            f"{tiers.premium.provider} · {tiers.premium.model}",
+        ]
+        tier_providers = {
+            tiers.light.provider,
+            tiers.standard.provider,
+            tiers.premium.provider,
+        }
+        extras = sorted(set(self.providers.keys()) - tier_providers)
+        extras_line = ""
+        if extras:
+            extras_line = (
+                "\n\nExtra engines available for capability routing "
+                "(vision, long-context, etc.): "
+                + ", ".join(extras)
+                + "."
+            )
+        header = (
+            "AI engines connected to PILK right now. If this list "
+            "looks different than it did last session, you've gained "
+            "or lost something — when it's relevant to the task at "
+            "hand, tell the operator what that changes. Don't volunteer "
+            "a tech recap on every turn; just know what you're packing."
+        )
+        return f"{header}\n\n" + "\n".join(rows) + extras_line
+
     async def cancel_plan(self, plan_id: str, *, reason: str = "") -> bool:
         """Request cancellation of `plan_id` if it is the running plan.
 
@@ -916,6 +964,16 @@ class Orchestrator:
             if catalog:
                 effective_system_prompt = (
                     f"{catalog}\n\n{effective_system_prompt}"
+                )
+            # AI engines snapshot. Same audience as the agent catalog
+            # (PILK + supervisor-style agents that can delegate) —
+            # they're the only runs that make tier/provider choices,
+            # so they're the only ones that benefit from seeing the
+            # live engine list.
+            engines = self._ai_engines_block()
+            if engines:
+                effective_system_prompt = (
+                    f"{engines}\n\n{effective_system_prompt}"
                 )
 
         # Cross-session memory hydration. Builds a compact
