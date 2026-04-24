@@ -917,6 +917,58 @@ async def lifespan(app: FastAPI):
     ):
         registry.register(t)
     hub.subscribe(sentinel.on_event)
+
+    # Sentinel → Pilk escalation bridge. When Sentinel tried to
+    # auto-remediate and failed (or the incident is high/critical
+    # with no remediation in its playbook), it emits
+    # ``sentinel.escalated``. Pilk picks it up as a chat-style goal
+    # and takes a hands-on second pass. If he's busy with a user
+    # plan we skip — the next Sentinel scan will re-raise if still
+    # unresolved.
+    async def _sentinel_escalation_listener(
+        event_type: str, payload: dict[str, object]
+    ) -> None:
+        if event_type != "sentinel.escalated":
+            return
+        if orchestrator is None or orchestrator.running_plan_id is not None:
+            log.info(
+                "sentinel_escalation_skipped",
+                reason=(
+                    "no orchestrator"
+                    if orchestrator is None
+                    else "orchestrator busy"
+                ),
+                incident_id=payload.get("id"),
+            )
+            return
+        agent = payload.get("agent_name") or "unknown"
+        summary = payload.get("summary") or ""
+        outcome = payload.get("outcome") or "no remediation attempted"
+        severity = payload.get("severity") or "unknown"
+        category = payload.get("category") or "unknown"
+        goal = (
+            f"Sentinel has escalated an unresolved incident.\n\n"
+            f"- Agent: {agent}\n"
+            f"- Category: {category}\n"
+            f"- Severity: {severity}\n"
+            f"- Summary: {summary}\n"
+            f"- Remediation outcome: {outcome}\n\n"
+            "Diagnose what's wrong and take action. If it needs a "
+            "specialist, delegate. If it's a config or state issue, "
+            "fix it. Close the loop by writing a short note on what "
+            "you found and did."
+        )
+        try:
+            asyncio.create_task(orchestrator.run(goal))
+        except Exception as e:
+            log.warning(
+                "sentinel_escalation_dispatch_failed",
+                incident_id=payload.get("id"),
+                error=str(e),
+            )
+
+    hub.subscribe(_sentinel_escalation_listener)
+
     await sentinel.start()
     log.info("sentinel_ready", rules=len(sentinel._rules))
 

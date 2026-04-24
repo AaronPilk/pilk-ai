@@ -43,6 +43,8 @@ from core.logging import get_logger
 from core.sentinel.contracts import (
     Finding,
     Incident,
+    Severity,
+    TriageResult,
 )
 from core.sentinel.heartbeats import HeartbeatStore
 from core.sentinel.incidents import IncidentStore
@@ -399,6 +401,25 @@ class Supervisor:
                     incident_id=incident.id,
                     error=str(e),
                 )
+            # If auto-remediation failed or wasn't applicable and the
+            # incident is high/critical, escalate to Pilk so he can
+            # reason about it + take a smarter action than restart.
+            # Fire-and-forget; the app listener owns the follow-through.
+            if _should_escalate_to_pilk(tresult, remediation):
+                try:
+                    await self._broadcast(
+                        "sentinel.escalated",
+                        {
+                            **_incident_broadcast_payload(incident),
+                            "recent_logs": logs[-5:],
+                        },
+                    )
+                except Exception as e:
+                    log.warning(
+                        "sentinel_escalate_broadcast_failed",
+                        incident_id=incident.id,
+                        error=str(e),
+                    )
 
         log.info(
             "sentinel_finding",
@@ -432,6 +453,33 @@ class Supervisor:
             logs_dir=self._logs_dir,
             _restart=self._restart_fn,
         )
+
+
+def _should_escalate_to_pilk(
+    tresult: TriageResult, remediation: RemediationResult | None
+) -> bool:
+    """Decide whether to hand an incident up to Pilk for hands-on fix.
+
+    Pilk is called when either:
+
+    * auto-remediation ran and failed (Sentinel tried, came up short),
+      regardless of severity — a broken agent that restart didn't fix
+      is the archetypal case where Pilk needs to diagnose further.
+    * auto-remediation was NOT attempted (not in ALLOWED_REMEDIATIONS)
+      AND severity is HIGH or CRITICAL — the class of incident
+      Sentinel can't fix on its own, but the operator would want Pilk
+      looking at it before they see it next.
+
+    We deliberately do NOT escalate LOW/MED incidents with no
+    remediation: they live in the Sentinel incident list for the
+    operator to review on their own pace. Flooding Pilk with every
+    noisy signal would undo the point of Sentinel filtering at all.
+    """
+    if remediation is not None and not remediation.ok:
+        return True
+    if remediation is None and tresult.severity.rank() >= Severity.HIGH.rank():
+        return True
+    return False
 
 
 async def _noop_restart(agent_name: str) -> RemediationResult:
