@@ -29,6 +29,10 @@ ui/src-tauri/target/
 .env
 .env.*
 !.env.example
+# Google OAuth client secrets — machine-local, never commit.
+pilk-google-client.json
+pilk-google-client*.json
+*-google-client.json
 
 # OS
 .DS_Store
@@ -43,6 +47,10 @@ Thumbs.db
 /PILK/
 pilk.db
 pilk.db-*
+# Stray literal "~/" directory created when code accidentally uses
+# "~/PILK" as a filesystem path without tilde expansion. Keep it
+# out of git regardless of the underlying code bug.
+/~/
 
 # Logs
 *.log
