@@ -46,6 +46,12 @@ log = get_logger("pilkd.orchestrator")
 
 Broadcaster = Callable[[str, dict[str, Any]], Awaitable[None]]
 
+# Hard cap on delegation chain depth. Pilk (depth=0) → specialist
+# (depth=1) → optional sub-specialist (depth=2). Deeper than that
+# usually signals a misconfigured supervisor agent looping on itself;
+# refusing here keeps costs bounded.
+MAX_DELEGATION_DEPTH = 2
+
 DEFAULT_SYSTEM_PROMPT = """You are PILK, a personal execution operating system. The user is
 your CEO; you are their COO. Your job is to translate intent into action
 — directly when a task is small, or by creating and routing to specialist
@@ -85,11 +91,19 @@ Routing work to existing agents (critical):
   the current task, call delegate_to_agent(agent_name, task, reason).
   The specialist takes over with its own system prompt, tool subset,
   and sandbox; you do not need to replicate their work.
+- **Multi-agent chains are a first-class pattern.** A complex task
+  often spans multiple specialists (e.g. "launch brand X" =
+  creative_content_agent → copy_agent → web_design_agent →
+  meta_ads_agent → sales_ops_agent). Call delegate_to_agent once per
+  specialist — they run sequentially in the order you queue them,
+  each with its own fresh context. Write each task string so the
+  downstream agent has everything it needs; they don't see your
+  conversation.
 - Only execute a task yourself when no agent fits — e.g. short
   one-off questions, cross-cutting coordination, or agent creation.
 - When you delegate, keep your reply to the user brief: one sentence
-  naming the agent and the task. The specialist's own output will
-  follow.
+  naming the agent(s) and what each will do. The specialists' own
+  outputs will follow.
 
 Rules of engagement:
 - Prefer the cheapest adequate action. Read before you edit. Use
@@ -202,6 +216,11 @@ class RunContext:
     # tier choice up to at least STANDARD (the LIGHT tier runs through
     # the Claude Code CLI, which has no vision surface).
     attachments: list[ChatAttachment] = field(default_factory=list)
+    # How many delegation hops deep this run is. Pilk = 0. An agent
+    # spawned by Pilk = 1. An agent spawned by that agent = 2. The
+    # orchestrator refuses hops past ``MAX_DELEGATION_DEPTH`` to
+    # prevent runaway chains + circular delegation.
+    delegation_depth: int = 0
 
 
 @dataclass
@@ -266,27 +285,48 @@ class Orchestrator:
         self._running_plan_id: str | None = None
         self._cancel_event: asyncio.Event | None = None
         self._cancel_reason: str = ""
-        # Delegations requested by Pilk via ``delegate_to_agent`` during
-        # the current plan. Drained *after* the plan's lock is released
-        # so the specialist's ``agent_run`` can acquire it cleanly.
-        # Ordered — if Pilk hands off to multiple agents in one plan
-        # they run sequentially.
-        self._pending_delegations: list[tuple[str, str]] = []
+        # Stack of pending-delegation frames. Each ``_execute`` call
+        # pushes a frame on entry and drains + pops on exit, so a
+        # nested plan (Pilk → agent A → agent B) keeps its
+        # delegations scoped to its own frame rather than tangling
+        # with siblings in a flat queue. Entries are
+        # (agent_name, task, depth_to_spawn_at).
+        self._delegation_stack: list[list[tuple[str, str, int]]] = []
+        # The depth of the currently-running plan. Tool handlers read
+        # this to decide whether a requested delegation would exceed
+        # MAX_DELEGATION_DEPTH.
+        self._current_delegation_depth: int = 0
 
     @property
     def running_plan_id(self) -> str | None:
         return self._running_plan_id
 
-    def queue_delegation(self, agent_name: str, task: str) -> None:
-        """Queue a delegation to run after the current plan ends.
+    @property
+    def current_delegation_depth(self) -> int:
+        """Depth of the plan currently holding the lock (0 = Pilk)."""
+        return self._current_delegation_depth
+
+    def queue_delegation(self, agent_name: str, task: str) -> bool:
+        """Queue a delegation on the current plan's frame.
+
+        Returns False if queueing would exceed ``MAX_DELEGATION_DEPTH``
+        — the tool handler surfaces that to the caller as an error so
+        the agent sees a refusal instead of a silent drop.
 
         Called by the ``delegate_to_agent`` tool handler. We cannot run
         ``agent_run`` synchronously from inside the handler — the
-        orchestrator lock is held by Pilk's own plan — so we stash the
-        request and let ``_execute`` drain it after the lock is
-        released.
+        orchestrator lock is held by the parent plan — so we stash the
+        request in the current frame and let ``_execute`` drain it
+        after the lock is released.
         """
-        self._pending_delegations.append((agent_name, task))
+        if not self._delegation_stack:
+            # No active plan; shouldn't happen, but fail closed.
+            return False
+        spawn_depth = self._current_delegation_depth + 1
+        if spawn_depth > MAX_DELEGATION_DEPTH:
+            return False
+        self._delegation_stack[-1].append((agent_name, task, spawn_depth))
+        return True
 
     def _agent_catalog_block(self) -> str:
         """One-paragraph catalog of registered specialist agents.
@@ -425,8 +465,16 @@ class Orchestrator:
         )
         await self._execute(ctx)
 
-    async def agent_run(self, name: str, task: str) -> None:
-        """Run the registered agent `name` against `task`."""
+    async def agent_run(
+        self, name: str, task: str, *, depth: int = 1
+    ) -> None:
+        """Run the registered agent ``name`` against ``task``.
+
+        ``depth`` is the chain position — 1 when Pilk delegates, 2
+        when a supervisor-style agent delegates further. Bounded by
+        ``MAX_DELEGATION_DEPTH``; callers above it are already
+        refused at the ``queue_delegation`` seam.
+        """
         if self.agents is None or self.sandboxes is None:
             raise RuntimeError("agent subsystem not initialized")
         manifest = self.agents.get(name)
@@ -446,12 +494,14 @@ class Orchestrator:
             sandbox_root=sandbox.description.workspace,
             sandbox_capabilities=capabilities,
             preferred_tier=manifest.preferred_tier,
+            delegation_depth=depth,
             metadata={
                 "agent": manifest.name,
                 "agent_version": manifest.version,
                 "sandbox_id": sandbox.description.id,
                 "capabilities": sorted(capabilities),
                 "budget": manifest.policy.budget.model_dump(),
+                "delegation_depth": depth,
             },
         )
         try:
@@ -509,6 +559,12 @@ class Orchestrator:
                     )
                     await self._fail(plan["id"], str(exc))
                     return
+        # Push a new delegation frame for this plan so any
+        # ``delegate_to_agent`` calls during it are scoped to us,
+        # not tangled with a parent plan's queue.
+        self._delegation_stack.append([])
+        prior_depth = self._current_delegation_depth
+        self._current_delegation_depth = rc.delegation_depth
         async with self._lock:
             plan = await self.plans.create_plan(
                 rc.goal, metadata={**rc.metadata, "agent_name": rc.agent_name}
@@ -552,30 +608,23 @@ class Orchestrator:
                 self._running_plan_id = None
                 self._cancel_event = None
                 self._cancel_reason = ""
-        # Pilk's plan is done and the lock is released. If he called
-        # ``delegate_to_agent`` during the run, pick up the handoff(s)
-        # now and kick off the specialist(s) sequentially. Only the
-        # top-level chat path drains — agent runs can't delegate.
-        if rc.agent_name is None and self._pending_delegations:
-            await self._drain_pending_delegations()
-
-    async def _drain_pending_delegations(self) -> None:
-        """Run queued delegations in order, stopping on first failure.
-
-        Each ``agent_run`` re-acquires the orchestrator lock cleanly
-        because ``_execute``'s ``async with self._lock`` block has
-        exited. A failed delegation is logged and broadcast; we stop
-        draining rather than continuing to queue more work onto a
-        broken state.
-        """
-        while self._pending_delegations:
-            agent_name, task = self._pending_delegations.pop(0)
+        # Plan's lock is released. Drain *this plan's* queued
+        # delegations sequentially. Each runs as its own nested
+        # ``_execute`` which will in turn push its own frame — so
+        # deep chains (Pilk → A → B) stay scoped naturally.
+        frame = self._delegation_stack.pop()
+        self._current_delegation_depth = prior_depth
+        for agent_name, task, spawn_depth in frame:
             await self.broadcast(
                 "delegation.started",
-                {"agent_name": agent_name, "task": task[:400]},
+                {
+                    "agent_name": agent_name,
+                    "task": task[:400],
+                    "depth": spawn_depth,
+                },
             )
             try:
-                await self.agent_run(agent_name, task)
+                await self.agent_run(agent_name, task, depth=spawn_depth)
             except Exception as e:
                 log.exception("delegation_failed", agent=agent_name)
                 await self.broadcast(
@@ -585,13 +634,14 @@ class Orchestrator:
                         "error": f"{type(e).__name__}: {e}",
                     },
                 )
-                # Drop the rest — if one handoff broke, running the
-                # next would just stack errors on top.
-                self._pending_delegations.clear()
+                # Drop the rest of THIS frame — if one handoff broke,
+                # running siblings on top of it would just stack
+                # errors. Siblings in outer frames still run when
+                # their turn comes.
                 return
             await self.broadcast(
                 "delegation.completed",
-                {"agent_name": agent_name},
+                {"agent_name": agent_name, "depth": spawn_depth},
             )
 
     async def _fail(self, plan_id: str, reason: str) -> None:
@@ -689,10 +739,16 @@ class Orchestrator:
                     f"{brief}\n\n{rc.system_prompt}"
                 )
 
-        # Agent catalog: Pilk's delegation targets. Only injected on
-        # the top-level chat path (agents themselves can't delegate
-        # further, so the catalog would be noise inside an agent run).
-        if rc.agent_name is None:
+        # Agent catalog: injected when this run has the
+        # ``delegate_to_agent`` tool available — always for Pilk
+        # (allowed_tools=None → all tools); for agents only when
+        # their manifest explicitly includes the tool. Supervisor-
+        # style agents opt in this way.
+        can_delegate = (
+            rc.allowed_tools is None
+            or "delegate_to_agent" in rc.allowed_tools
+        )
+        if can_delegate:
             catalog = self._agent_catalog_block()
             if catalog:
                 effective_system_prompt = (

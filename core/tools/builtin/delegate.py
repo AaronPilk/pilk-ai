@@ -82,8 +82,19 @@ def make_delegate_to_agent_tool(
             )
 
         # Queue the delegation. The orchestrator runs it once the
-        # current plan releases the lock.
-        orchestrator.queue_delegation(agent_name, task)
+        # current plan releases the lock. Returns False when queueing
+        # would exceed MAX_DELEGATION_DEPTH — surface that as a
+        # caller-visible refusal rather than a silent drop.
+        queued = orchestrator.queue_delegation(agent_name, task)
+        if not queued:
+            return ToolOutcome(
+                content=(
+                    f"Refused to delegate to {agent_name}: would exceed "
+                    "the maximum delegation chain depth. Complete the "
+                    "task directly or return to the parent orchestrator."
+                ),
+                is_error=True,
+            )
 
         await broadcast(
             "delegation.requested",
