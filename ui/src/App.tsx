@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import LeftNav from "./components/LeftNav";
 import TopBar from "./components/TopBar";
 import Home from "./routes/Home";
@@ -11,7 +11,6 @@ import Approvals from "./routes/Approvals";
 import Cost from "./routes/Cost";
 import Memory from "./routes/Memory";
 import Logs from "./routes/Logs";
-import Sentinel from "./routes/Sentinel";
 import Settings from "./routes/Settings";
 import { AuthGate } from "./lib/AuthGate";
 
@@ -34,7 +33,11 @@ export default function App() {
               <Route path="/cost" element={<Cost />} />
               <Route path="/memory" element={<Memory />} />
               <Route path="/logs" element={<Logs />} />
-              <Route path="/sentinel" element={<Sentinel />} />
+              {/* Sentinel lost its dedicated tab — incidents live on the
+                  Agents page (inline supervisor row) and the top-bar
+                  badge. Old links redirect so anything bookmarked
+                  still resolves. */}
+              <Route path="/sentinel" element={<Navigate to="/agents" replace />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>
           </div>

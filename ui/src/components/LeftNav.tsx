@@ -3,6 +3,13 @@ import { NavLink } from "react-router-dom";
 type Item = { to: string; label: string };
 type Group = { heading: string; items: Item[] };
 
+// Intentional cull — per product direction:
+//
+// * Sentinel lost its tab; it now renders inline above the agent grid
+//   and the top-bar incident badge covers the "is there trouble?" glance.
+// * Cost, Memory, and Logs moved into Home as clickable cards. Their
+//   routes still exist for drill-in, but they don't need nav real estate
+//   of their own — nobody's day starts with "let me open Logs."
 const groups: Group[] = [
   {
     heading: "Command",
@@ -19,17 +26,11 @@ const groups: Group[] = [
       { to: "/agents", label: "Agents" },
       { to: "/sandboxes", label: "Sandboxes" },
       { to: "/approvals", label: "Approvals" },
-      { to: "/sentinel", label: "Sentinel" },
     ],
   },
   {
     heading: "Admin",
-    items: [
-      { to: "/cost", label: "Cost" },
-      { to: "/memory", label: "Memory" },
-      { to: "/logs", label: "Logs" },
-      { to: "/settings", label: "Settings" },
-    ],
+    items: [{ to: "/settings", label: "Settings" }],
   },
 ];
 

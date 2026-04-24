@@ -8,13 +8,19 @@ import VoiceOrb from "../components/VoiceOrb";
 import {
   fetchAgents,
   fetchApprovals,
+  fetchCostEntries,
   fetchCostSummary,
   fetchIntegrationsStatus,
+  fetchLogs,
+  fetchMemory,
   fetchPlans,
   pilk,
   type AgentRow,
+  type CostEntry,
   type CostSummary,
   type GoogleIntegrationStatus,
+  type LogEntry,
+  type MemoryEntry,
   type PlanSummary,
 } from "../state/api";
 import {
@@ -27,6 +33,9 @@ interface Snapshot {
   agents: AgentRow[];
   plans: PlanSummary[];
   cost: CostSummary | null;
+  costEntries: CostEntry[];
+  memory: MemoryEntry[];
+  logs: LogEntry[];
   pendingApprovals: number;
   google: GoogleIntegrationStatus | null;
 }
@@ -86,16 +95,31 @@ export default function Home() {
     agents: [],
     plans: [],
     cost: null,
+    costEntries: [],
+    memory: [],
+    logs: [],
     pendingApprovals: 0,
     google: null,
   });
 
   useEffect(() => {
     const load = async () => {
-      const [agents, plans, cost, approvals, integrations] = await Promise.all([
+      const [
+        agents,
+        plans,
+        cost,
+        costEntries,
+        memory,
+        logs,
+        approvals,
+        integrations,
+      ] = await Promise.all([
         fetchAgents().catch(() => ({ agents: [] })),
         fetchPlans().catch(() => ({ plans: [], running_plan_id: null })),
         fetchCostSummary().catch(() => null),
+        fetchCostEntries(6).catch(() => ({ entries: [] })),
+        fetchMemory().catch(() => ({ entries: [], kinds: [] })),
+        fetchLogs({ limit: 6 }).catch(() => ({ entries: [], next_before: null })),
         fetchApprovals().catch(() => ({ pending: [], recent: [] })),
         fetchIntegrationsStatus().catch(() => null),
       ]);
@@ -103,6 +127,9 @@ export default function Home() {
         agents: agents.agents,
         plans: plans.plans,
         cost,
+        costEntries: costEntries.entries,
+        memory: memory.entries,
+        logs: logs.entries,
         pendingApprovals: approvals.pending.length,
         // Home shows your real inbox, not PILK's operational mailbox.
         google: integrations?.google?.user ?? null,
@@ -116,7 +143,9 @@ export default function Home() {
         m.type === "agent.created" ||
         m.type === "cost.updated" ||
         m.type === "approval.created" ||
-        m.type === "approval.resolved"
+        m.type === "approval.resolved" ||
+        m.type === "log.appended" ||
+        m.type === "memory.updated"
       ) {
         load();
       }
@@ -217,6 +246,10 @@ export default function Home() {
           )}
         </div>
 
+        <CostSummaryCard summary={snap.cost} entries={snap.costEntries} />
+        <MemorySummaryCard entries={snap.memory} />
+        <LogsSummaryCard entries={snap.logs} />
+
         {snap.google?.linked ? (
           <InboxCard email={snap.google.email} />
         ) : (
@@ -313,6 +346,113 @@ function Stat({
     </Link>
   ) : (
     <div className="home-stat">{body}</div>
+  );
+}
+
+function CostSummaryCard({
+  summary,
+  entries,
+}: {
+  summary: CostSummary | null;
+  entries: CostEntry[];
+}) {
+  const day = summary?.day_usd ?? 0;
+  const month = summary?.month_usd ?? 0;
+  const top = entries[0];
+  return (
+    <Link to="/cost" className="home-card home-card--drill">
+      <div className="home-card-head">
+        <div className="home-card-eyebrow">Cost</div>
+        <span className="home-card-link">Breakdown →</span>
+      </div>
+      <div className="home-card-stats">
+        <div className="home-stat">
+          <div className="home-stat-label">Today</div>
+          <div className="home-stat-value">${day.toFixed(2)}</div>
+        </div>
+        <div className="home-stat">
+          <div className="home-stat-label">Month</div>
+          <div className="home-stat-value">${month.toFixed(2)}</div>
+        </div>
+      </div>
+      {top ? (
+        <div className="home-card-foot">
+          Last call · {top.model ?? "unknown"} · ${top.usd.toFixed(4)}
+        </div>
+      ) : (
+        <div className="home-card-foot">No cost entries yet.</div>
+      )}
+    </Link>
+  );
+}
+
+function MemorySummaryCard({ entries }: { entries: MemoryEntry[] }) {
+  const recent = entries.slice(0, 4);
+  const totals = entries.reduce<Record<string, number>>((acc, e) => {
+    acc[e.kind] = (acc[e.kind] ?? 0) + 1;
+    return acc;
+  }, {});
+  const kindCounts = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  return (
+    <Link to="/memory" className="home-card home-card--drill">
+      <div className="home-card-head">
+        <div className="home-card-eyebrow">Memory</div>
+        <span className="home-card-link">Open →</span>
+      </div>
+      {entries.length === 0 ? (
+        <div className="home-card-empty">
+          PILK hasn't saved anything yet. Tell him your preferences in Chat
+          and he'll file them here.
+        </div>
+      ) : (
+        <>
+          <div className="home-mem-kinds">
+            {kindCounts.slice(0, 4).map(([k, n]) => (
+              <span key={k} className="home-mem-kind">
+                <span className="home-mem-kind-label">{k}</span>
+                <span className="home-mem-kind-count">{n}</span>
+              </span>
+            ))}
+          </div>
+          <ul className="home-mem-list">
+            {recent.map((m) => (
+              <li key={m.id} className="home-mem-row">
+                <span className="home-mem-title">{m.title}</span>
+                <span className="home-mem-kind-chip">{m.kind}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Link>
+  );
+}
+
+function LogsSummaryCard({ entries }: { entries: LogEntry[] }) {
+  const recent = entries.slice(0, 5);
+  return (
+    <Link to="/logs" className="home-card home-card--drill">
+      <div className="home-card-head">
+        <div className="home-card-eyebrow">Logs</div>
+        <span className="home-card-link">Full stream →</span>
+      </div>
+      {recent.length === 0 ? (
+        <div className="home-card-empty">Nothing logged yet.</div>
+      ) : (
+        <ul className="home-logs-list">
+          {recent.map((e) => (
+            <li key={`${e.kind}-${e.id}`} className="home-logs-row">
+              <span className={`home-logs-kind home-logs-kind--${e.kind}`}>
+                {e.kind}
+              </span>
+              <span className="home-logs-msg" title={e.title}>
+                {e.title}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Link>
   );
 }
 

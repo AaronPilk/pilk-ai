@@ -8941,3 +8941,191 @@ body {
   }
   .brain3-search { min-width: 0; width: 100%; }
 }
+
+/* ────────────────────────────────────────────────────────────────
+   Home CRM additions: drill-in cards for Cost / Memory / Logs, plus
+   the Apple+Google hybrid polish (softer surface, livelier accents,
+   subtle motion on hover). Each card below is itself the <Link>, so
+   the whole surface is clickable — matches the dense-cards pattern
+   the user landed on for Home.
+   ──────────────────────────────────────────────────────────────── */
+
+.home-card--drill {
+  color: inherit;
+  text-decoration: none;
+  transition:
+    transform 220ms cubic-bezier(0.18, 0.9, 0.32, 1.15),
+    background 220ms ease,
+    border-color 220ms ease,
+    box-shadow 220ms ease;
+}
+.home-card--drill:hover {
+  transform: translateY(-2px);
+  background: var(--bg-elev-2);
+  border-color: var(--border-strong);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 12px 28px rgba(0, 0, 0, 0.4),
+    0 0 0 1px var(--accent-soft);
+}
+.home-card--drill:hover .home-card-link {
+  color: var(--accent-strong);
+}
+
+.home-card-foot {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+/* Memory card — kinds as pill counters + flat list of recent titles. */
+.home-mem-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.home-mem-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.home-mem-kind-label {
+  text-transform: capitalize;
+  letter-spacing: 0.01em;
+}
+.home-mem-kind-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+}
+.home-mem-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.home-mem-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.home-mem-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-mem-kind-chip {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+/* Logs card — kind chip + single-line title. Colour-code by kind so
+   the glance is Material-style, not a wall of grey text. */
+.home-logs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.home-logs-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.home-logs-kind {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  background: var(--surface-hover);
+  color: var(--text-dim);
+}
+.home-logs-kind--plan {
+  background: rgba(139, 167, 255, 0.18);
+  color: var(--accent-strong);
+}
+.home-logs-kind--approval {
+  background: rgba(240, 192, 80, 0.18);
+  color: var(--warn);
+}
+.home-logs-kind--trust {
+  background: rgba(101, 209, 155, 0.18);
+  color: var(--ok);
+}
+.home-logs-msg {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Ambient orb floating + hue drift. On idle/passive the orb now
+   gently drifts vertically and its halo cycles through the
+   accent→violet range so it feels alive even when PILK isn't
+   speaking. Movement is slow + small (±6px over 9s) — enough to
+   catch the eye, not enough to distract. Honours
+   prefers-reduced-motion.
+   ──────────────────────────────────────────────────────────────── */
+
+.orb--large,
+.orb--medium {
+  animation: orb-float 9s ease-in-out infinite;
+}
+.orb--idle .orb-halo,
+.orb--passive .orb-halo {
+  animation: orb-halo 7s ease-in-out infinite,
+             orb-hue-drift 14s linear infinite;
+}
+.orb--listening .orb-halo {
+  /* keep the halo pulse fast during listening but add a faster
+     hue shift so the ring reads 'active'. */
+  animation: orb-halo 2.2s ease-in-out infinite,
+             orb-hue-drift 6s linear infinite;
+}
+
+@keyframes orb-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+@keyframes orb-hue-drift {
+  0%, 100% { filter: blur(22px) hue-rotate(0deg); }
+  50%      { filter: blur(22px) hue-rotate(24deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orb--large,
+  .orb--medium,
+  .orb--idle .orb-halo,
+  .orb--passive .orb-halo,
+  .orb--listening .orb-halo {
+    animation: none !important;
+  }
+}
