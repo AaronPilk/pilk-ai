@@ -31,6 +31,7 @@ import anthropic
 
 from core.brain import Vault
 from core.governor import Tier
+from core.governor.capability import classify_capability, resolve_model
 from core.governor.providers import PlannerProvider, PlannerResponse
 from core.ledger import Ledger, UsageSnapshot
 from core.logging import get_logger
@@ -821,6 +822,44 @@ class Orchestrator:
             planner_model = tier_choice.model
             requested_provider = tier_choice.provider
             tier_meta: dict[str, Any] = tier_choice.to_public()
+
+            # Capability override: if the task signals vision or
+            # long-context, swap to the provider best suited for
+            # that capability when it's available in the registry.
+            # Cost/quality pragmatism — Gemini does vision and 1M
+            # context work at a fraction of Claude/GPT-4o cost.
+            cap_hint = classify_capability(rc.goal, rc.attachments)
+            if cap_hint is not None:
+                pref = cap_hint.preferred_provider
+                cap_model = resolve_model(cap_hint.capability, pref)
+                if (
+                    pref in self.providers
+                    and cap_model is not None
+                    and pref != requested_provider
+                ):
+                    log.info(
+                        "capability_override_applied",
+                        plan_id=plan_id,
+                        capability=cap_hint.capability.value,
+                        reason=cap_hint.reason,
+                        from_provider=requested_provider,
+                        from_model=planner_model,
+                        to_provider=pref,
+                        to_model=cap_model,
+                    )
+                    requested_provider = pref
+                    planner_model = cap_model
+                    tier_meta["capability"] = cap_hint.capability.value
+                    tier_meta["capability_reason"] = cap_hint.reason
+                    tier_meta["reason"] = (
+                        f"{tier_meta.get('reason', 'rule')}+capability"
+                    )
+                else:
+                    tier_meta["capability_hint_missed"] = {
+                        "capability": cap_hint.capability.value,
+                        "preferred_provider": pref,
+                        "available": pref in self.providers,
+                    }
         else:
             planner_model = self.planner_model
             requested_provider = "anthropic"
