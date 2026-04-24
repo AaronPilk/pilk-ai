@@ -392,6 +392,25 @@ body {
 }
 .topbar-stat {
   display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.1;
+  text-decoration: none;
+  color: inherit;
+}
+.topbar-stat-icon {
+  color: var(--text-faint);
+  opacity: 0.85;
+  flex: 0 0 auto;
+}
+.topbar-stat--alert .topbar-stat-icon {
+  color: var(--warn);
+  opacity: 1;
+  filter: drop-shadow(0 0 4px rgba(244, 195, 90, 0.45));
+}
+.topbar-stat-stack {
+  display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 1px;
@@ -4012,7 +4031,7 @@ body {
 
 .topbar-stopall {
   margin-right: 16px;
-  padding: 6px 12px;
+  padding: 6px 14px;
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.14em;
@@ -4022,6 +4041,16 @@ body {
   border: 0;
   border-radius: var(--radius-pill);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 0 14px -2px rgba(255, 109, 133, 0.4);
+  transition: transform 160ms ease, filter 160ms ease, box-shadow 180ms ease;
+}
+.topbar-stopall:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.1);
+  box-shadow: 0 4px 22px -2px rgba(255, 109, 133, 0.55);
 }
 .topbar-stopall:disabled {
   opacity: 0.6;
@@ -4321,14 +4350,19 @@ body {
   font: inherit;
   font-size: 12px;
   padding: 6px 10px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 120ms ease, color 120ms ease,
+              border-color 120ms ease;
 }
 
 .topbar-signout:hover {
   background: var(--surface-hover);
   color: var(--text);
+  border-color: var(--border-strong);
 }
 
 /* ── Settings → API Keys ─────────────────────────────────────── */
@@ -4724,8 +4758,9 @@ body {
 
 .topbar-theme:hover {
   background: var(--surface-hover);
-  color: var(--text);
-  border-color: var(--border-strong);
+  color: var(--accent-strong);
+  border-color: var(--border-lit);
+  box-shadow: 0 0 16px -4px var(--accent-glow);
 }
 
 /* ── Settings → API Keys (card layout) ─────────────────────────

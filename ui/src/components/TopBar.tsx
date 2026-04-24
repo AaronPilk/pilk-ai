@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
+  AlertTriangle,
+  DollarSign,
+  LogOut,
+  Moon,
+  Play,
+  Sun,
+  Zap,
+} from "lucide-react";
+import {
   cancelAllRunning,
   fetchCostSummary,
   fetchSentinelSummary,
@@ -106,19 +115,26 @@ export default function TopBar() {
             disabled={stopping}
             title="Emergency stop — cancels the running plan and closes every live browser session."
           >
+            <Zap size={13} aria-hidden />
             {stopping ? "Stopping…" : "Stop all"}
           </button>
         )}
         <div className="topbar-stats">
           <div className="topbar-stat">
-            <span className="topbar-stat-label">Running</span>
-            <span className="topbar-stat-value">{running}</span>
+            <Play size={12} className="topbar-stat-icon" aria-hidden />
+            <div className="topbar-stat-stack">
+              <span className="topbar-stat-label">Running</span>
+              <span className="topbar-stat-value">{running}</span>
+            </div>
           </div>
           <div className="topbar-stat">
-            <span className="topbar-stat-label">Today</span>
-            <span className="topbar-stat-value">
-              ${summary ? summary.day_usd.toFixed(4) : "0.0000"}
-            </span>
+            <DollarSign size={12} className="topbar-stat-icon" aria-hidden />
+            <div className="topbar-stat-stack">
+              <span className="topbar-stat-label">Today</span>
+              <span className="topbar-stat-value">
+                ${summary ? summary.day_usd.toFixed(4) : "0.0000"}
+              </span>
+            </div>
           </div>
           {subUsage && (
             <div
@@ -139,12 +155,19 @@ export default function TopBar() {
           )}
           {sentinelCount > 0 && (
             <Link
-              to="/sentinel"
+              to="/agents"
               className="topbar-stat topbar-stat--alert"
               title="Unacknowledged sentinel incidents — click to review."
             >
-              <span className="topbar-stat-label">Alerts</span>
-              <span className="topbar-stat-value">{sentinelCount}</span>
+              <AlertTriangle
+                size={12}
+                className="topbar-stat-icon"
+                aria-hidden
+              />
+              <div className="topbar-stat-stack">
+                <span className="topbar-stat-label">Alerts</span>
+                <span className="topbar-stat-value">{sentinelCount}</span>
+              </div>
             </Link>
           )}
         </div>
@@ -163,7 +186,7 @@ export default function TopBar() {
             theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
           }
         >
-          {theme === "dark" ? "☀" : "☾"}
+          {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
         </button>
         {isCloudMode && (
           <button
@@ -171,6 +194,7 @@ export default function TopBar() {
             onClick={() => void signOutAndReturnToPortal()}
             title="Sign out and return to pilk.ai"
           >
+            <LogOut size={13} aria-hidden />
             Sign out
           </button>
         )}
