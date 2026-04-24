@@ -1,0 +1,20 @@
+name: proactive_checkin
+description: |
+  Every 4 hours, fire the proactive_checkin_agent. The agent decides
+  whether to ping the operator — most ticks are silent by design.
+
+  Disabled by default. Toggle on from the Settings / Triggers tab
+  once you've seen the agent's behaviour in a dry run.
+agent_name: proactive_checkin_agent
+goal: |
+  Do a proactive check-in. Scan the brain (standing instructions,
+  last 3 daily notes, structured memory) and decide whether there's
+  something Aaron would want a short nudge about right now. Silence
+  is the default and the correct call most of the time. If (and only
+  if) something clears the threshold, send ONE short Telegram
+  message. Append a one-line outcome to today's daily note either
+  way.
+enabled: false
+schedule:
+  kind: cron
+  expression: "0 */4 * * *"
