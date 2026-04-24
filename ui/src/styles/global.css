@@ -9162,3 +9162,178 @@ body {
     animation: none !important;
   }
 }
+
+/* ────────────────────────────────────────────────────────────────
+   Cost page v2 — subscription ring + stat cards + styled table.
+   Page header pattern (eyebrow / title / sub) is shared with Logs
+   and reused for Memory; defined here because Cost was the first
+   page migrated.
+   ──────────────────────────────────────────────────────────────── */
+
+.cost-head {
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cost-eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+.cost-title {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  font-weight: 600;
+}
+.cost-sub {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+/* Subscription ring card — SVG ring on the left, metadata on the right.
+   Accent-tinted shadow so the card reads as the most important thing
+   on the page. */
+.cost-usage {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 24px 28px;
+  background: var(--surface-raised);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border-lit);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-accent);
+  max-width: 720px;
+}
+.cost-usage-ring {
+  flex: 0 0 auto;
+  filter: drop-shadow(0 8px 20px var(--accent-glow));
+}
+.cost-usage-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+.cost-usage-eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 700;
+}
+.cost-usage-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.cost-usage-breakdown {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cost-usage-breakdown b {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.cost-usage-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.5;
+  max-width: 520px;
+}
+
+/* Tone variants for the stat cards — one accent pop, one quieted
+   all-time card so the three are visually weighted toward recent. */
+.cost-card--accent {
+  border-color: var(--border-lit);
+  box-shadow: var(--shadow-accent);
+}
+.cost-card--accent .cost-card-value {
+  background: linear-gradient(135deg, var(--accent-strong), var(--violet));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.cost-card--muted {
+  opacity: 0.78;
+}
+
+/* Entries table — promote the header from raw div to h2 + chip. */
+.cost-entries-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  font-size: initial;
+  letter-spacing: normal;
+  text-transform: none;
+  color: inherit;
+  font-weight: inherit;
+}
+.cost-entries-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.005em;
+}
+.cost-entries-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.cost-empty {
+  padding: 28px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+.cost-table-wrap {
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
+}
+.cost-table-wrap .cost-table {
+  border: 0;
+  border-radius: 0;
+}
+.cost-col-num {
+  text-align: right !important;
+}
+.cost-cell-model {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.cost-cell-usd {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+.cost-cell-plan {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
