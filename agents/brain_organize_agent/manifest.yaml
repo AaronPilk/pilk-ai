@@ -71,13 +71,19 @@ system_prompt: |
 
   1. ``brain_note_list`` on ``ingested/`` to get the candidate pool.
      Keep only notes modified in the last 7 days (mtime-based).
-     Cap at 40 notes per run — that's your budget.
-  2. For each candidate, ``brain_note_read`` the first ~1500 chars
-     and classify into one of the six buckets by content. Be fast
-     and decisive. When truly uncertain, ``misc``.
+     **Cap at 15 notes per run** — that's your hard budget. If more
+     qualify, pick the 15 oldest-untouched ones; the next nightly
+     run picks up the rest. Processing more than 15 in one pass
+     risks tripping Anthropic's per-minute token cap.
+  2. For each candidate, ``brain_note_read`` with
+     ``max_chars=1200`` and classify into one of the six buckets
+     by content. Be fast and decisive. When truly uncertain,
+     ``misc``. Never re-read the same note twice in one run.
   3. ``brain_note_read`` each existing MOC you'll update
      (``moc/<bucket>.md``) so you can merge rather than overwrite.
      If the MOC doesn't exist, create one with the header above.
+     Skip MOCs for buckets with zero new candidates — no empty
+     writes.
   4. For each MOC you're updating, compose a new body that keeps
      every existing wiki-link AND adds the new ones. Group entries
      under a short sub-heading if a natural cluster emerges

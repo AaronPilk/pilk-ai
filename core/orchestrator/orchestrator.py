@@ -166,6 +166,25 @@ Daily notes:
 """
 
 
+def _extract_retry_after(exc: "anthropic.RateLimitError") -> float | None:
+    """Pull ``retry-after`` from an Anthropic rate-limit error if the
+    SDK surfaced it. Returns seconds as a float, or ``None`` when the
+    header is missing / unparseable — the caller falls back to a
+    fixed backoff in that case.
+    """
+    resp = getattr(exc, "response", None)
+    if resp is None:
+        return None
+    headers = getattr(resp, "headers", None) or {}
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 class OrchestratorBusyError(RuntimeError):
     """Raised when a second plan is submitted while one is running."""
 
@@ -717,6 +736,64 @@ class Orchestrator:
                 error=str(e),
             )
 
+    async def _plan_turn_with_retry(
+        self,
+        *,
+        provider: PlannerProvider,
+        plan_id: str,
+        effective_system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        planner_model: str,
+    ) -> PlannerResponse:
+        """Call ``provider.plan_turn`` with retry on transient 429s.
+
+        Anthropic's tokens-per-minute cap is org-level and bursty
+        workflows (agents that read many brain notes in a row) trip
+        it easily. Rather than failing the whole plan on a recoverable
+        rate-limit, we back off once and retry. The ``retry-after``
+        header is honoured when present; otherwise we wait 45s (the
+        longest reasonable window to refill a 1-minute token bucket).
+
+        Non-429 errors pass through unchanged — they're not recoverable
+        here and should land on ``_execute``'s generic handlers.
+        """
+        attempts = 0
+        max_attempts = 3
+        while True:
+            try:
+                return await provider.plan_turn(
+                    system=effective_system_prompt,
+                    messages=messages,
+                    tools=tools,
+                    model=planner_model,
+                    max_tokens=16000,
+                    use_thinking=self._supports_thinking(planner_model),
+                    cache_control=True,
+                )
+            except anthropic.RateLimitError as e:
+                attempts += 1
+                if attempts >= max_attempts:
+                    raise
+                retry_after = _extract_retry_after(e) or (30.0 * attempts)
+                log.info(
+                    "anthropic_rate_limited_retry",
+                    plan_id=plan_id,
+                    attempt=attempts,
+                    wait_s=retry_after,
+                    model=planner_model,
+                )
+                await self.broadcast(
+                    "plan.rate_limited",
+                    {
+                        "plan_id": plan_id,
+                        "attempt": attempts,
+                        "wait_s": retry_after,
+                        "model": planner_model,
+                    },
+                )
+                await asyncio.sleep(retry_after)
+
     async def _drive(self, plan_id: str, rc: RunContext) -> None:
         tools = self.registry.anthropic_schemas(allow=rc.allowed_tools)
         # Compose the first user turn. With no attachments the content
@@ -920,14 +997,13 @@ class Orchestrator:
             await self.broadcast("plan.step_added", step)
 
             try:
-                response: PlannerResponse = await provider.plan_turn(
-                    system=effective_system_prompt,
+                response = await self._plan_turn_with_retry(
+                    provider=provider,
+                    plan_id=plan_id,
+                    effective_system_prompt=effective_system_prompt,
                     messages=messages,
                     tools=tools,
-                    model=planner_model,
-                    max_tokens=16000,
-                    use_thinking=self._supports_thinking(planner_model),
-                    cache_control=True,
+                    planner_model=planner_model,
                 )
             except ClaudeCodeToolUseUnsupportedError:
                 # LIGHT-tier routing landed us on the CLI provider but
@@ -960,14 +1036,13 @@ class Orchestrator:
                 if self.governor is not None:
                     standard = self.governor.tiers.get(Tier.STANDARD)
                     planner_model = standard.model
-                response = await provider.plan_turn(
-                    system=effective_system_prompt,
+                response = await self._plan_turn_with_retry(
+                    provider=provider,
+                    plan_id=plan_id,
+                    effective_system_prompt=effective_system_prompt,
                     messages=messages,
                     tools=tools,
-                    model=planner_model,
-                    max_tokens=16000,
-                    use_thinking=self._supports_thinking(planner_model),
-                    cache_control=True,
+                    planner_model=planner_model,
                 )
 
             # Extract the turn's assistant text before finishing the step
