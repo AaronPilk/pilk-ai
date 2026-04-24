@@ -269,11 +269,13 @@ def test_tool_names_unique_and_prefixed() -> None:
         assert n.startswith("telegram_")
 
 
-def test_every_tool_is_comms_risk() -> None:
-    """Push channel = human notification = COMMS. Every tool in the
-    telegram bundle must trip the same approval gate as email."""
+def test_every_tool_is_read_risk() -> None:
+    """Telegram is Pilk's ambient channel to the operator — approvals
+    on ping-myself would be pointless friction. Tools are READ risk;
+    the destination is the operator's own chat, hardwired from
+    settings. Outbound comms to third parties stay on COMMS."""
     for t in TELEGRAM_TOOLS:
-        assert t.risk == RiskClass.COMMS, t.name
+        assert t.risk == RiskClass.READ, t.name
 
 
 # ── Tools: not-configured ───────────────────────────────────────

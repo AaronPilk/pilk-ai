@@ -4,17 +4,18 @@ initiate.
 
 Two tools:
 
-    telegram_notify    COMMS    send a text message to the operator
-    telegram_deliver   COMMS    attach a workspace file (PDF, CSV, …)
+    telegram_notify    READ    send a text message to the operator
+    telegram_deliver   READ    attach a workspace file (PDF, CSV, …)
 
-Both are COMMS risk, so every send queues for operator approval by
-default — same gate as email. The operator can set a temporary trust
-rule ("trust telegram_notify from sentinel for 1h") once comfortable,
-but V1 ships conservative.
+Both are READ risk. Telegram is Pilk's ambient channel to the
+operator — status updates, approval prompts, incidents — and
+gating every ping behind an approval defeats the whole mechanism
+(the operator shouldn't have to approve the approval). The tools
+resolve chat_id from settings, so there's no way for either to
+reach anyone but the operator themselves.
 
-The tools intentionally resolve chat_id from settings, not from
-tool args — the whole point is that PILK knows WHO to message
-without each agent having to re-learn the operator's identity.
+Outbound comms to third parties (email_send_as_me, etc.) stay at
+COMMS — those are the ones that still need an approval gate.
 """
 
 from __future__ import annotations
@@ -113,10 +114,10 @@ telegram_notify_tool = Tool(
         "Use this when an agent (or PILK itself) needs to get the "
         "operator's attention without waiting for the next chat turn "
         "— approval needed, long-running task finished, sentinel "
-        "incident, ad-campaign report ready. Every send is COMMS-"
-        "risk, so it queues for approval by default. Messages over "
-        "4096 chars are truncated; use telegram_deliver for long "
-        "content."
+        "incident, ad-campaign report ready. READ-risk — the "
+        "destination is hardwired to the operator's own chat, so no "
+        "approval gate. Messages over 4096 chars are truncated; use "
+        "telegram_deliver for long content."
     ),
     input_schema={
         "type": "object",
@@ -140,7 +141,7 @@ telegram_notify_tool = Tool(
         },
         "required": ["text"],
     },
-    risk=RiskClass.COMMS,
+    risk=RiskClass.READ,
     handler=_notify,
 )
 
@@ -197,7 +198,8 @@ telegram_deliver_tool = Tool(
         "Attach a workspace file (PDF report, CSV shortlist, rendered "
         "design) and push it to the operator's Telegram chat with an "
         "optional caption. Path is workspace-relative; the tool "
-        "enforces scope. COMMS-risk — queues for approval."
+        "enforces scope. READ-risk — the destination is the operator's "
+        "own chat, so no approval gate."
     ),
     input_schema={
         "type": "object",
@@ -219,7 +221,7 @@ telegram_deliver_tool = Tool(
         },
         "required": ["path"],
     },
-    risk=RiskClass.COMMS,
+    risk=RiskClass.READ,
     handler=_deliver,
 )
 

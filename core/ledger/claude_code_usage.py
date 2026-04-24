@@ -1,16 +1,25 @@
 """Scan Claude Code CLI session logs to count subscription-billed turns.
 
 Claude Code writes one JSONL file per session under
-``~/.claude/projects/<project-slug>/<uuid>.jsonl``. Every assistant
-response lands as a single line with ``type=assistant`` and a
-``message.usage`` block containing token counts, and an outer
-``timestamp`` in ISO-8601.
+``~/.claude/projects/<project-slug>/<uuid>.jsonl``. The Max
+subscription cap is "messages per 5 hours" where a *message* is one
+operator-initiated prompt — NOT one assistant API call. Internally a
+single user prompt can produce many ``type=assistant`` lines (one
+per tool-use round-trip), so counting assistant entries over-counts
+by 5–20x in tool-heavy workflows and makes the ring wildly wrong.
 
-Those entries are what actually bill against the operator's Claude
-Max 5-hour rate-limit bucket — including work done outside PILK (the
-operator typing ``claude`` directly in a terminal). PILK's own
-cost-ledger only sees turns PILK dispatched, so the dashboard's "Max
-usage" ring needs this side-channel to paint the full picture.
+What we actually count:
+
+* ``count`` — ``type=user`` entries whose ``message.content`` is NOT
+  a ``tool_result``. That is: prompts the operator typed (or the
+  Pilk bridge forwarded). Maps 1:1 to what Anthropic bills against
+  the Max bucket. Tool-result feeds are skipped because Anthropic
+  doesn't count them as separate messages.
+* ``input_tokens`` / ``output_tokens`` / cache counters — summed
+  from ``type=assistant`` entries (the rows that carry usage blobs).
+  These are diagnostic: they let the dashboard show how much token
+  work a session generated even when it was cheap on the message
+  counter.
 
 The scan is cheap: one ``mtime`` filter drops every session file that
 couldn't possibly contain entries in the window, then we stream the
@@ -125,18 +134,20 @@ def scan_usage(
                     entry = _parse_line(line)
                     if entry is None:
                         continue
-                    ts, usage = entry
+                    kind, ts, usage = entry
                     if ts < cutoff:
                         continue
-                    total += 1
-                    input_tokens += int(usage.get("input_tokens") or 0)
-                    output_tokens += int(usage.get("output_tokens") or 0)
-                    cache_read += int(usage.get("cache_read_input_tokens") or 0)
-                    cache_write += int(
-                        usage.get("cache_creation_input_tokens") or 0,
-                    )
-                    if oldest is None or ts < oldest:
-                        oldest = ts
+                    if kind == "user_prompt":
+                        total += 1
+                        if oldest is None or ts < oldest:
+                            oldest = ts
+                    elif kind == "assistant":
+                        input_tokens += int(usage.get("input_tokens") or 0)
+                        output_tokens += int(usage.get("output_tokens") or 0)
+                        cache_read += int(usage.get("cache_read_input_tokens") or 0)
+                        cache_write += int(
+                            usage.get("cache_creation_input_tokens") or 0,
+                        )
         except OSError:
             continue
 
@@ -152,9 +163,18 @@ def scan_usage(
     )
 
 
-def _parse_line(line: str) -> tuple[datetime, dict] | None:
-    """Return (timestamp, usage_dict) for assistant entries carrying
-    usage data, or None for everything else.
+def _parse_line(line: str) -> tuple[str, datetime, dict] | None:
+    """Classify one JSONL line into (kind, timestamp, usage).
+
+    ``kind`` is one of:
+
+    * ``"user_prompt"`` — a ``type=user`` entry whose content is NOT
+      a tool_result. Counts toward the Max message tally.
+    * ``"assistant"`` — a ``type=assistant`` entry carrying a usage
+      blob. Contributes tokens; does NOT tick the message counter.
+
+    Returns ``None`` for tool_result feeds, system messages,
+    queue-operation markers, and anything malformed.
     """
     line = line.strip()
     if not line:
@@ -163,14 +183,10 @@ def _parse_line(line: str) -> tuple[datetime, dict] | None:
         obj = json.loads(line)
     except (ValueError, TypeError):
         return None
-    if obj.get("type") != "assistant":
+    kind = obj.get("type")
+    if kind not in ("user", "assistant"):
         return None
-    message = obj.get("message")
-    if not isinstance(message, dict):
-        return None
-    usage = message.get("usage")
-    if not isinstance(usage, dict):
-        return None
+
     ts_raw = obj.get("timestamp")
     if not isinstance(ts_raw, str):
         return None
@@ -183,7 +199,27 @@ def _parse_line(line: str) -> tuple[datetime, dict] | None:
         return None
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=UTC)
-    return ts, usage
+
+    message = obj.get("message")
+    if not isinstance(message, dict):
+        return None
+
+    if kind == "user":
+        # Skip tool_result continuations — those are auto-generated
+        # turn-fillers, not operator-typed prompts.
+        content = message.get("content")
+        if isinstance(content, list) and any(
+            isinstance(c, dict) and c.get("type") == "tool_result"
+            for c in content
+        ):
+            return None
+        return ("user_prompt", ts, {})
+
+    # assistant — usage is optional but usually present
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        usage = {}
+    return ("assistant", ts, usage)
 
 
 __all__ = ["ClaudeCodeUsage", "scan_usage"]

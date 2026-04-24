@@ -1,11 +1,17 @@
 """Scan of Claude Code CLI session logs for subscription-usage counts.
 
 Core guarantees:
-  * Only ``type=assistant`` lines with a ``message.usage`` block count.
+  * Count ``type=user`` entries whose content is NOT a tool_result —
+    those are operator-typed prompts, which is what Anthropic bills
+    against the Max 5-hour message cap.
+  * Tool-result continuations (``type=user`` with structured
+    ``tool_result`` content) don't count — they're auto-generated
+    agentic turn-fillers.
+  * Token totals come from ``type=assistant`` rows (usage blobs live
+    there) — diagnostic only, they don't tick the message counter.
   * Entries outside the ``window_hours`` slider are excluded.
   * Missing ``~/.claude/projects`` directory returns a zero-count
-    result rather than raising (important: not every PILK user has
-    Claude Code installed).
+    result rather than raising.
   * Truncated / malformed JSONL lines are skipped, not fatal.
 """
 
@@ -48,6 +54,26 @@ def _user_entry(*, timestamp: datetime, text: str = "hi") -> str:
     })
 
 
+def _tool_result_user_entry(*, timestamp: datetime) -> str:
+    """User row whose content is a tool_result — these are auto-
+    generated feedback rounds, not operator-typed prompts, and must
+    NOT count toward the subscription cap."""
+    return json.dumps({
+        "type": "user",
+        "timestamp": timestamp.isoformat().replace("+00:00", "Z"),
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "abc",
+                    "content": "ok",
+                }
+            ],
+        },
+    })
+
+
 @pytest.fixture
 def claude_home(tmp_path: Path, monkeypatch) -> Path:
     home = tmp_path / ".claude"
@@ -62,21 +88,27 @@ def _session(home: Path, name: str, lines: list[str]) -> Path:
     return path
 
 
-def test_scan_counts_assistant_entries_in_window(claude_home: Path) -> None:
+def test_scan_counts_operator_prompts_in_window(claude_home: Path) -> None:
     now = datetime.now(UTC)
     _session(claude_home, "sess-1.jsonl", [
+        # Three real user prompts inside the window.
+        _user_entry(timestamp=now - timedelta(minutes=5)),
+        _user_entry(timestamp=now - timedelta(minutes=30)),
+        _user_entry(timestamp=now - timedelta(hours=2)),
+        # Tool-result feed — NOT a real prompt, skipped.
+        _tool_result_user_entry(timestamp=now - timedelta(minutes=10)),
+        # Assistant rounds don't tick the counter.
         _assistant_entry(timestamp=now - timedelta(minutes=5)),
         _assistant_entry(timestamp=now - timedelta(minutes=30)),
-        _assistant_entry(timestamp=now - timedelta(hours=2)),
-        _user_entry(timestamp=now - timedelta(minutes=4)),
-        _assistant_entry(timestamp=now - timedelta(hours=7)),
+        # Outside the 5h window — skipped.
+        _user_entry(timestamp=now - timedelta(hours=7)),
     ])
     result = scan_usage(window_hours=5, home=claude_home)
     assert result.count == 3
     assert result.sessions_sampled == 1
 
 
-def test_scan_sums_token_counts(claude_home: Path) -> None:
+def test_scan_sums_token_counts_from_assistant(claude_home: Path) -> None:
     now = datetime.now(UTC)
     _session(claude_home, "sess.jsonl", [
         _assistant_entry(
@@ -108,11 +140,11 @@ def test_scan_sums_token_counts(claude_home: Path) -> None:
 def test_scan_walks_multiple_sessions(claude_home: Path) -> None:
     now = datetime.now(UTC)
     _session(claude_home, "a.jsonl", [
-        _assistant_entry(timestamp=now - timedelta(minutes=1)),
+        _user_entry(timestamp=now - timedelta(minutes=1)),
     ])
     _session(claude_home, "b.jsonl", [
-        _assistant_entry(timestamp=now - timedelta(minutes=2)),
-        _assistant_entry(timestamp=now - timedelta(minutes=3)),
+        _user_entry(timestamp=now - timedelta(minutes=2)),
+        _user_entry(timestamp=now - timedelta(minutes=3)),
     ])
     result = scan_usage(window_hours=5, home=claude_home)
     assert result.count == 3
@@ -129,13 +161,13 @@ def test_scan_missing_home_dir_returns_zero(tmp_path: Path) -> None:
 def test_scan_skips_files_outside_window(claude_home: Path) -> None:
     now = datetime.now(UTC)
     old = _session(claude_home, "old.jsonl", [
-        _assistant_entry(timestamp=now - timedelta(minutes=1)),
+        _user_entry(timestamp=now - timedelta(minutes=1)),
     ])
     old_ts = (now - timedelta(hours=24)).timestamp()
     os.utime(old, (old_ts, old_ts))
 
     _session(claude_home, "fresh.jsonl", [
-        _assistant_entry(timestamp=now - timedelta(minutes=1)),
+        _user_entry(timestamp=now - timedelta(minutes=1)),
     ])
 
     result = scan_usage(window_hours=5, home=claude_home)
@@ -146,11 +178,32 @@ def test_scan_skips_files_outside_window(claude_home: Path) -> None:
 def test_scan_tolerates_malformed_lines(claude_home: Path) -> None:
     now = datetime.now(UTC)
     _session(claude_home, "mixed.jsonl", [
-        _assistant_entry(timestamp=now - timedelta(minutes=1)),
+        _user_entry(timestamp=now - timedelta(minutes=1)),
         "{not-json",
-        '{"type":"assistant"}',
+        '{"type":"user"}',  # no timestamp; dropped
         "",
-        _assistant_entry(timestamp=now - timedelta(minutes=2)),
+        _user_entry(timestamp=now - timedelta(minutes=2)),
     ])
     result = scan_usage(window_hours=5, home=claude_home)
     assert result.count == 2
+
+
+def test_scan_ignores_tool_result_feeds(claude_home: Path) -> None:
+    """Regression: pre-fix the scanner counted every assistant entry
+    which over-counted tool-heavy sessions 5–20x. Ensure the new
+    scanner ignores tool_result user feeds + assistant rows when
+    tallying the message counter."""
+    now = datetime.now(UTC)
+    _session(claude_home, "heavy-tools.jsonl", [
+        _user_entry(timestamp=now - timedelta(minutes=30)),          # +1
+        _assistant_entry(timestamp=now - timedelta(minutes=29)),     # 0
+        _tool_result_user_entry(timestamp=now - timedelta(minutes=28)),  # 0
+        _assistant_entry(timestamp=now - timedelta(minutes=27)),     # 0
+        _tool_result_user_entry(timestamp=now - timedelta(minutes=26)),  # 0
+        _assistant_entry(timestamp=now - timedelta(minutes=25)),     # 0
+    ])
+    result = scan_usage(window_hours=5, home=claude_home)
+    assert result.count == 1, (
+        f"expected 1 operator prompt; got {result.count} — scanner is "
+        "counting tool feeds or assistant rounds again"
+    )
