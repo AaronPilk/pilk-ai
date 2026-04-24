@@ -1,55 +1,79 @@
 :root {
-  /* Base */
-  --bg: #07080b;
-  --bg-solid: #0a0b10;
+  /* Base — slightly warmer near-black for less "flat inky" feel. */
+  --bg: #07080d;
+  --bg-solid: #0a0b12;
 
-  /* Glass surfaces */
-  --bg-elev: rgba(22, 24, 34, 0.62);
-  --bg-elev-2: rgba(30, 33, 46, 0.72);
-  --surface: rgba(18, 20, 28, 0.55);
-  --surface-strong: rgba(28, 30, 42, 0.78);
-  --surface-hover: rgba(255, 255, 255, 0.045);
-  --surface-active: rgba(139, 167, 255, 0.12);
+  /* Glass surfaces — Apple-leaning translucency, Google-leaning
+     elevation hierarchy. Four tiers so containers that nest can
+     keep stepping up the brightness ladder without muddying. */
+  --bg-elev: rgba(24, 27, 38, 0.58);
+  --bg-elev-2: rgba(32, 36, 50, 0.70);
+  --surface: rgba(20, 23, 32, 0.50);
+  --surface-strong: rgba(30, 34, 48, 0.78);
+  --surface-raised: rgba(40, 45, 62, 0.86);
+  --surface-hover: rgba(255, 255, 255, 0.05);
+  --surface-active: rgba(139, 167, 255, 0.14);
 
-  /* Hairlines */
+  /* Hairlines — add a "lit" variant for the cards that need to pop. */
   --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-lit: rgba(139, 167, 255, 0.32);
 
   /* Text */
   --text: #eef0f5;
-  --text-dim: #a2a8b8;
-  --text-faint: #6b7183;
+  --text-dim: #a5acbd;
+  --text-faint: #6d7486;
 
-  /* Accents */
-  --accent: #8ba7ff;
-  --accent-strong: #a9bdff;
-  --accent-soft: rgba(139, 167, 255, 0.18);
-  --violet: #c68bff;
-  --danger: #ff6b6b;
-  --warn: #f0c050;
-  --ok: #65d19b;
+  /* Accents — primary hue pushed slightly more saturated + a cyan
+     secondary for "healthy" / success states, warmer peach for
+     attention. Matches the Material palette's taste for pops of
+     colour while staying in the Apple-glass background. */
+  --accent: #8fa8ff;
+  --accent-strong: #b1c2ff;
+  --accent-deep: #6d85ff;
+  --accent-soft: rgba(143, 168, 255, 0.20);
+  --accent-glow: rgba(143, 168, 255, 0.35);
+  --violet: #ca90ff;
+  --cyan: #6ed6e0;
+  --peach: #ffb186;
+  --danger: #ff6d85;
+  --warn: #f4c35a;
+  --ok: #6dd9a4;
 
-  /* Radii */
+  /* Radii — bumped the large radius a touch; Material uses 24-28px
+     for hero cards and the larger feel pairs nicely with dense
+     glass content. */
   --radius: 16px;
-  --radius-lg: 24px;
+  --radius-lg: 26px;
+  --radius-xl: 32px;
   --radius-sm: 10px;
   --radius-pill: 999px;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
-  --shadow: 0 2px 4px rgba(0, 0, 0, 0.2), 0 12px 32px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.3), 0 24px 64px rgba(0, 0, 0, 0.5);
+  /* Shadows — three tiers, plus an accent-tinted shadow the cards
+     use on hover (ghost-of-Material elevation hint). */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow: 0 2px 4px rgba(0, 0, 0, 0.22), 0 12px 32px rgba(0, 0, 0, 0.38);
+  --shadow-lg: 0 6px 12px rgba(0, 0, 0, 0.32), 0 28px 72px rgba(0, 0, 0, 0.55);
+  --shadow-accent: 0 0 0 1px var(--accent-soft),
+                   0 14px 40px -12px var(--accent-glow);
 
-  /* Blur */
+  /* Blur — two tiers for nested translucency. */
   --blur: saturate(180%) blur(28px);
   --blur-sm: saturate(160%) blur(14px);
 
-  /* Background wash (radial color, fixed behind everything) */
+  /* Background wash — added a cyan wash in the mid-right corner so
+     the ambient light feels less monotone. Kept everything very
+     low-alpha so content contrast stays high. */
   --bg-wash:
-    radial-gradient(ellipse 60% 50% at 18% 0%, rgba(108, 125, 245, 0.16), transparent 70%),
-    radial-gradient(ellipse 50% 40% at 82% 100%, rgba(198, 139, 229, 0.10), transparent 70%),
-    radial-gradient(ellipse 40% 35% at 100% 20%, rgba(101, 209, 155, 0.05), transparent 70%),
-    linear-gradient(180deg, #080a10 0%, #06070b 100%);
+    radial-gradient(ellipse 62% 52% at 16% -4%, rgba(110, 128, 248, 0.22), transparent 70%),
+    radial-gradient(ellipse 50% 42% at 84% 104%, rgba(204, 140, 232, 0.14), transparent 70%),
+    radial-gradient(ellipse 42% 36% at 104% 32%, rgba(110, 214, 224, 0.10), transparent 70%),
+    radial-gradient(ellipse 34% 28% at 50% 120%, rgba(255, 177, 134, 0.06), transparent 70%),
+    linear-gradient(180deg, #080a12 0%, #06070c 100%);
+
+  /* Motion — shared easing so transitions feel consistent. */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.18, 0.9, 0.32, 1.15);
 
   /* Typography */
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", system-ui, sans-serif;
@@ -70,11 +94,13 @@
   --bg-elev-2: rgba(255, 255, 255, 0.92);
   --surface: rgba(255, 255, 255, 0.72);
   --surface-strong: rgba(255, 255, 255, 0.92);
+  --surface-raised: rgba(255, 255, 255, 0.98);
   --surface-hover: rgba(10, 14, 32, 0.04);
   --surface-active: rgba(92, 117, 218, 0.14);
 
   --border: rgba(10, 14, 32, 0.10);
   --border-strong: rgba(10, 14, 32, 0.18);
+  --border-lit: rgba(92, 117, 218, 0.38);
 
   --text: #15181f;
   --text-dim: #565c6b;
@@ -82,20 +108,27 @@
 
   --accent: #5d77da;
   --accent-strong: #4a64c9;
+  --accent-deep: #3c54b3;
   --accent-soft: rgba(93, 119, 218, 0.16);
+  --accent-glow: rgba(93, 119, 218, 0.30);
   --violet: #a56ddb;
+  --cyan: #34a8b5;
+  --peach: #c27145;
   --danger: #d94545;
-  --warn: #c18a0e;
+  --warn: #b1820f;
   --ok: #1e9a63;
 
   --shadow-sm: 0 1px 2px rgba(12, 18, 40, 0.06);
   --shadow: 0 2px 4px rgba(12, 18, 40, 0.06), 0 12px 32px rgba(12, 18, 40, 0.10);
   --shadow-lg: 0 4px 8px rgba(12, 18, 40, 0.08), 0 24px 64px rgba(12, 18, 40, 0.14);
+  --shadow-accent: 0 0 0 1px var(--accent-soft),
+                   0 12px 32px -10px var(--accent-glow);
 
   --bg-wash:
-    radial-gradient(ellipse 60% 50% at 18% 0%, rgba(93, 119, 218, 0.10), transparent 70%),
-    radial-gradient(ellipse 50% 40% at 82% 100%, rgba(165, 109, 219, 0.06), transparent 70%),
-    radial-gradient(ellipse 40% 35% at 100% 20%, rgba(30, 154, 99, 0.04), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 18% 0%, rgba(93, 119, 218, 0.12), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 82% 100%, rgba(165, 109, 219, 0.08), transparent 70%),
+    radial-gradient(ellipse 40% 35% at 100% 20%, rgba(52, 168, 181, 0.05), transparent 70%),
+    radial-gradient(ellipse 34% 28% at 50% 120%, rgba(194, 113, 69, 0.04), transparent 70%),
     linear-gradient(180deg, #f7f8fb 0%, #eef0f5 100%);
 }
 
