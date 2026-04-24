@@ -101,10 +101,23 @@ export default function Sandboxes() {
   };
 
   return (
-    <div className="cost">
+    <div className="sandboxes">
+      <header className="sandboxes-head">
+        <div className="sandboxes-eyebrow">Sandboxes</div>
+        <h1 className="sandboxes-title">Where PILK does the actual work</h1>
+        <p className="sandboxes-sub">
+          Live browser sessions render here while agents scrape, fill forms,
+          or research. The table below lists every isolated workspace
+          (process, browser, or filesystem) your agents are holding open.
+        </p>
+      </header>
+
       {browserEnabled && (
         <section className="browser-live">
-          <div className="cost-entries-head">Live browser</div>
+          <div className="sandboxes-section-head">
+            <h2>Live browser</h2>
+            <span className="sandboxes-section-count">{active.length}</span>
+          </div>
           {active.length === 0 ? (
             <div className="browser-live-empty">
               No browser session running. Ask PILK to scrape a site, research
@@ -127,7 +140,10 @@ export default function Sandboxes() {
       )}
 
       <section>
-        <div className="cost-entries-head">Sandboxes</div>
+        <div className="sandboxes-section-head">
+          <h2>All sandboxes</h2>
+          <span className="sandboxes-section-count">{rows.length}</span>
+        </div>
         {rows.length === 0 ? (
           <div className="tasks-empty">
             No sandboxes yet. Run an agent from the Agents tab to create one.
