@@ -90,6 +90,15 @@ function plural(n: number, word: string): string {
   return n === 1 ? word : `${word}s`;
 }
 
+/** Split "Good morning, Aaron" → ["Good morning,", "Aaron"] so the
+ * operator's name renders in gradient-text while the rest stays
+ * flat. Falls back gracefully for greetings without a comma. */
+function splitGreeting(g: string): [string, string | null] {
+  const idx = g.lastIndexOf(",");
+  if (idx < 0) return [g, null];
+  return [g.slice(0, idx + 1), g.slice(idx + 1).trim() || null];
+}
+
 export default function Home() {
   const [snap, setSnap] = useState<Snapshot>({
     agents: [],
@@ -159,12 +168,26 @@ export default function Home() {
   const pulse = pulseLineFor(snap);
   const suggestions = useMemo(() => pickSuggestions(SUGGESTION_POOL, 3), []);
 
+  const greeting = greetingFor();
+  const [greetHead, greetTail] = splitGreeting(greeting);
+
   return (
     <div className="home">
+      <div className="bg-orb bg-orb--1" aria-hidden />
+      <div className="bg-orb bg-orb--2" aria-hidden />
       <section className="home-hero">
         <div className="home-hero-meta">
           <div className="home-hero-eyebrow">Your command center</div>
-          <h1 className="home-hero-greeting">{greetingFor()}.</h1>
+          <h1 className="home-hero-greeting">
+            {greetHead}
+            {greetTail && (
+              <>
+                {" "}
+                <span className="text-gradient">{greetTail}</span>
+              </>
+            )}
+            .
+          </h1>
           <div className="home-pulse">{pulse}</div>
         </div>
         <VoiceOrb size="large" />

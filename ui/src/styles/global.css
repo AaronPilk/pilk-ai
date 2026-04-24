@@ -24,16 +24,18 @@
   --text-dim: #a5acbd;
   --text-faint: #6d7486;
 
-  /* Accents — primary hue pushed slightly more saturated + a cyan
-     secondary for "healthy" / success states, warmer peach for
-     attention. Matches the Material palette's taste for pops of
-     colour while staying in the Apple-glass background. */
-  --accent: #8fa8ff;
-  --accent-strong: #b1c2ff;
-  --accent-deep: #6d85ff;
-  --accent-soft: rgba(143, 168, 255, 0.20);
-  --accent-glow: rgba(143, 168, 255, 0.35);
-  --violet: #ca90ff;
+  /* Accents — purple is the signature. Matches the Brandgen identity
+     the operator wants Pilk to feel like: bolder, more energetic,
+     stronger glow on everything interactive. Cyan/peach stay as
+     secondary pops. */
+  --accent: #9b5ef5;
+  --accent-strong: #c084fc;
+  --accent-deep: #7c3aed;
+  --accent-soft: rgba(155, 94, 245, 0.18);
+  --accent-glow: rgba(155, 94, 245, 0.40);
+  --purple-light: #c084fc;
+  --purple-subtle: rgba(155, 94, 245, 0.08);
+  --violet: #c084fc;
   --cyan: #6ed6e0;
   --peach: #ffb186;
   --danger: #ff6d85;
@@ -49,27 +51,35 @@
   --radius-sm: 10px;
   --radius-pill: 999px;
 
-  /* Shadows — three tiers, plus an accent-tinted shadow the cards
-     use on hover (ghost-of-Material elevation hint). */
+  /* Shadows — three tiers, plus purple-glow treatments. The glow
+     shadows are the Brandgen signature: every interactive surface
+     (CTAs, selected cards, focus rings) emits purple light. */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
   --shadow: 0 2px 4px rgba(0, 0, 0, 0.22), 0 12px 32px rgba(0, 0, 0, 0.38);
   --shadow-lg: 0 6px 12px rgba(0, 0, 0, 0.32), 0 28px 72px rgba(0, 0, 0, 0.55);
   --shadow-accent: 0 0 0 1px var(--accent-soft),
                    0 14px 40px -12px var(--accent-glow);
+  --shadow-purple-sm: 0 4px 14px var(--accent-glow);
+  --shadow-purple: 0 0 30px var(--accent-glow);
+  --shadow-purple-lg: 0 8px 40px var(--accent-glow);
+  --shadow-glow: 0 0 0 1px var(--accent),
+                 0 0 24px var(--accent-glow),
+                 0 8px 32px rgba(0, 0, 0, 0.35);
 
   /* Blur — two tiers for nested translucency. */
   --blur: saturate(180%) blur(28px);
   --blur-sm: saturate(160%) blur(14px);
 
-  /* Background wash — added a cyan wash in the mid-right corner so
-     the ambient light feels less monotone. Kept everything very
-     low-alpha so content contrast stays high. */
+  /* Background wash — purple-forward ambient light matching the
+     Brandgen hero vibe. Top-left bloom is saturated purple, bottom-
+     right a softer purple-light, with a cooler cyan spark and warm
+     peach spark kept tiny so they register only as hints. */
   --bg-wash:
-    radial-gradient(ellipse 62% 52% at 16% -4%, rgba(110, 128, 248, 0.22), transparent 70%),
-    radial-gradient(ellipse 50% 42% at 84% 104%, rgba(204, 140, 232, 0.14), transparent 70%),
-    radial-gradient(ellipse 42% 36% at 104% 32%, rgba(110, 214, 224, 0.10), transparent 70%),
-    radial-gradient(ellipse 34% 28% at 50% 120%, rgba(255, 177, 134, 0.06), transparent 70%),
-    linear-gradient(180deg, #080a12 0%, #06070c 100%);
+    radial-gradient(ellipse 62% 52% at 16% -4%, rgba(124, 58, 237, 0.28), transparent 70%),
+    radial-gradient(ellipse 50% 42% at 84% 104%, rgba(192, 132, 252, 0.18), transparent 70%),
+    radial-gradient(ellipse 42% 36% at 104% 32%, rgba(110, 214, 224, 0.08), transparent 70%),
+    radial-gradient(ellipse 34% 28% at 50% 120%, rgba(255, 177, 134, 0.05), transparent 70%),
+    linear-gradient(180deg, #09090f 0%, #06060a 100%);
 
   /* Motion — shared easing so transitions feel consistent. */
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -106,12 +116,14 @@
   --text-dim: #565c6b;
   --text-faint: #8890a0;
 
-  --accent: #5d77da;
-  --accent-strong: #4a64c9;
-  --accent-deep: #3c54b3;
-  --accent-soft: rgba(93, 119, 218, 0.16);
-  --accent-glow: rgba(93, 119, 218, 0.30);
-  --violet: #a56ddb;
+  --accent: #7c3aed;
+  --accent-strong: #6d28d9;
+  --accent-deep: #5b21b6;
+  --accent-soft: rgba(124, 58, 237, 0.12);
+  --accent-glow: rgba(124, 58, 237, 0.30);
+  --purple-light: #a855f7;
+  --purple-subtle: rgba(124, 58, 237, 0.07);
+  --violet: #a855f7;
   --cyan: #34a8b5;
   --peach: #c27145;
   --danger: #d94545;
@@ -123,12 +135,18 @@
   --shadow-lg: 0 4px 8px rgba(12, 18, 40, 0.08), 0 24px 64px rgba(12, 18, 40, 0.14);
   --shadow-accent: 0 0 0 1px var(--accent-soft),
                    0 12px 32px -10px var(--accent-glow);
+  --shadow-purple-sm: 0 4px 14px rgba(124, 58, 237, 0.30);
+  --shadow-purple: 0 0 30px rgba(124, 58, 237, 0.30);
+  --shadow-purple-lg: 0 8px 40px rgba(124, 58, 237, 0.35);
+  --shadow-glow: 0 0 0 1px var(--accent),
+                 0 0 24px rgba(124, 58, 237, 0.30),
+                 0 8px 32px rgba(12, 18, 40, 0.12);
 
   --bg-wash:
-    radial-gradient(ellipse 60% 50% at 18% 0%, rgba(93, 119, 218, 0.12), transparent 70%),
-    radial-gradient(ellipse 50% 40% at 82% 100%, rgba(165, 109, 219, 0.08), transparent 70%),
-    radial-gradient(ellipse 40% 35% at 100% 20%, rgba(52, 168, 181, 0.05), transparent 70%),
-    radial-gradient(ellipse 34% 28% at 50% 120%, rgba(194, 113, 69, 0.04), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 18% 0%, rgba(124, 58, 237, 0.10), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 82% 100%, rgba(168, 85, 247, 0.08), transparent 70%),
+    radial-gradient(ellipse 40% 35% at 100% 20%, rgba(52, 168, 181, 0.04), transparent 70%),
+    radial-gradient(ellipse 34% 28% at 50% 120%, rgba(194, 113, 69, 0.03), transparent 70%),
     linear-gradient(180deg, #f7f8fb 0%, #eef0f5 100%);
 }
 
@@ -9491,4 +9509,161 @@ body {
   border-radius: var(--radius-pill);
   background: var(--surface-hover);
   border: 1px solid var(--border);
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Brandgen-flavour additions: signature purple glow, gradient text,
+   heavier headlines, ambient decoration orbs, and the motion
+   keyframes (glow-pulse, shimmer, gradient-shift) the Brandgen UI
+   leans on. Applied surgically via utilities so existing pages get
+   the new look without rewriting each component.
+   ──────────────────────────────────────────────────────────────── */
+
+/* Hero headlines go bolder. Tracking slightly tighter matches the
+   Brandgen 5xl-7xl font-black look without us shipping the whole
+   Tailwind utility system. */
+.cost-title,
+.memory-title,
+.sandboxes-title,
+.logs-title,
+.home-hero-greeting {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.home-hero-greeting {
+  font-weight: 900;
+}
+
+/* Gradient-text utility — the Brandgen signature "purple on key
+   phrase" treatment. Apply inline with <span class="text-gradient">. */
+.text-gradient {
+  background: linear-gradient(135deg, var(--accent), var(--purple-light));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Ambient orbs — oversized blurred purple blobs sitting behind the
+   content on hero pages. Pure decoration; pointer-events: none so
+   they never intercept clicks. Two variants positioned top-right
+   and bottom-left to match the Brandgen entry screen. */
+.bg-orb {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(96px);
+  opacity: 0.22;
+  pointer-events: none;
+  z-index: 0;
+  animation: orb-drift 14s ease-in-out infinite;
+}
+.bg-orb--1 {
+  width: 520px;
+  height: 520px;
+  background: var(--accent);
+  top: -140px;
+  right: -140px;
+}
+.bg-orb--2 {
+  width: 360px;
+  height: 360px;
+  background: var(--purple-light);
+  bottom: -120px;
+  left: -100px;
+  opacity: 0.14;
+  animation-delay: -4s;
+}
+
+@keyframes orb-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(20px, -18px) scale(1.04); }
+  66%      { transform: translate(-14px, 24px) scale(0.98); }
+}
+
+/* Purple glow-pulse for the most important interactive chips
+   (active filter chips, primary CTAs). Slow, warm, organic — same
+   6-8s feel as the ambient orbs so the page has one breathing
+   rhythm. */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: var(--shadow-purple-sm); }
+  50%      { box-shadow: var(--shadow-purple-lg); }
+}
+
+/* Shimmer keyframe for loading skeletons. Background-size doubled
+   so the gradient can slide cleanly across. */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--surface) 25%,
+    var(--surface-strong) 50%,
+    var(--surface) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s linear infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* Animated gradient fill — used on hero backgrounds + selected
+   chip backgrounds that want to feel alive. */
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+
+.gradient-bg {
+  background: linear-gradient(
+    -45deg,
+    var(--accent-deep),
+    var(--accent),
+    var(--purple-light),
+    var(--accent-deep)
+  );
+  background-size: 400% 400%;
+  animation: gradient-shift 8s ease infinite;
+}
+
+/* Promote the primary action button on the Home hero. Purple glow
+   baseline, heavier glow on hover — matches Brandgen's btn-accent. */
+.btn--primary,
+.btn-primary,
+.memory-interview-cta {
+  transition: transform 180ms var(--ease-out),
+              box-shadow 220ms ease,
+              filter 180ms ease;
+}
+.btn--primary:hover,
+.btn-primary:hover,
+.memory-interview-cta:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-purple-lg);
+  filter: brightness(1.06);
+}
+
+/* Focus ring everywhere — wider + purple-tinted. */
+*:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Scrollbar — purple thumb so even background chrome carries the
+   brand. Kept narrow (6px) and opaque only on hover. */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--accent-soft);
+  border-radius: var(--radius-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+/* Selection colour — purple on the hero. */
+::selection {
+  background: var(--accent);
+  color: #fff;
 }
