@@ -9667,3 +9667,79 @@ body {
   background: var(--accent);
   color: #fff;
 }
+
+/* ────────────────────────────────────────────────────────────────
+   Pass 2 — motion. Staggered entrance on Home grid, bolder card
+   hover lift with purple glow, and glow-pulse on the most active
+   interactive surfaces (selected filter chips, primary chat CTAs).
+   Pure CSS so there's no new dependency — framer-motion's declarative
+   stagger is nice but overkill for this level of polish.
+   ──────────────────────────────────────────────────────────────── */
+
+/* Stagger entrance for Home grid children. Each child advances the
+   --stagger-index inline so the animation-delay increments
+   smoothly. Capped at 8 children; later cards just snap in without
+   a perceptible delay. */
+.home-grid > * {
+  animation: slide-up 420ms var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+.home-grid > *:nth-child(1) { --i: 0; }
+.home-grid > *:nth-child(2) { --i: 1; }
+.home-grid > *:nth-child(3) { --i: 2; }
+.home-grid > *:nth-child(4) { --i: 3; }
+.home-grid > *:nth-child(5) { --i: 4; }
+.home-grid > *:nth-child(6) { --i: 5; }
+.home-grid > *:nth-child(7) { --i: 6; }
+.home-grid > *:nth-child(8) { --i: 7; }
+.home-grid > *:nth-child(n+9) { --i: 8; }
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Bigger Brandgen-style card lift. Overrides the -2px default on
+   drill cards; -4px + purple glow = the same "floats off the page"
+   feel as Brandgen's .card-hover. */
+.home-card--drill {
+  transition:
+    transform 260ms var(--ease-spring),
+    background 220ms ease,
+    border-color 220ms ease,
+    box-shadow 260ms ease;
+}
+.home-card--drill:hover {
+  transform: translateY(-4px);
+  border-color: var(--accent);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    var(--shadow-purple);
+}
+
+/* Logs / filter chips — active state gets the glow-pulse treatment.
+   Same slow 6s rhythm as the ambient orbs so the page has one
+   breathing cadence, not three competing ones. */
+.logs-chip--active {
+  animation: glow-pulse 6s ease-in-out infinite;
+}
+
+/* Voice orb bumps up its purple presence to match. The halo already
+   cycles hue; now it also breathes the purple glow when listening. */
+.orb--listening,
+.orb--speaking {
+  box-shadow: var(--shadow-purple-lg);
+}
+
+/* Respect reduced-motion everywhere in Pass 2 additions. */
+@media (prefers-reduced-motion: reduce) {
+  .home-grid > *,
+  .logs-chip--active,
+  .orb--listening,
+  .orb--speaking {
+    animation: none !important;
+  }
+  .home-card--drill:hover {
+    transform: none;
+  }
+}
