@@ -80,10 +80,13 @@ policy:
 
 memory_namespace: proactive_checkin
 
-# Checking in is a light reasoning task. Haiku through the
-# subscription-backed LIGHT tier keeps the cost per tick negligible
-# even if it runs 6x a day.
-preferred_tier: light
+# Tool-heavy (brain_note_list + brain_note_read + memory_list +
+# telegram_notify + brain_note_write): pinning to LIGHT sends it
+# through the Claude Code CLI subscription provider, which is
+# hard-capped at max_turns=1 and can't drive multi-step tool use.
+# STANDARD keeps us on the real Anthropic API where each tool call
+# is a proper orchestrator turn.
+preferred_tier: standard
 
 integrations:
   - name: telegram_bot_token

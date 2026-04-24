@@ -90,6 +90,18 @@ class ClaudeCodeBinaryMissingError(RuntimeError):
     provider so the governor fails over cleanly."""
 
 
+class ClaudeCodeToolUseUnsupportedError(RuntimeError):
+    """Raised at call time when the CLI returned ``error_max_turns``
+    with ``stop_reason=tool_use`` — the model wanted to use a tool,
+    but the CLI's single-turn budget (by design; the orchestrator
+    owns multi-turn loops) can't actually execute it.
+
+    This happens when an agent run lands on the LIGHT tier but its
+    goal requires tool calls. Caller should retry on an API-backed
+    provider (``anthropic`` / ``openai``) for this turn.
+    """
+
+
 class ClaudeCodeChatProvider:
     """Shells out to ``claude`` CLI for planner turns. Subscription-
     backed → $0 per call for operators on Max / Pro."""
@@ -173,6 +185,22 @@ class ClaudeCodeChatProvider:
         stdout = stdout_b.decode("utf-8", errors="replace")
         stderr = stderr_b.decode("utf-8", errors="replace")
         if proc.returncode != 0:
+            # Specific case: CLI bails because the model emitted a
+            # tool_use block and max_turns=1 can't continue. That's a
+            # routing mistake, not a hard failure — an API-backed
+            # provider could handle the same turn. Raise a typed
+            # exception so the caller can fall back.
+            if (
+                '"subtype":"error_max_turns"' in stdout
+                and '"stop_reason":"tool_use"' in stdout
+            ):
+                raise ClaudeCodeToolUseUnsupportedError(
+                    "claude_code CLI can't continue this turn — the "
+                    "model wanted to use a tool, but the subscription "
+                    "path runs with max_turns=1. Route this agent "
+                    "through STANDARD (preferred_tier: standard) or "
+                    "retry on the API provider."
+                )
             raise RuntimeError(
                 f"claude_code provider exit={proc.returncode}: "
                 f"{(stderr or stdout)[:200]}"

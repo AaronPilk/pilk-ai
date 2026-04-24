@@ -33,6 +33,9 @@ from core.brain import Vault
 from core.governor import Tier
 from core.governor.capability import classify_capability, resolve_model
 from core.governor.providers import PlannerProvider, PlannerResponse
+from core.governor.providers.claude_code_provider import (
+    ClaudeCodeToolUseUnsupportedError,
+)
 from core.ledger import Ledger, UsageSnapshot
 from core.logging import get_logger
 from core.memory import MemoryStore, extract_topics, hydrate
@@ -916,15 +919,56 @@ class Orchestrator:
             )
             await self.broadcast("plan.step_added", step)
 
-            response: PlannerResponse = await provider.plan_turn(
-                system=effective_system_prompt,
-                messages=messages,
-                tools=tools,
-                model=planner_model,
-                max_tokens=16000,
-                use_thinking=self._supports_thinking(planner_model),
-                cache_control=True,
-            )
+            try:
+                response: PlannerResponse = await provider.plan_turn(
+                    system=effective_system_prompt,
+                    messages=messages,
+                    tools=tools,
+                    model=planner_model,
+                    max_tokens=16000,
+                    use_thinking=self._supports_thinking(planner_model),
+                    cache_control=True,
+                )
+            except ClaudeCodeToolUseUnsupportedError:
+                # LIGHT-tier routing landed us on the CLI provider but
+                # the model wants a tool. The CLI can't run tool use
+                # (max_turns=1 by design); fall back to the Anthropic
+                # API for THIS turn + every subsequent turn of this
+                # plan so we don't keep re-hitting the same wall.
+                api_provider = self.providers.get("anthropic")
+                if api_provider is None:
+                    raise RuntimeError(
+                        "claude_code CLI can't run tool use on this "
+                        "turn and the anthropic fallback provider is "
+                        "not configured. Set ANTHROPIC_API_KEY and "
+                        "restart pilkd."
+                    ) from None
+                log.info(
+                    "claude_code_tool_use_fallback",
+                    plan_id=plan_id,
+                    from_provider=effective_provider,
+                    to_provider="anthropic",
+                )
+                provider = api_provider
+                effective_provider = "anthropic"
+                tier_meta["effective_provider"] = "anthropic"
+                tier_meta["reason"] = (
+                    f"{tier_meta.get('reason', 'rule')}+tool_use_fallback"
+                )
+                # Use the governor's STANDARD model since the LIGHT
+                # model may not be wired into the API provider.
+                if self.governor is not None:
+                    standard = self.governor.tiers.get(Tier.STANDARD)
+                    planner_model = standard.model
+                response = await provider.plan_turn(
+                    system=effective_system_prompt,
+                    messages=messages,
+                    tools=tools,
+                    model=planner_model,
+                    max_tokens=16000,
+                    use_thinking=self._supports_thinking(planner_model),
+                    cache_control=True,
+                )
 
             # Extract the turn's assistant text before finishing the step
             # so Tasks UI can render PILK's reply from the step output.

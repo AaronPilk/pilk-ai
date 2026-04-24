@@ -114,7 +114,10 @@ policy:
 
 memory_namespace: brain_organize
 
-# Categorization + summary is bread-and-butter Haiku work. Routing
-# through LIGHT keeps the nightly run effectively free on the
-# subscription-backed provider.
-preferred_tier: light
+# Tool-heavy: lists the vault, reads ~40 notes per run, writes one
+# MOC per bucket. Claude Code CLI's subscription path is pinned to
+# max_turns=1 so it can't drive multi-step tool use — the agent
+# would crash on the first brain_note_list call. STANDARD keeps us
+# on the real Anthropic API where the orchestrator does its own
+# multi-turn loop.
+preferred_tier: standard
