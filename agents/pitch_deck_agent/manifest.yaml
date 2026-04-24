@@ -94,3 +94,5 @@ integrations:
       - https://www.googleapis.com/auth/presentations
       - https://www.googleapis.com/auth/drive.file
       - https://www.googleapis.com/auth/gmail.send
+
+category: sales

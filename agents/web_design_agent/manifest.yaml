@@ -81,3 +81,5 @@ policy:
     daily_usd: 5.00
 
 memory_namespace: web_design_agent
+
+category: content

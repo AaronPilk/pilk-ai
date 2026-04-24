@@ -140,6 +140,30 @@ class Manifest(BaseModel):
             "goal text."
         ),
     )
+    category: Literal[
+        "brain", "sales", "ads", "content", "comms", "trading", "other"
+    ] = Field(
+        default="other",
+        description=(
+            "UI grouping for the Agents gallery. Picks which tab a "
+            "manifest lands under:\n"
+            "- brain: memory / knowledge curators, daily briefs, "
+            "  supervisors (brain_ingest, brain_organize, "
+            "  daily_brief, morning_brief, persona_consolidate, "
+            "  proactive_checkin).\n"
+            "- sales: the outbound stack that works as a pipeline "
+            "  (sales_ops, lead_qualifier, prospector, copy, "
+            "  creative, creative_content, pitch_deck, ugc_*).\n"
+            "- ads: paid-ads operators (ads_audit, google_ads, meta_ads).\n"
+            "- content: static sites, templates, production assets "
+            "  (web_design, elementor_converter, print_design, "
+            "  content_scheduler, file_organization).\n"
+            "- comms: inbox + follow-up operators that live inside "
+            "  message threads (inbox_triage, idle_follow_up).\n"
+            "- trading: market / financial execution (xauusd_execution).\n"
+            "- other: ungrouped — default until the author picks one."
+        ),
+    )
 
     @field_validator("name")
     @classmethod

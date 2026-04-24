@@ -305,6 +305,29 @@ class Settings(BaseSettings):
             "TELEGRAM_CHAT_ID", "PILK_TELEGRAM_CHAT_ID",
         ),
     )
+    # Quiet-hours window during which proactive (unsolicited) pings
+    # are suppressed. Replies to operator-initiated messages always
+    # go through — this only gates things like proactive_checkin,
+    # approval-waiting nudges, and sentinel notifications. Format is
+    # ``HH:MM-HH:MM`` in 24-hour local time; set to ``"off"`` to
+    # disable the gate entirely. Ranges that wrap midnight are
+    # supported (the default 22:00-08:00 is exactly that).
+    quiet_hours_local: str = Field(
+        default="22:00-08:00",
+        validation_alias=AliasChoices(
+            "PILK_QUIET_HOURS", "PILK_QUIET_HOURS_LOCAL",
+        ),
+    )
+    # Timezone name (IANA form, e.g. ``America/Chicago``) the quiet-
+    # hours window is evaluated in. Empty / invalid values fall back
+    # to UTC — callers never see this, we just log a warning and keep
+    # running.
+    quiet_hours_tz: str = Field(
+        default="America/Chicago",
+        validation_alias=AliasChoices(
+            "PILK_QUIET_HOURS_TZ", "PILK_TZ",
+        ),
+    )
     # Bidirectional chat bridge: when on (default), pilkd long-polls
     # Telegram getUpdates for inbound messages from the configured
     # chat_id and feeds each one into the orchestrator's free-chat

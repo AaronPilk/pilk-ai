@@ -127,3 +127,5 @@ memory_namespace: brain_organize
 # on the real Anthropic API where the orchestrator does its own
 # multi-turn loop.
 preferred_tier: standard
+
+category: brain

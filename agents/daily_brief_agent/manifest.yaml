@@ -112,3 +112,5 @@ integrations:
     kind: api_key
     label: Telegram bot token (delivery channel)
     docs_url: https://core.telegram.org/bots
+
+category: brain

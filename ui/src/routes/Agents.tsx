@@ -103,6 +103,12 @@ export default function Agents() {
   // the agent card first.
   const [sentinelUnacked, setSentinelUnacked] = useState<number | null>(null);
   const [justCreated, setJustCreated] = useState<string | null>(null);
+  // Active category tab on the gallery view. "all" shows every non-
+  // sentinel agent; the rest filter by manifest category so the 28+
+  // agents stop sitting as one flat grid.
+  const [activeCategory, setActiveCategory] = useState<
+    "all" | "brain" | "sales" | "ads" | "content" | "comms" | "trading" | "other"
+  >("all");
   const [grantsByAgent, setGrantsByAgent] = useState<Record<string, string[]>>({});
   const [accountsById, setAccountsById] = useState<Record<string, ConnectedAccount>>(
     {},
@@ -207,7 +213,35 @@ export default function Agents() {
   if (current === null) {
     // Gallery view
     const sentinel = agents.find((a) => a.name === "sentinel") ?? null;
-    const workers = agents.filter((a) => a.name !== "sentinel");
+    const allWorkers = agents.filter((a) => a.name !== "sentinel");
+    // Per-category counts. We compute against allWorkers so the tab
+    // badges reflect the full grid, not what's currently visible.
+    const categoryCounts: Record<string, number> = { all: allWorkers.length };
+    for (const a of allWorkers) {
+      const c = a.category ?? "other";
+      categoryCounts[c] = (categoryCounts[c] ?? 0) + 1;
+    }
+    const workers =
+      activeCategory === "all"
+        ? allWorkers
+        : allWorkers.filter((a) => (a.category ?? "other") === activeCategory);
+    // Tabs only render when the backend has actually tagged enough
+    // agents to make tabbing useful. Keeps the bare-bones / early-boot
+    // view clean.
+    const CATEGORY_TABS: {
+      id: typeof activeCategory;
+      label: string;
+    }[] = [
+      { id: "all", label: "All" },
+      { id: "brain", label: "Brain" },
+      { id: "sales", label: "Sales" },
+      { id: "ads", label: "Ads" },
+      { id: "content", label: "Content" },
+      { id: "comms", label: "Comms" },
+      { id: "trading", label: "Trading" },
+      { id: "other", label: "Other" },
+    ];
+    const showTabs = allWorkers.length >= 6;
     return (
       <div className="agents-page">
         <div className="bg-orb bg-orb--1" aria-hidden />
@@ -272,7 +306,34 @@ export default function Agents() {
         {!loaded && (
           <div className="agents-empty">Loading agents…</div>
         )}
-        {loaded && workers.length === 0 && (
+        {loaded && showTabs && (
+          <div className="agents-tabs" role="tablist">
+            {CATEGORY_TABS.map((tab) => {
+              const count = categoryCounts[tab.id] ?? 0;
+              if (tab.id !== "all" && count === 0) return null;
+              const active = activeCategory === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  className={`agents-tab ${active ? "agents-tab--active" : ""}`}
+                  onClick={() => setActiveCategory(tab.id)}
+                >
+                  <span className="agents-tab-label">{tab.label}</span>
+                  <span className="agents-tab-count">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {loaded && allWorkers.length > 0 && workers.length === 0 && (
+          <div className="agents-empty">
+            No agents in this category yet.
+          </div>
+        )}
+        {loaded && allWorkers.length === 0 && (
           <div className="agents-empty">
             No agents yet. Ask PILK in Chat: <em>"Build me a sales agent."</em>
           </div>

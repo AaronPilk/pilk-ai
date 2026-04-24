@@ -123,3 +123,5 @@ integrations:
     kind: api_key
     label: PageSpeed Insights API key (site audit)
     docs_url: https://developers.google.com/speed/docs/insights/v5/get-started
+
+category: sales

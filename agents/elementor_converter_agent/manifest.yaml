@@ -100,3 +100,5 @@ policy:
     daily_usd: 3.00
 
 memory_namespace: elementor_converter_agent
+
+category: content

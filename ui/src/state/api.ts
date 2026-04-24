@@ -967,6 +967,15 @@ export interface AgentIntegration {
   configured: boolean;
 }
 
+export type AgentCategory =
+  | "brain"
+  | "sales"
+  | "ads"
+  | "content"
+  | "comms"
+  | "trading"
+  | "other";
+
 export interface AgentRow {
   name: string;
   version: string;
@@ -980,6 +989,7 @@ export interface AgentRow {
   budget?: { per_run_usd: number; daily_usd: number };
   autonomy_profile?: AutonomyProfile;
   integrations?: AgentIntegration[];
+  category?: AgentCategory;
 }
 
 export interface SandboxRow {

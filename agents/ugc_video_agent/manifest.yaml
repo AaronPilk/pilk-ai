@@ -128,3 +128,5 @@ integrations:
     kind: api_key
     label: Arcads (UGC video generation)
     docs_url: https://app.arcads.ai/settings/api
+
+category: sales

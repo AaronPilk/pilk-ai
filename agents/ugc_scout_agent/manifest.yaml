@@ -192,3 +192,5 @@ integrations:
     kind: api_key
     label: Hunter.io API key (optional email enrichment)
     docs_url: https://hunter.io/api-documentation/v2
+
+category: sales

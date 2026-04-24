@@ -29,6 +29,7 @@ from core.integrations.telegram import (
     TelegramError,
 )
 from core.logging import get_logger
+from core.policy.quiet_hours import is_quiet
 from core.policy.risk import RiskClass
 from core.secrets import resolve_secret
 from core.tools.registry import Tool, ToolContext, ToolOutcome
@@ -84,6 +85,30 @@ async def _notify(args: dict, _ctx: ToolContext) -> ToolOutcome:
             content="telegram_notify requires 'text'.",
             is_error=True,
         )
+    # Quiet-hours gate on unsolicited proactive pings. Replies to
+    # operator-initiated messages never reach this path (the Telegram
+    # bridge calls the client directly), so we're only filtering
+    # proactive outreach here. Agents with a genuinely urgent reason
+    # (sentinel incident, payment failure, etc.) can override with
+    # urgent=true; the default is honour quiet hours.
+    urgent = bool(args.get("urgent", False))
+    if not urgent and is_quiet():
+        log.info(
+            "telegram_notify_suppressed_quiet_hours",
+            text_preview=text[:60],
+        )
+        return ToolOutcome(
+            content=(
+                "Suppressed: operator is in quiet hours. This ping was "
+                "not sent. Call telegram_notify again with urgent=true "
+                "ONLY if this is the kind of thing the operator would "
+                "want waking them up for (sentinel incident, financial "
+                "failure, stuck approval on a live deadline). Otherwise "
+                "save the message for morning or append it to today's "
+                "daily note instead."
+            ),
+            data={"suppressed": True, "reason": "quiet_hours"},
+        )
     client, err = _unwrap(_client())
     if err:
         return err
@@ -117,7 +142,16 @@ telegram_notify_tool = Tool(
         "incident, ad-campaign report ready. READ-risk — the "
         "destination is hardwired to the operator's own chat, so no "
         "approval gate. Messages over 4096 chars are truncated; use "
-        "telegram_deliver for long content."
+        "telegram_deliver for long content.\n\n"
+        "QUIET HOURS: by default this tool suppresses sends during "
+        "the operator's configured quiet-hours window (``Settings → "
+        "quiet_hours_local``). The default window is 22:00-08:00 "
+        "local. Pass urgent=true ONLY when the operator would genuinely "
+        "want waking up (sentinel incident, financial emergency, a "
+        "live-deadline approval). Routine check-ins, opportunity "
+        "nudges, \"job done\" pings — leave urgent=false; during "
+        "quiet hours the tool returns suppressed=true and the agent "
+        "should log the message to a daily note instead."
     ),
     input_schema={
         "type": "object",
@@ -138,6 +172,17 @@ telegram_notify_tool = Tool(
                 ),
             },
             "disable_web_page_preview": {"type": "boolean"},
+            "urgent": {
+                "type": "boolean",
+                "description": (
+                    "Bypass the operator's quiet-hours window. Only "
+                    "set to true when the operator would want waking "
+                    "up — sentinel incidents, financial failures, "
+                    "live-deadline approvals. Routine pings leave "
+                    "this false (the default) so the tool silently "
+                    "defers during quiet hours."
+                ),
+            },
         },
         "required": ["text"],
     },

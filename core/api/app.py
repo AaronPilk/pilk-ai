@@ -833,6 +833,8 @@ async def lifespan(app: FastAPI):
             sentinel_context_fn=sentinel_context_fn,
             memory=memory,
             vault=brain,
+            integration_secrets=integration_secrets,
+            accounts=accounts,
         )
         log.info(
             "orchestrator_ready",

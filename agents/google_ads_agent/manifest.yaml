@@ -198,3 +198,5 @@ integrations:
     kind: api_key
     label: Google Ads — manager ID (optional)
     docs_url: https://developers.google.com/google-ads/api/docs/concepts/call-structure#login-customer-id
+
+category: ads

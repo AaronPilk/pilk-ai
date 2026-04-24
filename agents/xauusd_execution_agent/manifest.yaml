@@ -138,3 +138,5 @@ integrations:
     kind: api_key
     label: Browserbase project id
     docs_url: https://browserbase.com/
+
+category: trading

@@ -122,3 +122,5 @@ integrations:
     kind: api_key
     label: Telegram bot token (approval pings)
     docs_url: https://core.telegram.org/bots
+
+category: content

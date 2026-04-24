@@ -61,3 +61,5 @@ integrations:
     kind: api_key
     label: Telegram bot token (ingest failure ping)
     docs_url: https://core.telegram.org/bots
+
+category: brain

@@ -138,5 +138,6 @@ class AgentRegistry:
                 sandbox_dict.setdefault("capabilities", [])
                 d["sandbox"] = sandbox_dict
                 d["budget"] = m.policy.budget.model_dump()
+                d["category"] = m.category
             out.append(d)
         return out
