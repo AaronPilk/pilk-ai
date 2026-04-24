@@ -160,3 +160,5 @@ integrations:
     kind: api_key
     label: Meta Page ID
     docs_url: https://www.facebook.com/help/1503421039731588
+
+category: ads

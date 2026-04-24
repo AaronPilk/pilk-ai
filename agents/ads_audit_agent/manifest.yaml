@@ -163,3 +163,5 @@ policy:
     daily_usd: 4.00
 
 memory_namespace: ads_audit
+
+category: ads

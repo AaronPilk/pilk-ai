@@ -123,3 +123,5 @@ integrations:
     kind: api_key
     label: Go High Level API key (tasks)
     docs_url: https://highlevel.stoplight.io/
+
+category: brain

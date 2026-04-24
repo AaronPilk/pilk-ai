@@ -125,3 +125,5 @@ integrations:
     kind: api_key
     label: Telegram bot token (hot-lead notifications)
     docs_url: https://core.telegram.org/bots
+
+category: sales

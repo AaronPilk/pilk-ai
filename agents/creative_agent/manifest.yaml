@@ -109,3 +109,5 @@ policy:
 memory_namespace: creative
 
 preferred_tier: standard
+
+category: sales

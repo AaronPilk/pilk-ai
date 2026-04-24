@@ -132,3 +132,5 @@ policy:
     daily_usd: 5.00
 
 memory_namespace: print_design
+
+category: content

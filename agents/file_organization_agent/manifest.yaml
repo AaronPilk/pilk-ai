@@ -42,3 +42,5 @@ policy:
     daily_usd: 3.00
 
 memory_namespace: file_organization
+
+category: content

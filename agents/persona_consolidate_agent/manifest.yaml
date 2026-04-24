@@ -115,3 +115,5 @@ memory_namespace: persona_consolidate
 # short append. Fits comfortably on LIGHT, but LIGHT can't drive
 # multi-step tool use so STANDARD is the safe pin.
 preferred_tier: standard
+
+category: brain

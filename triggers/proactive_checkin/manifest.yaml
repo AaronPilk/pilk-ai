@@ -1,10 +1,13 @@
 name: proactive_checkin
 description: |
-  Every 4 hours, fire the proactive_checkin_agent. The agent decides
+  Every 2 hours, fire the proactive_checkin_agent. The agent decides
   whether to ping the operator — most ticks are silent by design.
 
-  Disabled by default. Toggle on from the Settings / Triggers tab
-  once you've seen the agent's behaviour in a dry run.
+  Enabled by default now that telegram_notify honors the operator's
+  quiet_hours_local window. Late-night ticks either no-op (urgent=
+  false) or route to the daily note; only an urgent=true ping wakes
+  the operator, and the agent's own prompt reserves that for real
+  incidents.
 agent_name: proactive_checkin_agent
 goal: |
   Do a proactive check-in. Scan the brain (standing instructions,
@@ -12,9 +15,10 @@ goal: |
   something Aaron would want a short nudge about right now. Silence
   is the default and the correct call most of the time. If (and only
   if) something clears the threshold, send ONE short Telegram
-  message. Append a one-line outcome to today's daily note either
-  way.
-enabled: false
+  message — urgent=true ONLY for genuine incidents, otherwise leave
+  it false so the quiet-hours gate handles timing. Append a one-line
+  outcome to today's daily note either way.
+enabled: true
 schedule:
   kind: cron
-  expression: "0 */4 * * *"
+  expression: "0 */2 * * *"

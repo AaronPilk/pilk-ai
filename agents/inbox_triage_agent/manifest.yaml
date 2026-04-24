@@ -186,3 +186,5 @@ integrations:
       - https://www.googleapis.com/auth/gmail.readonly
       - https://www.googleapis.com/auth/gmail.send
     docs_url: https://developers.google.com/gmail/api/auth/scopes
+
+category: comms

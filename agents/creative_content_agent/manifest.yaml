@@ -96,3 +96,5 @@ integrations:
     kind: api_key
     label: Higgsfield (cinematic video)
     docs_url: https://cloud.higgsfield.ai
+
+category: sales

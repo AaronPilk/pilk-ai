@@ -93,3 +93,5 @@ integrations:
     kind: api_key
     label: Telegram bot token (for proactive pings)
     docs_url: https://core.telegram.org/bots
+
+category: brain

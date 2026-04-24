@@ -107,3 +107,5 @@ policy:
 memory_namespace: copy
 
 preferred_tier: standard
+
+category: sales

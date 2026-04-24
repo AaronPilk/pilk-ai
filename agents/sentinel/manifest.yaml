@@ -72,3 +72,5 @@ monitoring:
   stuck_task_timeout_seconds: 600
 
 memory_namespace: sentinel
+
+category: brain

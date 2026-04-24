@@ -362,6 +362,8 @@ class Orchestrator:
         sentinel_context_fn: Callable[[], Awaitable[str]] | None = None,
         memory: MemoryStore | None = None,
         vault: Vault | None = None,
+        integration_secrets: Any = None,
+        accounts: Any = None,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -386,6 +388,14 @@ class Orchestrator:
         # system prompt ahead of the sentinel brief.
         self.memory = memory
         self.vault = vault
+        # Stores used by `_agent_catalog_block` to gate which agents
+        # PILK sees. Activation requires every declared integration
+        # to be configured; missing keys or missing OAuth links hide
+        # the agent from Pilk's delegation targets. Both are
+        # optional — if either is None we fall back to listing every
+        # agent (preserves the pre-gating behaviour).
+        self.integration_secrets = integration_secrets
+        self.accounts = accounts
         self._lock = asyncio.Lock()
         self._running_plan_id: str | None = None
         self._cancel_event: asyncio.Event | None = None
@@ -434,38 +444,65 @@ class Orchestrator:
         return True
 
     def _agent_catalog_block(self) -> str:
-        """One-paragraph catalog of registered specialist agents.
+        """One-paragraph catalog of ACTIVE specialist agents.
 
         Prepended to Pilk's system prompt on each run so the planner
-        has the list of delegation targets in-context. Agents don't
-        receive this block (they can't delegate further in this
-        architecture) — it's only built for the top-level chat path.
-        Returns empty string when no agents are registered, so the
-        prompt stays clean for bare-bones deployments.
+        has the list of delegation targets in-context. Agents that
+        aren't active (missing API keys, missing OAuth links) are
+        hidden — Pilk literally can't see them, so he won't try to
+        delegate to one that will fail on its first tool call. The
+        operator sees the needs-setup state on the Agents page
+        instead, where it's actionable.
+
+        Local-only agents (manifests with no declared
+        ``integrations:``) are always listed — they have no external
+        dependency that could be missing. Agents don't receive this
+        block (they can't delegate further in this architecture) —
+        it's only built for the top-level chat path. Returns empty
+        string when no active agents exist.
         """
         if self.agents is None:
             return ""
         manifests = self.agents.manifests()
         if not manifests:
             return ""
+        from core.registry.activation import evaluate
         lines: list[str] = []
+        skipped: list[str] = []
         for name in sorted(manifests):
             if name == "sentinel":
                 # Infrastructure agent; users don't delegate to it.
                 continue
             m = manifests[name]
+            report = evaluate(
+                m,
+                secrets=self.integration_secrets,
+                accounts=self.accounts,
+            )
+            if not report.is_active():
+                skipped.append(name)
+                continue
             desc = (m.description or "").strip().splitlines()[0] if m.description else ""
             desc = desc[:140]
             lines.append(f"- {name} — {desc}" if desc else f"- {name}")
         if not lines:
             return ""
         header = (
-            "Registered specialist agents — delegate to one of these via "
+            "Active specialist agents — delegate to one of these via "
             "delegate_to_agent(agent_name, task, reason) whenever a task "
             "fits their purpose. Delegate aggressively; running the full "
             "Pilk context for specialist work is expensive."
         )
-        return f"{header}\n\n" + "\n".join(lines)
+        footer = ""
+        if skipped:
+            footer = (
+                f"\n\n{len(skipped)} more agent(s) are installed but "
+                "not active yet because their API keys or OAuth links "
+                "aren't set up. The operator can wire them up in "
+                "Settings → Connected accounts or Settings → API keys; "
+                "don't pretend they're available to delegate to."
+            )
+        return f"{header}\n\n" + "\n".join(lines) + footer
 
     def _ai_engines_block(self) -> str:
         """Snapshot of which planner providers + tiers are live right now.

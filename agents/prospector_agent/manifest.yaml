@@ -129,3 +129,5 @@ integrations:
     kind: api_key
     label: Hunter.io API key (email discovery)
     docs_url: https://hunter.io/api-keys
+
+category: sales
