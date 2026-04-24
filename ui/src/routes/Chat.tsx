@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Loader2, Paperclip, Send } from "lucide-react";
 import {
   deleteChatAttachment,
   pilk,
@@ -412,6 +413,7 @@ export default function Chat() {
             disabled={busy || uploading}
             title="Attach files"
           >
+            <Paperclip size={13} aria-hidden />
             {uploading ? "Uploading…" : "Attach"}
           </button>
           <button
@@ -421,7 +423,21 @@ export default function Chat() {
               busy || uploading || (!input.trim() && drafts.length === 0)
             }
           >
-            {busy ? "Running…" : "Send"}
+            {busy ? (
+              <>
+                <Loader2
+                  size={13}
+                  aria-hidden
+                  className="chat-send-spinner"
+                />
+                Running…
+              </>
+            ) : (
+              <>
+                Send
+                <Send size={13} aria-hidden />
+              </>
+            )}
           </button>
         </div>
       </div>

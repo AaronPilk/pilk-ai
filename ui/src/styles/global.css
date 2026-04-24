@@ -9799,3 +9799,23 @@ body {
     transform: none;
   }
 }
+
+/* Chat composer buttons — icon gap + spinner rotation. The Send
+   button now reads left-to-right (label + icon) so it scans as an
+   action; Attach gets a paperclip. Busy state renders the Loader2
+   icon spinning at 800ms — matches lucide's canonical spinner. */
+.chat-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-send-spinner {
+  animation: chat-send-spin 800ms linear infinite;
+}
+@keyframes chat-send-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-send-spinner { animation: none; }
+}
