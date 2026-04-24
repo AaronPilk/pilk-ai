@@ -21,7 +21,7 @@ from core.db import ensure_schema
 from core.policy import ApprovalManager, Gate, TrustStore
 from core.policy.risk import RiskClass
 from core.tools import Gateway, ToolRegistry
-from core.tools.builtin import finance_deposit_tool, net_fetch_tool
+from core.tools.builtin import net_fetch_tool
 from core.tools.registry import Tool, ToolContext, ToolOutcome
 
 
@@ -45,10 +45,21 @@ async def _fake_deposit(args: dict, ctx: ToolContext) -> ToolOutcome:
     return ToolOutcome(content="ok deposit", data={"amount_usd": args["amount_usd"]})
 
 
+# finance_deposit_tool was removed from the registry — PILK has zero
+# money-movement surface. We keep this FAKE_DEPOSIT fixture so the
+# approval pause/resume tests still exercise a FINANCIAL-risk path
+# (which the policy layer gates unconditionally).
 FAKE_DEPOSIT = Tool(
     name="finance_deposit",
-    description=finance_deposit_tool.description,
-    input_schema=finance_deposit_tool.input_schema,
+    description="Stub deposit tool used only by approval-flow tests.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "amount_usd": {"type": "number"},
+            "account": {"type": "string"},
+        },
+        "required": ["amount_usd", "account"],
+    },
     risk=RiskClass.FINANCIAL,
     handler=_fake_deposit,
 )

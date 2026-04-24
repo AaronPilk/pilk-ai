@@ -133,9 +133,6 @@ from core.tools.builtin import (
     UGC_TOOLS,
     XAUUSD_TOOLS,
     BrowserSessionManager,
-    finance_deposit_tool,
-    finance_transfer_tool,
-    finance_withdraw_tool,
     fs_read_tool,
     fs_write_tool,
     make_agent_create_tool,
@@ -327,9 +324,11 @@ async def lifespan(app: FastAPI):
     registry.register(fs_write_tool)
     registry.register(shell_exec_tool)
     registry.register(net_fetch_tool)
-    registry.register(finance_deposit_tool)
-    registry.register(finance_withdraw_tool)
-    registry.register(finance_transfer_tool)
+    # Finance-surface hardening (2026-04-24): deposit / withdraw /
+    # transfer tools are NOT registered. PILK has zero ability to
+    # touch money. The only money-adjacent tool is trade_execute,
+    # which is gated by the sandbox 'trading' capability (xauusd
+    # agent only) and paper-mode-locked at the trading module level.
     registry.register(trade_execute_tool)
     # Sales-ops toolkit (prospecting, site audit, email enrichment, HubSpot).
     # Handlers surface a clean "not configured" error if the matching API

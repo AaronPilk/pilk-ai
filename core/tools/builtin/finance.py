@@ -1,15 +1,22 @@
-"""Financial stub tools.
+"""Trade-execution stub — the ONLY financial-surface tool PILK ships.
 
-These are placeholders for a real bank/broker integration — they do not
-move actual money. They exist so the financial sub-policy has concrete
-call surfaces to enforce:
+Hard rules the operator set (2026-04-24):
 
-  - finance_deposit / finance_withdraw / finance_transfer
-    Hard-coded FINANCIAL risk. Never eligible for a trust whitelist; every
-    call requires a fresh approval.
-  - trade_execute
-    Only allowed when the caller's sandbox carries the `trading` capability
-    flag. Refused otherwise, even if a user would approve it.
+* PILK has zero ability to deposit, withdraw, or transfer money.
+  finance_deposit / finance_withdraw / finance_transfer are NOT
+  registered — they've been deleted from the tool surface entirely.
+  If a future code path needs money movement, add a new tool and
+  route it through a separate approval gate + operator consent flow
+  rather than re-enabling the old stubs.
+* trade_execute is gated by the sandbox ``trading`` capability.
+  Only the xauusd_execution_agent carries that capability, and even
+  there live execution requires ``core.trading.xauusd.config
+  .LIVE_TRADING_ENABLED = True`` which is hard-coded False. So
+  trade_execute in practice is paper-mode only.
+
+This module used to host finance_deposit/withdraw/transfer stubs;
+those are removed entirely. The trade_execute stub stays so the
+XAUUSD paper-trading loop has a call surface to close against.
 """
 
 from __future__ import annotations
@@ -18,120 +25,36 @@ from core.policy.risk import RiskClass
 from core.tools.registry import Tool, ToolContext, ToolOutcome
 
 
-async def _deposit(args: dict, ctx: ToolContext) -> ToolOutcome:
-    amount = float(args["amount_usd"])
-    account = str(args["account"])
-    return ToolOutcome(
-        content=f"[stub] deposit ${amount:.2f} → {account}",
-        data={"amount_usd": amount, "account": account, "stub": True},
-    )
-
-
-async def _withdraw(args: dict, ctx: ToolContext) -> ToolOutcome:
-    amount = float(args["amount_usd"])
-    account = str(args["account"])
-    return ToolOutcome(
-        content=f"[stub] withdraw ${amount:.2f} ← {account}",
-        data={"amount_usd": amount, "account": account, "stub": True},
-    )
-
-
-async def _transfer(args: dict, ctx: ToolContext) -> ToolOutcome:
-    amount = float(args["amount_usd"])
-    src = str(args["from_account"])
-    dst = str(args["to_account"])
-    return ToolOutcome(
-        content=f"[stub] transfer ${amount:.2f}: {src} → {dst}",
-        data={
-            "amount_usd": amount,
-            "from_account": src,
-            "to_account": dst,
-            "stub": True,
-        },
-    )
-
-
-async def _trade_execute(args: dict, ctx: ToolContext) -> ToolOutcome:
-    side = str(args["side"])
+async def _trade(args: dict, ctx: ToolContext) -> ToolOutcome:
+    # Policy layer refuses this call unless the sandbox carries the
+    # 'trading' capability (see core/policy/system.py). So reaching
+    # this coroutine at all means the caller was already authorised.
     symbol = str(args["symbol"])
-    qty = float(args["quantity"])
+    side = str(args["side"])
+    size = float(args["size"])
     return ToolOutcome(
-        content=f"[stub] {side.upper()} {qty} {symbol}",
-        data={"side": side, "symbol": symbol, "quantity": qty, "stub": True},
+        content=f"[stub] {side.upper()} {size} {symbol}",
+        data={"symbol": symbol, "side": side, "size": size, "stub": True},
     )
-
-
-_AMOUNT = {"type": "number", "minimum": 0.01}
-_ACCOUNT = {"type": "string", "description": "Opaque account identifier."}
-
-
-finance_deposit_tool = Tool(
-    name="finance_deposit",
-    description=(
-        "Deposit funds into an account. FINANCIAL risk — every invocation "
-        "requires fresh user approval (never eligible for a trust rule)."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {"amount_usd": _AMOUNT, "account": _ACCOUNT},
-        "required": ["amount_usd", "account"],
-    },
-    risk=RiskClass.FINANCIAL,
-    handler=_deposit,
-)
-
-
-finance_withdraw_tool = Tool(
-    name="finance_withdraw",
-    description=(
-        "Withdraw funds from an account. FINANCIAL risk — every invocation "
-        "requires fresh user approval (never eligible for a trust rule)."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {"amount_usd": _AMOUNT, "account": _ACCOUNT},
-        "required": ["amount_usd", "account"],
-    },
-    risk=RiskClass.FINANCIAL,
-    handler=_withdraw,
-)
-
-
-finance_transfer_tool = Tool(
-    name="finance_transfer",
-    description=(
-        "Transfer funds between accounts. FINANCIAL risk — every invocation "
-        "requires fresh user approval (never eligible for a trust rule)."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "amount_usd": _AMOUNT,
-            "from_account": _ACCOUNT,
-            "to_account": _ACCOUNT,
-        },
-        "required": ["amount_usd", "from_account", "to_account"],
-    },
-    risk=RiskClass.FINANCIAL,
-    handler=_transfer,
-)
 
 
 trade_execute_tool = Tool(
     name="trade_execute",
     description=(
-        "Place a market trade. Only callable from a sandbox flagged with the "
-        "`trading` capability; refused elsewhere regardless of user approval."
+        "Execute a paper trade. Only callable from a sandbox carrying "
+        "the `trading` capability (xauusd_execution_agent). Live "
+        "execution is hard-gated at the trading module level; this "
+        "tool stays a stub until that flag flips."
     ),
     input_schema={
         "type": "object",
         "properties": {
-            "side": {"type": "string", "enum": ["buy", "sell"]},
             "symbol": {"type": "string"},
-            "quantity": {"type": "number", "minimum": 0},
+            "side": {"type": "string", "enum": ["buy", "sell"]},
+            "size": {"type": "number"},
         },
-        "required": ["side", "symbol", "quantity"],
+        "required": ["symbol", "side", "size"],
     },
     risk=RiskClass.FINANCIAL,
-    handler=_trade_execute,
+    handler=_trade,
 )

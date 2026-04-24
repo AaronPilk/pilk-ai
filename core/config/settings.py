@@ -587,25 +587,28 @@ class Settings(BaseSettings):
     )
 
     # ── Governor: tiered model routing + cost caps ────────────────
-    # Tier slot shape: (provider, model). Each tier targets a backend
-    # picked for the right load profile:
+    # Tier slot shape: (provider, model). Defaults picked so routine
+    # conversation stays cheap + off the Anthropic rate-limit bucket:
     #
-    #   LIGHT    → OpenAI gpt-4o-mini. Cheap (~$0.15/M input), fast,
-    #              and crucially on a SEPARATE rate-limit bucket from
-    #              Anthropic — so high-volume conversational chatter
-    #              never eats the Max-subscription budget that
-    #              STANDARD relies on. Falls back to whichever
-    #              provider the orchestrator can resolve when the
-    #              OpenAI key is missing (anthropic API → claude_code
-    #              CLI → nothing).
-    #   STANDARD → Claude Code CLI (Max subscription, $0 marginal).
-    #              Bulk balanced reasoning rides the plan the
-    #              operator already pays $200/mo for. Image-bearing
-    #              turns auto-bypass to the Anthropic API (the CLI
-    #              has no vision surface).
-    #   PREMIUM  → Anthropic API (Opus). Rare deep-reasoning work;
-    #              kept on the API so adaptive thinking + vision
-    #              stay first-class.
+    #   LIGHT    → OpenAI gpt-4o-mini. Fast, ~$0.15/M input, used for
+    #              "hey pilk" chat and short tasks. Separate rate-limit
+    #              bucket from Anthropic so conversational volume
+    #              never eats the Max-subscription budget.
+    #   STANDARD → OpenAI gpt-4o. Handles the bulk of real work
+    #              (agent runs, tool-heavy prompts, anything above
+    #              40 chars). Same OpenAI bucket as LIGHT, well above
+    #              conversational rate limits, and on a DIFFERENT
+    #              provider from Anthropic's tight token/min cap.
+    #   PREMIUM  → Anthropic API Opus. Rare deep-reasoning work that
+    #              actually benefits from Claude's thinking budget.
+    #              Kept on Anthropic API so adaptive thinking + vision
+    #              stay first-class; the premium gate (on by default)
+    #              ensures this fires only on explicit approval.
+    #
+    # Claude Max subscription is still used when the operator runs
+    # `claude` directly in a terminal — that's the path the $200/mo
+    # plan actually covers. Programmatic orchestrator traffic stays
+    # on OpenAI to keep Anthropic's limits free for PREMIUM.
     #
     # Override any slot via the matching env vars below.
     tier_light_provider: str = Field(
@@ -618,8 +621,9 @@ class Settings(BaseSettings):
     )
     # Master switch for the whole subscription-backed chat path. Off
     # means build_providers doesn't register the claude_code provider
-    # at all, even if the binary is available — every turn lands on
-    # the API.
+    # at all, even if the binary is available. Kept enabled so the
+    # provider stays available as a manual fallback, even though no
+    # tier routes to it by default anymore.
     enable_claude_code_chat: bool = Field(
         default=True,
         validation_alias=AliasChoices(
@@ -627,21 +631,20 @@ class Settings(BaseSettings):
         ),
     )
     tier_standard_provider: str = Field(
-        # Default to the Claude Code CLI — same subscription path LIGHT
-        # already uses — so balanced-tier work (the bulk of real
-        # orchestrator traffic) runs against the operator's Max plan
-        # instead of burning API credits. Anthropic still registers as
-        # a fallback for image turns (the orchestrator bypasses
-        # claude_code when vision is needed) and for setups without
-        # the claude binary on PATH. Set back to "anthropic" to opt
-        # out of subscription-first balanced chat.
-        default="claude_code",
+        # OpenAI gpt-4o for balanced work — keeps Anthropic's tight
+        # 30k-token/min cap available for PREMIUM runs only. The
+        # subscription-backed CLI is NOT the STANDARD default anymore
+        # because it hangs on complex agent prompts (big system
+        # prompt + tool schemas trips a 60s timeout). Set to
+        # "anthropic" to flip STANDARD to Sonnet API, or "claude_code"
+        # to revert to the CLI path.
+        default="openai",
         validation_alias=AliasChoices(
             "PILK_TIER_STANDARD_PROVIDER", "TIER_STANDARD_PROVIDER"
         ),
     )
     tier_standard_model: str = Field(
-        default="claude-sonnet-4-6",
+        default="gpt-4o",
         validation_alias=AliasChoices(
             "PILK_TIER_STANDARD_MODEL", "TIER_STANDARD_MODEL"
         ),
