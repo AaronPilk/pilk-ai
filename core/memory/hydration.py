@@ -67,12 +67,16 @@ log = get_logger("pilkd.memory.hydration")
 # Soft cap on the rendered memory_context block. Applied as ``chars //
 # 4`` since the real tokenizer isn't available to this module — close
 # enough in practice for Claude's BPE. The orchestrator sets
-# max_tokens=16000 on every turn, so 4k of context leaves room for
-# the conversation + tool loop output.
-DEFAULT_TOKEN_CAP = 4000
-# How many days of daily notes to pull. 7 covers a natural work week;
-# anything older belongs in facts/patterns, not in the per-turn preamble.
-DEFAULT_DAILY_WINDOW_DAYS = 7
+# max_tokens=16000 on every turn; Opus 4.7 runs at 1M context so the
+# preamble can afford to carry real cross-session signal. 16k of
+# hydrated context leaves ample room for the conversation + tool loop
+# output while letting PILK carry persona, standing rules, ~2 weeks of
+# daily notes, and topical brain hits without truncation.
+DEFAULT_TOKEN_CAP = 16000
+# How many days of daily notes to pull. 14 covers two work weeks —
+# long enough that cross-week context ("we wrapped Acme two Tuesdays
+# ago") survives without leaking into facts/patterns.
+DEFAULT_DAILY_WINDOW_DAYS = 14
 # Topical-note lookup: we run brain.search on each hint term and keep
 # up to this many hits per term so a chatty user doesn't drown out
 # the rest of the block.

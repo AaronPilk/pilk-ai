@@ -1,0 +1,23 @@
+name: persona_consolidate
+description: |
+  Nightly (03:30 local) autonomous persona curation pass. Fires
+  persona_consolidate_agent to review the last two weeks of daily
+  notes + memory entries and append dated observations to
+  ``persona/pilk.md`` and ``persona/operator.md`` so PILK's evolving
+  self-portrait keeps sharpening between sessions.
+
+  Pairs with the hydration layer: whatever this agent appends tonight
+  shows up in the Persona section of PILK's system prompt on every
+  turn tomorrow.
+agent_name: persona_consolidate_agent
+goal: |
+  Run the nightly persona consolidation pass. Read the current
+  ``persona/pilk.md`` and ``persona/operator.md``, review the last
+  14 daily notes plus structured memory, and append up to three
+  dated observations per file that sharpen PILK's self-portrait
+  and operator-portrait. Follow the procedure in the system prompt
+  exactly. Stay append-only.
+enabled: true
+schedule:
+  kind: cron
+  expression: "30 3 * * *"

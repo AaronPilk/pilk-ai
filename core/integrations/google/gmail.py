@@ -70,6 +70,21 @@ _ROLE_SENDER_PHRASE: dict[GoogleRole, str] = {
     "user": "your real Gmail address",
 }
 
+# Name of the sibling role's send tool — used in the "not linked" error
+# to point PILK at the alternative so he self-corrects when he
+# misroutes. If `gmail_send_as_me` says the user-role Gmail isn't
+# linked, PILK should see "try gmail_send_as_pilk" and retry with the
+# operational mailbox instead of telling the operator the feature is
+# broken. Same logic in reverse for the system role.
+_SIBLING_SEND_TOOL: dict[GoogleRole, str] = {
+    "system": "gmail_send_as_me",
+    "user": "gmail_send_as_pilk",
+}
+_SIBLING_ROLE_LABEL: dict[GoogleRole, str] = {
+    "system": "the operator's working Gmail",
+    "user": "PILK's operational Gmail",
+}
+
 
 def make_gmail_tools(role: GoogleRole, accounts: AccountsStore) -> list[Tool]:
     """Factory that produces the Gmail tool set bound to one role.
@@ -105,10 +120,15 @@ def make_gmail_tools(role: GoogleRole, accounts: AccountsStore) -> list[Tool]:
         }
         return credentials_from_blob(blob), account
 
+    sibling_tool = _SIBLING_SEND_TOOL[role]
+    sibling_label = _SIBLING_ROLE_LABEL[role]
     _not_linked = ToolOutcome(
         content=(
-            f"{noun} isn't connected yet. Open Settings → Connected accounts "
-            f"and link a {role} Google account."
+            f"{noun} isn't connected yet. Open Settings → Connected "
+            f"accounts and link a {role} Google account.\n\n"
+            f"If the operator wants this sent from {sibling_label} "
+            f"instead, retry with {sibling_tool} — that role is a "
+            "different tool with its own linked account."
         ),
         is_error=True,
     )

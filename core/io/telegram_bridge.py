@@ -104,6 +104,29 @@ DEFAULT_COALESCE_WINDOW_S = 2.5
 # queued batch. If something else is holding the lock for longer than
 # this, the operator is told explicitly so they know it wasn't lost.
 DEFAULT_BUSY_RETRY_BUDGET_S = 45.0
+# How long we wait for an in-flight dispatch to wind down after we
+# issue an interrupt-and-merge cancel. Cancellation is cooperative —
+# the orchestrator checks the flag between turns — so the dispatch
+# typically exits within a turn's worth of work. 15s covers an
+# already-in-flight tool call that has to finish + one more turn to
+# observe the flag; beyond that we give up waiting and move on with
+# the merged batch anyway.
+DEFAULT_CANCEL_WAIT_S = 15.0
+# Sentinel cancel-reason string the bridge uses when the operator
+# double-messages. The driver surfaces the reason both to the
+# orchestrator (as the cancel reason on the broadcast) and back to
+# the bridge on the `chat.assistant` "Task cancelled: …" message — we
+# use it to tell "the operator corrected course" apart from any
+# other cancellation path so we don't ship the cancellation text to
+# Telegram and confuse them.
+CANCEL_REASON_FOLLOW_UP = "operator follow-up — merging"
+# Shortest pause before we start coalescing follow-ups ON TOP of an
+# already in-flight dispatch. We want "send → 200ms later send again"
+# to arrive at PILK as one thought, so we briefly drain the queue
+# after the first interrupting message lands before issuing the
+# cancel. Smaller than the initial coalesce window since by this
+# point the operator is typing a correction, not composing from scratch.
+FOLLOW_UP_COALESCE_WINDOW_S = 1.0
 # Rolling history window. Each "turn" is two messages (user + PILK),
 # so 12 turns = 24 messages — enough context for a coherent thread
 # without blowing the token budget on every run.
@@ -297,6 +320,14 @@ class TelegramBridge:
         # into one turn and we never accidentally call
         # ``orchestrator.run`` twice concurrently.
         self._queue: asyncio.Queue[str] = asyncio.Queue()
+        # Set by ``_supervise_dispatch`` when it cancels an in-flight
+        # dispatch to fold in follow-up messages. The currently-running
+        # ``_dispatch`` reads this flag after its orchestrator call
+        # returns and, when true, skips the "send reply + record
+        # history + persist exchange" tail so the operator only sees
+        # the final merged reply rather than a confusing cancellation
+        # notice for their own correction.
+        self._current_dispatch_cancelled_for_follow_up: bool = False
         self._processor_task: asyncio.Task | None = None
 
     # ── lifecycle ────────────────────────────────────────────────
@@ -430,47 +461,153 @@ class TelegramBridge:
         await self._queue.put(text.strip())
 
     async def _process_queue(self) -> None:
-        """Drain inbound messages one coalesced batch at a time.
+        """Drain inbound messages with interrupt-and-merge semantics.
 
-        A single processor task owns all orchestrator dispatches so
-        two messages can never race each other into ``run()``. After
-        pulling the first message off the queue, we wait up to
-        ``coalesce_window_s`` for follow-ups and merge them into one
-        turn — the "I want to add to that" flow the operator keeps
-        hitting.
+        Two jobs:
+
+        1. **Initial coalesce.** After the first message lands, wait up
+           to ``coalesce_window_s`` for fast follow-ups and merge them
+           into one prompt — the "add to my previous text" pattern.
+        2. **Live interrupt.** Once dispatch is in flight, keep
+           watching the queue. If a new message arrives mid-run we
+           cancel the in-flight plan, drain any near-simultaneous
+           follow-ups, merge everything into one prompt, and
+           redispatch. PILK sees the full intent as a single turn
+           instead of finishing an outdated plan and then starting
+           over from a stripped follow-up message.
+
+        This is how we honor "I can double-message and PILK will stop,
+        read both, and continue on the updated path" without races or
+        dropped context.
         """
-        loop = asyncio.get_running_loop()
         while not self._stop.is_set():
             try:
                 first = await self._queue.get()
             except asyncio.CancelledError:
                 return
-
-            # Coalesce any follow-ups that arrive within the window.
             parts = [first]
-            deadline = loop.time() + self._coalesce_window_s
-            while True:
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    break
-                try:
-                    more = await asyncio.wait_for(
-                        self._queue.get(), timeout=remaining
-                    )
-                except TimeoutError:
-                    break
-                parts.append(more)
-
-            merged = "\n\n".join(p for p in parts if p)
-            if not merged:
-                continue
-
+            parts.extend(await self._coalesce_from_queue(self._coalesce_window_s))
             try:
-                await self._dispatch(merged)
+                await self._supervise_dispatch(parts)
             except Exception as e:  # pragma: no cover - defense-in-depth
                 log.exception(
                     "telegram_bridge_processor_error", error=str(e)
                 )
+
+    async def _coalesce_from_queue(self, window_s: float) -> list[str]:
+        """Drain any messages that arrive within ``window_s`` of now.
+
+        Shared between the initial coalesce (after the first message
+        of a batch) and the follow-up coalesce (after the operator
+        interrupts an in-flight dispatch). Separated so the two flows
+        can pick their own window — long enough to catch a typo fix,
+        short enough not to add perceptible lag.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, window_s)
+        extras: list[str] = []
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            try:
+                more = await asyncio.wait_for(
+                    self._queue.get(), timeout=remaining
+                )
+            except TimeoutError:
+                break
+            extras.append(more)
+        return extras
+
+    async def _supervise_dispatch(self, parts: list[str]) -> None:
+        """Dispatch the batch, watching the queue for interrupting messages.
+
+        Runs ``_dispatch`` in a child task while ``_queue.get()`` races
+        it. If a new message wins that race, we cancel PILK's in-flight
+        plan with a sentinel reason, drain any immediate follow-ups,
+        merge them on top of the current batch, and loop to redispatch
+        the combined intent.
+        """
+        while True:
+            merged = "\n\n".join(p for p in parts if p)
+            if not merged:
+                return
+            self._current_dispatch_cancelled_for_follow_up = False
+            dispatch_task = asyncio.create_task(
+                self._dispatch(merged),
+                name="telegram-bridge-dispatch",
+            )
+            peek_task = asyncio.create_task(
+                self._queue.get(), name="telegram-bridge-peek",
+            )
+            done, _pending = await asyncio.wait(
+                {dispatch_task, peek_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if dispatch_task in done:
+                # Normal completion. Cancel the peek watcher; if a
+                # message happened to land in the exact same tick,
+                # feed it back into the queue so the next outer loop
+                # iteration picks it up as a fresh batch.
+                peek_task.cancel()
+                with contextlib.suppress(
+                    asyncio.CancelledError, Exception
+                ):
+                    straggler = await peek_task
+                    if isinstance(straggler, str):
+                        await self._queue.put(straggler)
+                exc = dispatch_task.exception()
+                if exc is not None:
+                    log.exception(
+                        "telegram_bridge_dispatch_failed",
+                        error=str(exc),
+                    )
+                return
+            # The peek won — a new message arrived mid-dispatch. Pull
+            # it, drain any fast follow-ups on top of it, then cancel
+            # the in-flight plan so we can rerun with the merged intent.
+            new_parts: list[str] = []
+            with contextlib.suppress(Exception):
+                new_parts.append(peek_task.result())
+            new_parts.extend(
+                await self._coalesce_from_queue(FOLLOW_UP_COALESCE_WINDOW_S)
+            )
+            running_id = self._orchestrator.running_plan_id
+            if running_id is not None:
+                log.info(
+                    "telegram_bridge_follow_up_interrupt",
+                    plan_id=running_id,
+                    pending=len(new_parts),
+                )
+                self._current_dispatch_cancelled_for_follow_up = True
+                with contextlib.suppress(Exception):
+                    await self._orchestrator.cancel_plan(
+                        running_id, reason=CANCEL_REASON_FOLLOW_UP
+                    )
+            # Wait bounded for the cancel to actually land so we don't
+            # start the next run on top of a still-running one (the
+            # orchestrator's lock would reject us anyway, but a clean
+            # handoff avoids that noise).
+            with contextlib.suppress(TimeoutError, Exception):
+                await asyncio.wait_for(
+                    dispatch_task, timeout=DEFAULT_CANCEL_WAIT_S
+                )
+            # If the dispatch didn't wind down in time, cancel the
+            # task as a last resort so we don't leak it.
+            if not dispatch_task.done():
+                dispatch_task.cancel()
+                with contextlib.suppress(
+                    asyncio.CancelledError, Exception
+                ):
+                    await dispatch_task
+            # Merge the original intent on top of the follow-up so
+            # PILK still sees what the operator was asking for, plus
+            # the correction. The cancellation notice itself never
+            # reaches Telegram — the listener inside _dispatch swallows
+            # it when self._current_dispatch_cancelled_for_follow_up
+            # is set.
+            parts = parts + new_parts
+            # Loop to redispatch.
 
     async def _dispatch(self, text: str) -> None:
         """Run one (possibly coalesced) message through the orchestrator
@@ -528,6 +665,19 @@ class TelegramBridge:
                 return
         finally:
             self._hub.unsubscribe(listener)
+
+        # Supervisor cancelled this dispatch to fold in a follow-up
+        # message. The orchestrator emits a ``chat.assistant: "Task
+        # cancelled: operator follow-up — merging"`` notice; we
+        # deliberately swallow it and skip history + persist so the
+        # operator only ever sees the final merged reply, not a
+        # confusing "cancelled" preamble for their own correction.
+        if self._current_dispatch_cancelled_for_follow_up:
+            log.info(
+                "telegram_bridge_dispatch_cancelled_for_follow_up",
+                session_id=session_id,
+            )
+            return
 
         reply = captured.get("text") or "(no response)"
         await self._safe_send(reply)
