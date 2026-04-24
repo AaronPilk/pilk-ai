@@ -5117,12 +5117,23 @@ body {
   color: var(--text-dim);
   cursor: pointer;
   font-size: 13px;
-  padding: 4px 0;
-  transition: color 0.12s;
+  padding: 6px 10px 6px 6px;
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: color 140ms ease, background 140ms ease, transform 160ms var(--ease-spring);
 }
 
 .agents-back:hover {
-  color: var(--text);
+  color: var(--accent-strong);
+  background: var(--surface-hover);
+}
+.agents-back:hover svg {
+  transform: translateX(-2px);
+}
+.agents-back svg {
+  transition: transform 160ms var(--ease-spring);
 }
 
 .agent-detail {

@@ -138,6 +138,8 @@ export default function Approvals() {
 
   return (
     <div className="agents-page">
+      <div className="bg-orb bg-orb--1" aria-hidden />
+      <div className="bg-orb bg-orb--2" aria-hidden />
       <div className="approvals-page-head">
         <div className="agents-page-head">
           <h1>Approvals</h1>

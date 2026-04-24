@@ -1,4 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
+import {
+  Ban,
+  Check,
+  ChevronLeft,
+  Clock,
+  Pause,
+  Play,
+  X,
+  type LucideProps,
+} from "lucide-react";
 import {
   cancelPlan,
   fetchPlan,
@@ -31,14 +41,27 @@ function timeAgo(iso: string): string {
 
 /** Emoji per plan status — mirrors the Agents gallery pattern so the
  * visual language stays consistent across the whole springboard. */
-const STATUS_ICON: Record<PlanStatus, string> = {
-  pending: "⋯",
-  running: "▶",
-  paused: "⏸",
-  completed: "✓",
-  failed: "✕",
-  cancelled: "⊘",
+type StatusIcon = ComponentType<LucideProps>;
+const STATUS_ICON: Record<PlanStatus, StatusIcon> = {
+  pending: Clock,
+  running: Play,
+  paused: Pause,
+  completed: Check,
+  failed: X,
+  cancelled: Ban,
 };
+
+function StatusGlyph({
+  status,
+  size = 14,
+}: {
+  status: PlanStatus;
+  size?: number;
+}) {
+  const Icon = STATUS_ICON[status];
+  if (!Icon) return <>?</>;
+  return <Icon size={size} aria-hidden />;
+}
 
 /** Time-window session grouping (UI-only, no backend).
  *
@@ -292,7 +315,8 @@ export default function Tasks() {
             // session's sub-plan list, not the whole gallery.
           }}
         >
-          ← Back
+          <ChevronLeft size={14} aria-hidden />
+          Back
         </button>
         <div className="agent-detail">
           <div className="agent-detail-hero">
@@ -300,7 +324,7 @@ export default function Tasks() {
               className={`agent-detail-avatar task-card-icon--${detail.status}`}
               aria-hidden
             >
-              {STATUS_ICON[detail.status] ?? "?"}
+              <StatusGlyph status={detail.status} size={22} />
             </div>
             <div className="agent-detail-hero-body">
               <div className="agent-detail-name">{detail.goal}</div>
@@ -353,7 +377,8 @@ export default function Tasks() {
           className="agents-back"
           onClick={() => setSelectedSessionIdx(null)}
         >
-          ← All tasks
+          <ChevronLeft size={14} aria-hidden />
+          All tasks
         </button>
         <div className="agent-detail">
           <div className="agent-detail-hero">
@@ -361,7 +386,7 @@ export default function Tasks() {
               className={`agent-detail-avatar task-card-icon--${session.status}`}
               aria-hidden
             >
-              {isAllChat ? "💬" : STATUS_ICON[session.status] ?? "?"}
+              {isAllChat ? "💬" : <StatusGlyph status={session.status} size={22} />}
             </div>
             <div className="agent-detail-hero-body">
               <div className="agent-detail-name">
@@ -399,6 +424,8 @@ export default function Tasks() {
   // Gallery — one card per *session*, not per plan.
   return (
     <div className="agents-page">
+      <div className="bg-orb bg-orb--1" aria-hidden />
+      <div className="bg-orb bg-orb--2" aria-hidden />
       <div className="agents-page-head">
         <h1>Tasks</h1>
         <p>
@@ -433,7 +460,7 @@ export default function Tasks() {
                     className={`task-card-icon task-card-icon--${session.status}`}
                     aria-hidden
                   >
-                    {STATUS_ICON[session.status] ?? "?"}
+                    <StatusGlyph status={session.status} size={14} />
                   </span>
                   <span className="task-card-time">
                     {timeAgo(session.endedAt)}

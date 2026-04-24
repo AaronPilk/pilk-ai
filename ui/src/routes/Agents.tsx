@@ -15,6 +15,7 @@ import {
   type ConnectedAccount,
 } from "../state/api";
 import { Link } from "react-router-dom";
+import { ChevronLeft } from "lucide-react";
 import {
   humanizeAgentName,
   humanizeAgentState,
@@ -209,6 +210,8 @@ export default function Agents() {
     const workers = agents.filter((a) => a.name !== "sentinel");
     return (
       <div className="agents-page">
+        <div className="bg-orb bg-orb--1" aria-hidden />
+        <div className="bg-orb bg-orb--2" aria-hidden />
         {sentinel && (
           <div className="agents-supervisor-row">
             <div className="agents-supervisor-head">
@@ -320,13 +323,16 @@ export default function Agents() {
   // Detail view (single agent selected)
   return (
     <div className="agents-page">
+      <div className="bg-orb bg-orb--1" aria-hidden />
+      <div className="bg-orb bg-orb--2" aria-hidden />
       <button
         type="button"
         className="agents-back"
         onClick={() => setSelected(null)}
         aria-label="Back to all agents"
       >
-        ← All agents
+        <ChevronLeft size={14} aria-hidden />
+        All agents
       </button>
       <div className="agent-detail">
         <div className="agent-detail-hero">
