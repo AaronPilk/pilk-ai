@@ -1,0 +1,18 @@
+name: brain_organize_nightly
+description: |
+  Nightly (03:00 local) brain-vault curation pass. Fires the
+  brain_organize_agent to re-index recently ingested notes into
+  ``moc/<bucket>.md`` Maps of Content.
+agent_name: brain_organize_agent
+goal: |
+  Run the nightly brain-vault curation pass. Scan notes modified
+  in the last 7 days under ``ingested/``, classify each into one
+  of the six canonical buckets (business / personal / finance /
+  research / reference / misc), and update the corresponding
+  ``moc/<bucket>.md`` with fresh wiki-links. Follow the procedure
+  in the system prompt exactly. Stay non-destructive — never write
+  outside ``moc/`` plus the daily-note entry.
+enabled: true
+schedule:
+  kind: cron
+  expression: "0 3 * * *"
