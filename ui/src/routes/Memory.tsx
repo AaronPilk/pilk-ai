@@ -126,11 +126,12 @@ export default function Memory() {
   };
 
   return (
-    <div className="agents-page">
+    <div className="memory-page">
       <div className="memory-page-head">
-        <div className="agents-page-head">
-          <h1>Memory</h1>
-          <p>
+        <div className="memory-page-hero">
+          <div className="memory-eyebrow">Memory</div>
+          <h1 className="memory-title">What PILK remembers about you</h1>
+          <p className="memory-sub">
             The structured memory PILK references. Add or remove entries
             any time. PILK will not reference anything you haven't put
             here.

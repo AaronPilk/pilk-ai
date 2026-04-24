@@ -3723,7 +3723,7 @@ body {
   font-size: 10.5px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--accent-strong);
   font-weight: 700;
   margin-bottom: 6px;
 }
@@ -3772,7 +3772,8 @@ body {
 .logs-chip--active {
   background: var(--surface-active);
   color: var(--text);
-  border-color: var(--accent);
+  border-color: var(--border-lit);
+  box-shadow: var(--shadow-accent);
 }
 .logs-chip-count {
   font-size: 11px;
@@ -9336,4 +9337,42 @@ body {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-faint);
+}
+
+/* Memory page hero — matches Cost/Logs eyebrow/title/sub pattern */
+.memory-page {
+  padding: 28px 32px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  flex: 1;
+  overflow-y: auto;
+}
+.memory-page-hero {
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.memory-eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+.memory-title {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  font-weight: 600;
+}
+.memory-sub {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--text-dim);
+  line-height: 1.55;
+  max-width: 640px;
 }
