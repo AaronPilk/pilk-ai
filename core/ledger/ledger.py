@@ -180,6 +180,25 @@ class Ledger:
             "total_usd": round(total, 6),
         }
 
+    async def agent_daily_usd(self, agent_name: str) -> float:
+        """Return total $ spent by ``agent_name`` in the last rolling 24h.
+
+        Used by the per-agent budget gate — an agent is refused a new
+        run once its ``daily_usd`` cap has been spent in the window.
+        Rolling 24h (not calendar day) so midnight doesn't reset a
+        runaway agent.
+        """
+        if not agent_name:
+            return 0.0
+        day_start = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        async with connect(self.db_path) as conn, conn.execute(
+            "SELECT COALESCE(SUM(usd), 0) FROM cost_entries "
+            "WHERE agent_name = ? AND occurred_at >= ?",
+            (agent_name, day_start),
+        ) as cur:
+            row = await cur.fetchone()
+        return float(row[0] or 0.0)
+
     async def recent(self, limit: int = 50) -> list[dict]:
         async with connect(self.db_path) as conn, conn.execute(
             """

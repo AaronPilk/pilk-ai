@@ -160,6 +160,27 @@ class PlanCancelledError(RuntimeError):
         self.reason = reason
 
 
+class AgentBudgetExceeded(RuntimeError):
+    """Raised when an agent's per-run or daily USD cap would be breached.
+
+    Carries the cap vs. actual amounts so ``_fail`` can render a clear
+    failure message in the UI (and so the operator knows whether to
+    raise the budget or kill the run).
+    """
+
+    def __init__(
+        self, agent_name: str, kind: str, cap_usd: float, actual_usd: float
+    ) -> None:
+        self.agent_name = agent_name
+        self.kind = kind
+        self.cap_usd = cap_usd
+        self.actual_usd = actual_usd
+        super().__init__(
+            f"{agent_name} {kind} budget ${cap_usd:.2f} exceeded "
+            f"(spent ${actual_usd:.4f})"
+        )
+
+
 @dataclass
 class RunContext:
     goal: str
@@ -459,6 +480,35 @@ class Orchestrator:
                 await self.broadcast("plan.created", plan)
                 await self._fail(plan["id"], f"{type(e).__name__}: {e}")
                 return
+        # Per-agent daily-cap pre-check. Runaway agents get stopped
+        # before they chew through another plan's worth of budget.
+        # Only applies to agent runs — Pilk (rc.agent_name=None) is
+        # gated by the governor-level cap above.
+        if rc.agent_name is not None:
+            budget = rc.metadata.get("budget") or {}
+            daily_cap = float(budget.get("daily_usd") or 0.0)
+            if daily_cap > 0:
+                spent_today = await self.ledger.agent_daily_usd(rc.agent_name)
+                if spent_today >= daily_cap:
+                    plan = await self.plans.create_plan(
+                        rc.goal,
+                        metadata={**rc.metadata, "agent_name": rc.agent_name},
+                    )
+                    await self.broadcast("plan.created", plan)
+                    exc = AgentBudgetExceeded(
+                        rc.agent_name, "daily", daily_cap, spent_today
+                    )
+                    await self.broadcast(
+                        "agent.budget_exceeded",
+                        {
+                            "agent_name": rc.agent_name,
+                            "kind": "daily",
+                            "cap_usd": daily_cap,
+                            "actual_usd": spent_today,
+                        },
+                    )
+                    await self._fail(plan["id"], str(exc))
+                    return
         async with self._lock:
             plan = await self.plans.create_plan(
                 rc.goal, metadata={**rc.metadata, "agent_name": rc.agent_name}
@@ -472,6 +522,26 @@ class Orchestrator:
             except PlanCancelledError as e:
                 log.info("plan_cancelled", plan_id=plan["id"], reason=e.reason)
                 await self._cancel(plan["id"], e.reason)
+            except AgentBudgetExceeded as e:
+                log.info(
+                    "agent_budget_exceeded",
+                    plan_id=plan["id"],
+                    agent=e.agent_name,
+                    kind=e.kind,
+                    cap=e.cap_usd,
+                    actual=e.actual_usd,
+                )
+                await self.broadcast(
+                    "agent.budget_exceeded",
+                    {
+                        "agent_name": e.agent_name,
+                        "kind": e.kind,
+                        "cap_usd": e.cap_usd,
+                        "actual_usd": e.actual_usd,
+                        "plan_id": plan["id"],
+                    },
+                )
+                await self._fail(plan["id"], str(e))
             except anthropic.APIStatusError as e:
                 log.exception("anthropic_error", plan_id=plan["id"])
                 await self._fail(plan["id"], f"Anthropic API error: {e.message}")
@@ -728,6 +798,18 @@ class Orchestrator:
             )
         tier_meta["effective_provider"] = effective_provider
 
+        # Per-agent per-run budget: cumulative spend this run. Only
+        # meaningful when an agent manifest is driving — Pilk runs
+        # (agent_name=None) have no per-run cap and are bounded by
+        # max_turns + the governor's daily cap instead.
+        run_budget_cap: float | None = None
+        if rc.agent_name is not None:
+            _budget = rc.metadata.get("budget") or {}
+            _cap = float(_budget.get("per_run_usd") or 0.0)
+            if _cap > 0:
+                run_budget_cap = _cap
+        run_usd_spent = 0.0
+
         for turn in range(self.max_turns):
             if self._cancel_event is not None and self._cancel_event.is_set():
                 raise PlanCancelledError(self._cancel_reason or "cancelled by user")
@@ -769,6 +851,15 @@ class Orchestrator:
                 tier_reason=tier_meta.get("reason"),
                 tier_provider=tier_meta.get("effective_provider"),
             )
+            run_usd_spent += usd
+            if run_budget_cap is not None and run_usd_spent > run_budget_cap:
+                # Let _execute's handler broadcast + fail the plan
+                # cleanly. Raising here skips message-append and tool
+                # dispatch for this turn, which is what we want.
+                raise AgentBudgetExceeded(
+                    rc.agent_name or "", "per_run",
+                    run_budget_cap, run_usd_spent,
+                )
             step = await self.plans.finish_step(
                 step["id"], status="done", cost_usd=usd,
                 output={
