@@ -41,6 +41,7 @@ from core.api.routes.integrations import router as integrations_router
 from core.api.routes.logs import router as logs_router
 from core.api.routes.memory import router as memory_router
 from core.api.routes.migration import router as migration_router
+from core.api.routes.persona import router as persona_router
 from core.api.routes.plans import router as plans_router
 from core.api.routes.sandboxes import router as sandboxes_router
 from core.api.routes.sentinel import router as sentinel_router
@@ -1393,6 +1394,7 @@ def create_app() -> FastAPI:
     app.include_router(apple_router)
     app.include_router(memory_router)
     app.include_router(brain_router)
+    app.include_router(persona_router)
     app.include_router(migration_router)
     app.include_router(integration_secrets_router)
     app.include_router(chat_uploads_router)
