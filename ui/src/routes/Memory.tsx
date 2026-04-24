@@ -127,6 +127,8 @@ export default function Memory() {
 
   return (
     <div className="memory-page">
+      <div className="bg-orb bg-orb--1" aria-hidden />
+      <div className="bg-orb bg-orb--2" aria-hidden />
       <div className="memory-page-head">
         <div className="memory-page-hero">
           <div className="memory-eyebrow">Memory</div>

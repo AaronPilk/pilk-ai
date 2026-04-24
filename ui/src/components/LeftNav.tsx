@@ -1,6 +1,17 @@
 import { NavLink } from "react-router-dom";
+import {
+  Home,
+  Brain,
+  MessageSquare,
+  ListTodo,
+  Users,
+  Boxes,
+  ShieldCheck,
+  Settings,
+  type LucideIcon,
+} from "lucide-react";
 
-type Item = { to: string; label: string };
+type Item = { to: string; label: string; icon: LucideIcon };
 type Group = { heading: string; items: Item[] };
 
 // Intentional cull — per product direction:
@@ -14,23 +25,23 @@ const groups: Group[] = [
   {
     heading: "Command",
     items: [
-      { to: "/", label: "Home" },
-      { to: "/brain", label: "Brain" },
-      { to: "/chat", label: "Chat" },
+      { to: "/", label: "Home", icon: Home },
+      { to: "/brain", label: "Brain", icon: Brain },
+      { to: "/chat", label: "Chat", icon: MessageSquare },
     ],
   },
   {
     heading: "Operations",
     items: [
-      { to: "/tasks", label: "Tasks" },
-      { to: "/agents", label: "Agents" },
-      { to: "/sandboxes", label: "Sandboxes" },
-      { to: "/approvals", label: "Approvals" },
+      { to: "/tasks", label: "Tasks", icon: ListTodo },
+      { to: "/agents", label: "Agents", icon: Users },
+      { to: "/sandboxes", label: "Sandboxes", icon: Boxes },
+      { to: "/approvals", label: "Approvals", icon: ShieldCheck },
     ],
   },
   {
     heading: "Admin",
-    items: [{ to: "/settings", label: "Settings" }],
+    items: [{ to: "/settings", label: "Settings", icon: Settings }],
   },
 ];
 
@@ -55,6 +66,7 @@ export default function LeftNav() {
                       isActive ? "nav-item nav-item--active" : "nav-item"
                     }
                   >
+                    <it.icon size={16} className="nav-item-icon" aria-hidden />
                     <span className="nav-item-label">{it.label}</span>
                   </NavLink>
                 </li>

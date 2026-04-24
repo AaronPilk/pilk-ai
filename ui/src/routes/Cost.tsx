@@ -29,6 +29,8 @@ export default function Cost() {
 
   return (
     <div className="cost">
+      <div className="bg-orb bg-orb--1" aria-hidden />
+      <div className="bg-orb bg-orb--2" aria-hidden />
       <header className="cost-head">
         <div className="cost-eyebrow">Cost</div>
         <h1 className="cost-title">What PILK is costing you</h1>

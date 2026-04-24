@@ -99,6 +99,8 @@ export default function Logs() {
 
   return (
     <div className="logs">
+      <div className="bg-orb bg-orb--1" aria-hidden />
+      <div className="bg-orb bg-orb--2" aria-hidden />
       <header className="logs-head">
         <div>
           <div className="logs-eyebrow">Logs</div>

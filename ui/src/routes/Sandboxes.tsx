@@ -102,6 +102,8 @@ export default function Sandboxes() {
 
   return (
     <div className="sandboxes">
+      <div className="bg-orb bg-orb--1" aria-hidden />
+      <div className="bg-orb bg-orb--2" aria-hidden />
       <header className="sandboxes-head">
         <div className="sandboxes-eyebrow">Sandboxes</div>
         <h1 className="sandboxes-title">Where PILK does the actual work</h1>
