@@ -9920,12 +9920,30 @@ body {
  * only the nav column of the existing grid, never the grid itself.
  * ────────────────────────────────────────────────────────────── */
 @media (max-width: 720px) {
+  /* Defensive: prevent any descendant from forcing horizontal
+     scroll. iOS Safari is particularly aggressive about expanding
+     the layout to fit min-content of long words; clipping at the
+     viewport edge keeps that contained. */
+  html,
+  body,
   .app {
-    /* Keep the grid display so any rule that targets ``.app > .main``
-       on desktop still resolves; just zero out the nav column so the
-       slide-in drawer (position: fixed below) doesn't double-claim
-       horizontal space. */
-    grid-template-columns: 0 1fr;
+    overflow-x: hidden;
+    max-width: 100vw;
+  }
+  .app {
+    /* Switch from the desktop two-column grid to plain block flow.
+       ``.nav`` is position: fixed below so it overlays rather than
+       sits in the document flow; ``.main`` is the only normal-flow
+       child and naturally takes 100% width. Keeping
+       grid-template-columns equality with display:block is harmless
+       — it's only consulted while display:grid is in effect. */
+    display: block;
+    width: 100%;
+  }
+  body {
+    /* Stop the long-word minimum-content trick from blowing past
+       the viewport on heading text like "afternoon". */
+    overflow-wrap: anywhere;
   }
   .nav {
     position: fixed;
