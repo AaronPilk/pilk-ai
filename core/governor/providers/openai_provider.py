@@ -57,6 +57,22 @@ _CORE_TOOL_NAMES: tuple[str, ...] = (
     "llm_ask",
     "agent_create",
     "code_task",
+    # Self-coding loop — these MUST never be dropped; they're how
+    # PILK ships changes the operator asked for. Losing them on the
+    # LIGHT tier silently breaks the whole Telegram → PR workflow.
+    "open_pr_from_workspace",
+    # Multimodal video understanding — same priority class. Operator
+    # drops Instagram/TikTok links into chat or Telegram and PILK
+    # needs to reach for this without it being silently truncated.
+    "analyze_video_url",
+    # Cross-model BoN email drafting (both roles).
+    "gmail_draft_best_of_n_as_me",
+    "gmail_draft_best_of_n_as_pilk",
+    # Operator-facing Telegram surface — PILK pings the operator
+    # back via these, so they belong in the protected core regardless
+    # of the rest of the registry.
+    "telegram_notify",
+    "telegram_deliver",
     "timer_set",
     "memory_remember",
     "memory_list",
@@ -83,6 +99,9 @@ _CORE_TOOL_PREFIXES: tuple[str, ...] = (
     "slides_",
     "notion_",
     "ghl_",
+    # Browser tools matter when the operator says "go look up X" and
+    # net_fetch isn't enough for a JS-heavy site.
+    "browser_",
 )
 
 log = get_logger("pilkd.governor.openai")

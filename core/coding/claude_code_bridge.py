@@ -153,6 +153,20 @@ class ClaudeCodeBridge:
                 ),
             )
         cwd = self._cwd_for(task)
+        # uvloop's UVProcess._init throws NotADirectoryError before
+        # the subprocess ever starts if ``cwd`` doesn't resolve to an
+        # existing directory. Catch it here with a friendly fallback
+        # rather than letting it bubble as an opaque OSError.
+        if not cwd.is_dir():
+            log.warning(
+                "claude_code_cwd_invalid",
+                requested_cwd=str(cwd),
+                fallback=str(Path.cwd()),
+                repo_path=(
+                    str(task.repo_path) if task.repo_path else None
+                ),
+            )
+            cwd = Path.cwd()
         argv = self._build_argv(resolved, task)
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -162,11 +176,19 @@ class ClaudeCodeBridge:
                 stderr=asyncio.subprocess.PIPE,
             )
         except OSError as e:
-            log.exception("claude_code_spawn_failed")
+            log.exception(
+                "claude_code_spawn_failed",
+                resolved=resolved,
+                cwd=str(cwd),
+                argv0=argv[0] if argv else None,
+            )
             return CodeRunResult(
                 engine=self.name,
                 ok=False,
-                summary=f"failed to start {resolved}: {e}",
+                summary=(
+                    f"failed to start {resolved} from cwd {cwd}: "
+                    f"{type(e).__name__}: {e}"
+                ),
             )
         try:
             stdout_b, stderr_b = await asyncio.wait_for(
