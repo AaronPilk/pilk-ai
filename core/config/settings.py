@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,17 @@ class Settings(BaseSettings):
 
     home: Path = Field(default=Path.home() / "PILK")
     host: str = "127.0.0.1"
+
+    @field_validator("home", mode="after")
+    @classmethod
+    def _expand_home(cls, v: Path) -> Path:
+        # ``PILK_HOME=~/PILK`` in .env arrives here as the literal
+        # ``Path('~/PILK')`` (pydantic doesn't expand tildes), and
+        # downstream code (sqlite3.connect, Path.mkdir, etc.) treats
+        # the tilde as part of the filename rather than the home dir.
+        # Expand once at the boundary so every consumer sees an
+        # absolute path.
+        return Path(v).expanduser()
     # Accept Railway's `PORT` (dynamic per deploy) and our own `PILK_PORT`.
     # AliasChoices resolves in order: Railway's value wins when set, else
     # the Dockerfile default (8080), else local default (7424).
@@ -533,6 +544,11 @@ class Settings(BaseSettings):
             "PILK_BRAIN_VAULT_PATH", "BRAIN_VAULT_PATH"
         ),
     )
+
+    @field_validator("brain_vault_path", mode="after")
+    @classmethod
+    def _expand_brain_vault_path(cls, v: Path) -> Path:
+        return Path(v).expanduser()
     # Auto-ingest ~/.claude/projects/ into the brain vault on boot.
     # Idempotent — writes at stable vault paths so re-runs overwrite
     # rather than duplicate. Off means the operator has to ask PILK
