@@ -24,6 +24,19 @@ class Settings(BaseSettings):
     home: Path = Field(default=Path.home() / "PILK")
     host: str = "127.0.0.1"
 
+    # Comma-separated list of Tailscale Magic DNS hostnames for this
+    # operator's devices (e.g. ``aarons-macbook-pro.tail27a331.ts.net``).
+    # Each entry is added to the CORS allowlist for both the dashboard
+    # port (1420) and the legacy 1421, so the iPhone PWA can reach
+    # the local API over Tailscale without the browser refusing the
+    # cross-origin request.
+    tailnet_hosts: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "PILK_TAILNET_HOSTS", "TAILNET_HOSTS"
+        ),
+    )
+
     @field_validator("home", mode="after")
     @classmethod
     def _expand_home(cls, v: Path) -> Path:
@@ -773,12 +786,33 @@ class Settings(BaseSettings):
     def allowed_origins(self) -> list[str]:
         if self.cloud:
             return [o.strip() for o in self.cloud_origins.split(",") if o.strip()]
-        return [
+        # Local mode allowlist. ``regex`` patterns aren't supported by
+        # FastAPI's CORSMiddleware allow_origins (need allow_origin_regex
+        # for that), so we enumerate the common local origins. Tailnet
+        # devices (Mac, iPhone, future devices) all share the same
+        # tailnet suffix — see PILK_TAILNET_DOMAIN to widen.
+        origins = [
             "http://127.0.0.1:1420",
             "http://localhost:1420",
             "http://127.0.0.1:1421",
             "http://localhost:1421",
         ]
+        # When the operator routes mobile traffic through Tailscale,
+        # the dashboard's origin is ``http://<machine>.<tailnet>.ts.net:1420``
+        # rather than localhost. Enumerate any tailnet hostnames the
+        # operator has wired in via ``PILK_TAILNET_HOSTS`` (comma-
+        # separated) so the API CORS layer accepts those preflight
+        # requests too.
+        tailnet_hosts = (
+            self.tailnet_hosts.split(",") if self.tailnet_hosts else []
+        )
+        for h in tailnet_hosts:
+            host = h.strip()
+            if not host:
+                continue
+            origins.append(f"http://{host}:1420")
+            origins.append(f"http://{host}:1421")
+        return origins
 
     @property
     def db_path(self) -> Path:
