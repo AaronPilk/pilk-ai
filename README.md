@@ -53,6 +53,8 @@ PILK can delegate code tasks to four engines, selectable per task or per agent:
 
 Settings → Coding Engines shows installed skills + plugins with descriptions and install-command hints.
 
+PILK can run the full self-coding loop end-to-end: delegate to a coding engine, run tests, open a GitHub pull request via `open_pr_from_workspace`, and notify the operator on Telegram in plain English with the PR URL — no terminal required.
+
 ### The brain + memory
 
 Two layers, on purpose:
