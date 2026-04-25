@@ -154,7 +154,10 @@ from core.tools.builtin import (
     shell_exec_tool,
     trade_execute_tool,
 )
-from core.tools.builtin.delivery import make_agent_email_deliver_tool
+from core.tools.builtin.delivery import (
+    make_agent_email_deliver_tool,
+    make_gmail_draft_best_of_n_tool,
+)
 from core.tools.builtin.delivery.email import recipients_in_allowlist
 from core.tools.builtin.design import (
     elementor_validate_tool,
@@ -797,6 +800,27 @@ async def lifespan(app: FastAPI):
     if settings.anthropic_api_key:
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         registry.register(make_llm_ask_tool(client, ledger, settings.llm_ask_model))
+
+        # Cross-model best-of-N email drafting. PILK supplies its own
+        # Opus-drafted candidates; the tool adds 2 GPT-5.5 variants and
+        # asks Haiku to rank all of them group-relatively before saving
+        # the winner to Gmail Drafts. One tool per Google role so the
+        # planner picks `_as_me` vs `_as_pilk` by intent.
+        for role in ROLES:
+            registry.register(
+                make_gmail_draft_best_of_n_tool(
+                    role=role,
+                    accounts=accounts,
+                    anthropic_client=client,
+                    openai_api_key=settings.openai_api_key,
+                    vault=brain,
+                )
+            )
+        log.info(
+            "gmail_draft_best_of_n_registered",
+            roles=list(ROLES),
+            openai_configured=bool(settings.openai_api_key),
+        )
 
         providers = build_providers(
             anthropic_client=client,

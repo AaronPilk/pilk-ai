@@ -11,8 +11,12 @@ from core.tools.builtin.delivery.email import (
     SUBJECT_FORMAT,
     make_agent_email_deliver_tool,
 )
+from core.tools.builtin.delivery.gmail_draft_best_of_n import (
+    make_gmail_draft_best_of_n_tool,
+)
 
 __all__ = [
     "SUBJECT_FORMAT",
     "make_agent_email_deliver_tool",
+    "make_gmail_draft_best_of_n_tool",
 ]

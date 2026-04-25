@@ -1,8 +1,9 @@
 """Network read tool — HTTP GET with strict size + timeout caps.
 
-Tagged NET_READ so it always falls outside the auto-allow set: every call
-flows through the approval queue (or a matching trust rule). The body is
-truncated and binary content rejected — the model gets text or an error.
+Tagged NET_READ which is in the default AUTO_ALLOW set (see
+core/policy/gate.py): the call executes without an approval prompt.
+The body is truncated and binary content rejected — the model gets
+text or an error.
 """
 
 from __future__ import annotations
@@ -56,9 +57,12 @@ async def _net_fetch(args: dict, ctx: ToolContext) -> ToolOutcome:
 net_fetch_tool = Tool(
     name="net_fetch",
     description=(
-        "Fetch a URL via HTTP GET. Text bodies only; max 256 KiB; default 15s "
-        "timeout. Outbound network — every call requires user approval unless "
-        "covered by an explicit trust rule."
+        "Fetch a URL via HTTP GET. Use this freely to look things up on "
+        "the open web — read articles, fetch docs, scrape simple HTML/JSON, "
+        "pull reference material into the conversation. Text bodies only "
+        "(max 256 KiB, default 15s timeout). Auto-allowed: no approval "
+        "prompt, just call it. For dynamic / JS-heavy pages or anything "
+        "behind a login, use the browser_* tools instead."
     ),
     input_schema={
         "type": "object",

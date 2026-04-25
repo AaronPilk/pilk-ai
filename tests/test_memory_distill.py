@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -167,3 +168,118 @@ def test_distill_empty_history() -> None:
     assert r.json() == {"proposals": [], "window": 0}
     # Did not invoke Anthropic at all.
     assert app.state.anthropic.calls == []
+
+
+# ── GRPO-style ranking ───────────────────────────────────────────
+
+
+class _FakeClientSequence:
+    """Like _FakeClient but pops a queued reply per call. Lets a test
+    drive the two-call (generate → judge) flow with distinct payloads."""
+
+    def __init__(self, replies: list[str]) -> None:
+        self._replies = list(replies)
+        self.calls: list[dict] = []
+        outer = self
+
+        class _Messages:
+            async def create(self, **kwargs):
+                outer.calls.append(kwargs)
+                if not outer._replies:
+                    raise RuntimeError("no more replies queued")
+                return _Response([_TextBlock(text=outer._replies.pop(0))])
+
+        self.messages = _Messages()
+
+
+def _app_seq(replies: list[str], plans: list[dict]) -> FastAPI:
+    app = FastAPI()
+    app.state.anthropic = _FakeClientSequence(replies)
+    app.state.plans = _FakePlans(plans)
+    app.include_router(memory_router)
+    return app
+
+
+def _gen_proposals(n: int) -> str:
+    """Build a generator JSON reply with n preference candidates."""
+    items = ",".join(
+        f'{{"kind":"preference","title":"cand {i}","body":"b{i}",'
+        f'"confidence":0.5}}'
+        for i in range(n)
+    )
+    return f'{{"proposals":[{items}]}}'
+
+
+def test_distill_grpo_ranks_and_keeps_top() -> None:
+    """Two-call flow: generator returns 6 candidates, judge ranks them,
+    keep top 5 sorted by score."""
+    plans = [{"goal": "g1", "status": "completed"}]
+    gen_reply = _gen_proposals(6)
+    # Judge keeps 0,1,2 with descending scores; drops 3,4,5.
+    judge_reply = (
+        '{"rankings":['
+        '{"index":2,"durability":0.9,"actionability":0.9,'
+        '"generality":0.9,"non_redundancy":0.9,"verdict":"keep"},'
+        '{"index":0,"durability":0.8,"actionability":0.8,'
+        '"generality":0.8,"non_redundancy":0.8,"verdict":"keep"},'
+        '{"index":1,"durability":0.7,"actionability":0.7,'
+        '"generality":0.7,"non_redundancy":0.7,"verdict":"keep"},'
+        '{"index":3,"durability":0.5,"actionability":0.5,'
+        '"generality":0.5,"non_redundancy":0.5,"verdict":"drop"},'
+        '{"index":4,"durability":0.5,"actionability":0.5,'
+        '"generality":0.5,"non_redundancy":0.5,"verdict":"drop"},'
+        '{"index":5,"durability":0.5,"actionability":0.5,'
+        '"generality":0.5,"non_redundancy":0.5,"verdict":"drop"}'
+        "]}"
+    )
+    app = _app_seq([gen_reply, judge_reply], plans)
+    r = TestClient(app).post("/memory/distill")
+    assert r.status_code == 200
+    body = r.json()
+    titles = [p["title"] for p in body["proposals"]]
+    # Highest-scored "kept" candidates come first.
+    assert titles[:3] == ["cand 2", "cand 0", "cand 1"]
+    # KEEP_COUNT=5 means we slice top 5 from the 6 ranked.
+    assert len(body["proposals"]) == 5
+    # Two LLM calls: generator + judge.
+    assert len(app.state.anthropic.calls) == 2
+
+
+def test_distill_grpo_judge_failure_falls_back() -> None:
+    """If the judge call returns garbage, return unranked candidates
+    rather than 502."""
+    plans = [{"goal": "g1", "status": "completed"}]
+    gen_reply = (
+        '{"proposals":['
+        '{"kind":"preference","title":"a","body":"","confidence":0.5},'
+        '{"kind":"preference","title":"b","body":"","confidence":0.5}'
+        "]}"
+    )
+    app = _app_seq([gen_reply, "not json at all"], plans)
+    r = TestClient(app).post("/memory/distill")
+    assert r.status_code == 200
+    titles = sorted(p["title"] for p in r.json()["proposals"])
+    assert titles == ["a", "b"]
+    # Both calls happened — generator + failed judge.
+    assert len(app.state.anthropic.calls) == 2
+
+
+def test_distill_grpo_off_skips_judge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``PILK_DISTILL_GRPO=0`` reverts to the single-call legacy path."""
+    monkeypatch.setenv("PILK_DISTILL_GRPO", "0")
+    plans = [{"goal": "g1", "status": "completed"}]
+    gen_reply = (
+        '{"proposals":['
+        '{"kind":"preference","title":"a","body":"","confidence":0.5},'
+        '{"kind":"preference","title":"b","body":"","confidence":0.5}'
+        "]}"
+    )
+    # Only one reply queued. If a judge call fires, it'll raise and the
+    # test will fail loudly on the 502.
+    app = _app_seq([gen_reply], plans)
+    r = TestClient(app).post("/memory/distill")
+    assert r.status_code == 200
+    assert len(r.json()["proposals"]) == 2
+    assert len(app.state.anthropic.calls) == 1  # generator only

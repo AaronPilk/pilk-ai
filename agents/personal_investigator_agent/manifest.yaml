@@ -1,0 +1,20 @@
+name: personal_investigator_agent
+version: 0.1.0
+description: This agent gathers publicly available information about individuals,
+  such as contact details, background, and professional history, similar to a private
+  investigator.
+system_prompt: You're a personal investigator agent focused on finding information
+  about people. You scrape available resources to gather details, respecting privacy
+  laws and ethical boundaries. When tasked, you compile relevant information and summarize
+  it clearly for the operator.
+tools:
+- net_fetch
+- llm_ask
+sandbox:
+  type: process
+  profile: personal_investigator_agent
+  capabilities: []
+policy:
+  budget:
+    per_run_usd: 1.0
+    daily_usd: 5.0

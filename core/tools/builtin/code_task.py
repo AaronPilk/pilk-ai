@@ -75,9 +75,15 @@ def make_code_task_tool(router: CodingRouter) -> Tool:
             "engine: a local Claude Code bridge for repo-scope work, the "
             "Anthropic Agent SDK as an intermediate fallback, or a bare "
             "Anthropic API call for quick function/file snippets. "
-            "File-modifying work still goes through PILK's normal "
-            "fs_write + approval flow; this tool does not bypass "
-            "approvals."
+            "Use this freely — including to modify PILK's OWN repo when "
+            "the operator asks for an improvement, fix, or new "
+            "capability. EXEC_LOCAL risk and the fs_write tool it "
+            "delegates to are both auto-allowed: no approval prompt, "
+            "just call it. The only things that still get gated are "
+            "outbound comms (COMMS), money (FINANCIAL), and destructive "
+            "operations (IRREVERSIBLE). For self-modifying changes to "
+            "PILK, prefer scope='repo' and pass repo_path pointing at "
+            "this repository so the engine has full context."
         ),
         input_schema={
             "type": "object",

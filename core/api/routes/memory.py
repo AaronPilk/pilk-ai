@@ -16,6 +16,7 @@ All writes broadcast on the existing hub so other dashboards re-hydrate.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -99,8 +100,11 @@ async def clear_entries(request: Request, kind: str | None = None) -> dict:
 # ── Auto-learning (distill) ─────────────────────────────────────
 
 DISTILL_DEFAULT_WINDOW = 30        # pull the last N plans
-DISTILL_MAX_PROPOSALS = 8          # cap what we ask Haiku to return
+DISTILL_MAX_PROPOSALS = 8          # hard cap on returned proposals
 DISTILL_MAX_GOAL_CHARS = 400       # truncate each goal for context
+DISTILL_CANDIDATE_COUNT = 12       # GRPO: ask the generator for this many
+DISTILL_KEEP_COUNT = 5             # GRPO: keep top-N after judge ranks
+DISTILL_GRPO_ENV = "PILK_DISTILL_GRPO"
 
 DISTILL_SYSTEM_PROMPT = (
     "You are PILK's self-improvement extractor. You are given a list "
@@ -120,10 +124,43 @@ DISTILL_SYSTEM_PROMPT = (
     "- Skip one-off ephemera ('asked about the weather once'). Focus "
     "on signals that repeat or reveal working style.\n"
     "- Keep titles short (≤ 80 chars) and bodies tight (≤ 300).\n"
-    "- Max 5 proposals in a single batch. Fewer is fine.\n"
+    "- Cast a wide net: propose up to 12 candidates spanning all four "
+    "kinds when the evidence allows. A downstream judge ranks and "
+    "filters — don't pre-censor here, that's the judge's job.\n"
     "- If there's nothing durable to extract, return "
     '{"proposals": []}.\n'
 )
+
+DISTILL_JUDGE_SYSTEM_PROMPT = (
+    "You are PILK's memory curator. You receive a list of candidate "
+    "memory entries proposed by another model from the same evidence. "
+    "Your job is to rank them group-relatively on four axes:\n\n"
+    "- durability: will this still matter in a month?\n"
+    "- actionability: can PILK change behavior next turn because of "
+    "this?\n"
+    "- generality: does it capture a pattern, not a one-off?\n"
+    "- non_redundancy: does it add something the other candidates "
+    "don't already cover?\n\n"
+    "Output JSON ONLY, no prose. Shape:\n"
+    '{"rankings": [{"index": <0-based int>, "durability": 0.0-1.0, '
+    '"actionability": 0.0-1.0, "generality": 0.0-1.0, '
+    '"non_redundancy": 0.0-1.0, "verdict": "keep|drop", '
+    '"reason": "one short sentence"}]}\n\n'
+    "Rules:\n"
+    "- Score relatively against the OTHER candidates, not in absolute "
+    "terms. The point is to surface the strongest of THIS group.\n"
+    "- Mark verdict 'drop' for redundant or weak entries even if "
+    "they're individually fine — the operator only wants the cream.\n"
+    "- Include EVERY candidate exactly once, identified by its "
+    "0-based index in the list provided.\n"
+)
+
+
+def _grpo_enabled() -> bool:
+    """Default ON. Set ``PILK_DISTILL_GRPO=0`` to fall back to the
+    single-call path."""
+    raw = os.getenv(DISTILL_GRPO_ENV, "1").strip().lower()
+    return raw not in {"0", "false", "no", "off", ""}
 
 
 class DistillBody(BaseModel):
@@ -175,7 +212,7 @@ async def distill_from_conversations(
     try:
         resp = await client.messages.create(
             model="claude-haiku-4-5",
-            max_tokens=1200,
+            max_tokens=1500,
             system=DISTILL_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}],
         )
@@ -191,17 +228,117 @@ async def distill_from_conversations(
         if getattr(block, "type", None) == "text":
             text += getattr(block, "text", "")
     payload = _parse_distill_json(text)
-    proposals = _sanitize_proposals(payload.get("proposals"))
+    candidates = _sanitize_proposals(payload.get("proposals"))
 
     log.info(
         "distill_extracted",
         window=window,
-        proposal_count=len(proposals),
+        candidate_count=len(candidates),
     )
+
+    proposals = candidates
+    if _grpo_enabled() and len(candidates) > 1:
+        ranked = await _rank_candidates(client, candidates)
+        if ranked is None:
+            log.info("distill_judge_fallback", reason="rank_unavailable")
+        else:
+            kept = ranked[:DISTILL_KEEP_COUNT]
+            log.info(
+                "distill_judged",
+                total=len(candidates),
+                kept=len(kept),
+                dropped=max(0, len(ranked) - len(kept)),
+            )
+            proposals = kept
+
     return {
         "proposals": proposals[:DISTILL_MAX_PROPOSALS],
         "window": len(plans),
     }
+
+
+async def _rank_candidates(
+    client: Any, candidates: list[dict[str, Any]]
+) -> list[dict[str, Any]] | None:
+    """Run the judge pass: ask Haiku to score the candidates relative
+    to one another and return them sorted high-to-low with a ``score``
+    field attached. Returns ``None`` on any failure so the caller can
+    fall back to the unranked list."""
+    listing = "\n".join(
+        f"[{i}] kind={c['kind']} title={c['title']!r} body={c['body']!r}"
+        for i, c in enumerate(candidates)
+    )
+    user_content = (
+        f"Rank these {len(candidates)} candidate memory entries:\n\n"
+        f"{listing}"
+    )
+    try:
+        resp = await client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=1500,
+            system=DISTILL_JUDGE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_content}],
+        )
+    except Exception:
+        log.exception("distill_judge_failed")
+        return None
+    text = ""
+    for block in resp.content or []:
+        if getattr(block, "type", None) == "text":
+            text += getattr(block, "text", "")
+    rankings = _parse_judge_json(text)
+    if not rankings:
+        return None
+    scored: list[tuple[float, dict[str, Any]]] = []
+    seen: set[int] = set()
+    for rank in rankings:
+        idx = rank.get("index") if isinstance(rank, dict) else None
+        if not isinstance(idx, int) or idx < 0 or idx >= len(candidates):
+            continue
+        if idx in seen:
+            continue
+        seen.add(idx)
+        verdict = str(rank.get("verdict") or "").strip().lower()
+        if verdict == "drop":
+            score = 0.0
+        else:
+            axes = [
+                rank.get("durability"),
+                rank.get("actionability"),
+                rank.get("generality"),
+                rank.get("non_redundancy"),
+            ]
+            nums = [float(a) for a in axes if isinstance(a, (int, float))]
+            score = sum(nums) / len(nums) if nums else 0.0
+        cand = dict(candidates[idx])
+        cand["score"] = score
+        scored.append((score, cand))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored]
+
+
+def _parse_judge_json(text: str) -> list[dict[str, Any]]:
+    """Extract the ``rankings`` list from the judge's JSON response.
+    Returns ``[]`` on any parse problem so the caller falls back."""
+    body = text.strip()
+    if body.startswith("```"):
+        first_nl = body.find("\n")
+        if first_nl > 0:
+            body = body[first_nl + 1 :]
+        if body.endswith("```"):
+            body = body[:-3]
+        body = body.strip()
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        log.warning("distill_judge_non_json", body_prefix=body[:120])
+        return []
+    if not isinstance(data, dict):
+        return []
+    rankings = data.get("rankings")
+    return rankings if isinstance(rankings, list) else []
 
 
 def _parse_distill_json(text: str) -> dict:
