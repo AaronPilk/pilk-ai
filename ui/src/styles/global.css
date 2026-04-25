@@ -10001,9 +10001,59 @@ body {
   .settings-grid {
     grid-template-columns: 1fr !important;
   }
+  /* Home page — desktop has 40px side padding, a 2-column hero
+     grid (heading + voice orb), and ``minmax(300px, 1fr)`` on the
+     card grid. On a phone all three squeeze content into a sliver
+     on the left. Reset every horizontal constraint so the home
+     page actually fits the viewport. */
+  .home {
+    padding: 16px 14px 80px !important;
+    max-width: none !important;
+  }
+  .home-hero {
+    grid-template-columns: 1fr !important;
+    gap: 18px !important;
+    padding: 8px 0 !important;
+  }
+  .home-hero-greeting {
+    font-size: 28px !important;
+  }
+  .home-hero-sub,
+  .home-pulse {
+    max-width: none !important;
+  }
+  .home-grid {
+    /* Override the auto-fit minmax(300px) so a card never demands
+       more space than the screen has. */
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+  .home-card {
+    padding: 16px 16px !important;
+    min-width: 0 !important;
+  }
+  /* Brain / Tasks / Agents / Approvals pages similarly — generic
+     reset for any direct .content child that pinned a max-width
+     suited to a desktop viewport. */
+  .content > * {
+    max-width: 100% !important;
+  }
   /* Voice orb — never wider than the phone screen. */
   .voice-orb,
   .voice-orb-large {
     max-width: 75vw;
+  }
+  /* Defensive: every direct grid child of .main must be allowed to
+     shrink. ``min-width: auto`` on grid items is the default ON
+     PAPER but several browsers compute it as the content's
+     intrinsic min-content, which on long words (like "afternoon")
+     forces the column wider than the viewport. */
+  .main,
+  .content,
+  .home,
+  .home-hero,
+  .home-grid,
+  .home-card {
+    min-width: 0;
   }
 }
