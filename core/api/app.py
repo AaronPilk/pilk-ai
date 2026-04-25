@@ -1333,6 +1333,13 @@ async def lifespan(app: FastAPI):
                 state_path=home / "state" / "telegram-bridge.json",
                 callback_handler=telegram_approvals_bridge.handle_callback,
                 vault=brain,
+                # Inbound photos / documents land here so the orchestrator
+                # sees them as the same first-class ChatAttachment records
+                # the web upload flow produces.
+                attachment_store=chat_attachments,
+                # Whisper transcription for voice notes — visuals-only when
+                # the key is missing.
+                openai_api_key=settings.openai_api_key,
             )
             await telegram_bridge.start()
             log.info(

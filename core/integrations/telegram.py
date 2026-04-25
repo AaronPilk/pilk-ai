@@ -207,6 +207,42 @@ class TelegramClient:
             return result
         return []
 
+    async def get_file(self, file_id: str) -> dict[str, Any]:
+        """Resolve a Telegram ``file_id`` to its metadata, including
+        the ``file_path`` token needed to fetch the raw bytes from
+        Telegram's CDN. Telegram's getFile only stays valid for ~1
+        hour, so the caller should download promptly."""
+        async with httpx.AsyncClient(timeout=self._timeout) as c:
+            r = await c.post(
+                self._url("getFile"), json={"file_id": file_id},
+            )
+        return _decode(r, "getFile")
+
+    async def download_file(self, file_path: str) -> bytes:
+        """Fetch the raw file bytes from Telegram's CDN.
+
+        ``file_path`` is what ``getFile`` returns under the same key —
+        a relative path on Telegram's file host, NOT a local filesystem
+        path. We deliberately keep this separate from ``get_file`` so
+        the caller can decide how to size-cap the download against
+        whatever attachment store budget they have.
+        """
+        url = (
+            f"{self._cfg.api_base}/file/bot{self._cfg.bot_token}/"
+            f"{file_path}"
+        )
+        async with httpx.AsyncClient(timeout=self._timeout) as c:
+            r = await c.get(url)
+        if r.status_code >= 400:
+            raise TelegramError(
+                status=r.status_code,
+                message=(
+                    f"download_file: HTTP {r.status_code} fetching "
+                    f"{file_path!r}"
+                ),
+            )
+        return r.content
+
     async def send_document(
         self,
         path: Path,

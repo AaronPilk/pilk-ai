@@ -43,12 +43,28 @@ reply, not a scripted notification.
 
 - No group-chat routing. If the bot is added to a group its messages
   get filtered by chat_id like everyone else.
-- No file upload support inbound. If the operator wants to hand PILK
-  a document, they can drop it in ``~/PILK/workspace/`` and reference
-  it by name in a text message.
-- No voice transcription inbound. A short-term follow-up — the voice
-  pipeline already has an STT driver we can route Telegram voice
-  notes through.
+
+### Inbound attachments
+
+Telegram messages can carry a photo, a document, or a voice note.
+The bridge resolves them via the Bot API's ``getFile`` endpoint,
+downloads the bytes, and saves them to the same ``AttachmentStore``
+the web chat uses. The orchestrator then sees them as ``ChatAttachment``
+records on the next ``run()`` call — exactly the same path the web
+upload flow uses for vision / document / text content blocks. So
+"send PILK a screenshot of this dashboard" works.
+
+Voice notes are transcribed via OpenAI Whisper (when an
+``OPENAI_API_KEY`` is configured) and the transcript becomes the
+turn's text — no audio attachment is created. Without a Whisper
+key, voice messages bounce back with a "configure OpenAI key for
+voice transcription" hint.
+
+Caption support: if the operator attaches a photo/document with
+text in the caption, the caption becomes the user message and the
+file becomes the attachment. Without a caption we fall back to a
+default question ("describe what you see / what is this") so PILK
+has *something* to act on.
 """
 
 from __future__ import annotations
@@ -59,12 +75,18 @@ import json
 import os
 from collections import deque
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from core.api.hub import Hub
 from core.brain import Vault
+from core.chat.attachments import (
+    AttachmentError,
+    AttachmentStore,
+    is_allowed_mime,
+)
 from core.integrations.telegram import (
     TELEGRAM_MESSAGE_MAX_CHARS,
     TelegramClient,
@@ -73,9 +95,50 @@ from core.integrations.telegram import (
 )
 from core.logging import get_logger
 from core.orchestrator import Orchestrator
-from core.orchestrator.orchestrator import OrchestratorBusyError
+from core.orchestrator.orchestrator import ChatAttachment, OrchestratorBusyError
 
 CallbackHandler = Callable[[dict[str, Any]], Awaitable[None]]
+
+# Per-call cap on inbound Telegram file size. Telegram's getFile
+# tops out around 20 MiB anyway; we cap matching that and the
+# AttachmentStore's own MAX_ATTACHMENT_BYTES.
+MAX_TELEGRAM_FILE_BYTES = 20 * 1024 * 1024
+
+# Plain-English fallback prompts when the operator sends a photo
+# or document without a caption — gives PILK something to act on.
+DEFAULT_PHOTO_PROMPT = (
+    "Look at this photo and tell me what you see. If there's "
+    "anything actionable for me, call it out."
+)
+DEFAULT_DOCUMENT_PROMPT = (
+    "Read this document and summarize it. Flag anything that "
+    "looks important or like it needs a follow-up."
+)
+DEFAULT_VOICE_TRANSCRIPT_PROMPT = (
+    "(Transcribed voice note follows.)"
+)
+
+# Telegram document MIMEs we map onto our attachment store. Anything
+# else gets a friendly "I can't read that file type yet" reply.
+_TELEGRAM_VOICE_MIME = "audio/ogg"
+_TELEGRAM_PHOTO_MIME = "image/jpeg"  # Telegram delivers photos as JPEG
+
+
+@dataclass
+class _InboundMessage:
+    """One coalesce-able message from Telegram. Carries the operator
+    text plus any attachment IDs that have already been saved into
+    the chat AttachmentStore.
+
+    The bridge passes a list of these through ``_supervise_dispatch``
+    instead of plain strings so a coalesced batch can carry both
+    text and files (e.g. operator types a setup line, then drops a
+    screenshot a half-second later — both should land in the same
+    orchestrator turn)."""
+
+    text: str
+    attachment_ids: list[str] = field(default_factory=list)
+
 
 log = get_logger("pilkd.telegram.bridge")
 
@@ -273,6 +336,8 @@ class TelegramBridge:
         coalesce_window_s: float = DEFAULT_COALESCE_WINDOW_S,
         busy_retry_budget_s: float = DEFAULT_BUSY_RETRY_BUDGET_S,
         session_idle_gap_s: float | None = None,
+        attachment_store: AttachmentStore | None = None,
+        openai_api_key: str | None = None,
     ) -> None:
         self._cfg = config
         self._client = TelegramClient(
@@ -280,6 +345,14 @@ class TelegramBridge:
         )
         self._orchestrator = orchestrator
         self._hub = hub
+        # Where downloaded photos/documents land. Without a store the
+        # bridge degrades to text-only and tells the operator instead
+        # of silently dropping files.
+        self._attachment_store = attachment_store
+        # OpenAI key for Whisper transcription of voice notes. Without
+        # it, voice messages get a polite "configure OPENAI_API_KEY"
+        # reply rather than vanishing.
+        self._openai_api_key = openai_api_key
         self._state_path = state_path
         self._longpoll = int(longpoll_seconds)
         self._stop = asyncio.Event()
@@ -319,7 +392,7 @@ class TelegramBridge:
         # Serializing here means rapid-fire messages can be coalesced
         # into one turn and we never accidentally call
         # ``orchestrator.run`` twice concurrently.
-        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self._queue: asyncio.Queue[_InboundMessage] = asyncio.Queue()
         # Set by ``_supervise_dispatch`` when it cancels an in-flight
         # dispatch to fold in follow-up messages. The currently-running
         # ``_dispatch`` reads this flag after its orchestrator call
@@ -446,19 +519,300 @@ class TelegramBridge:
             # Silent drop — the bot is single-tenant; another user
             # finding it is noise, not something to chat back to.
             return
+
+        # Try, in order:
+        #   1. plain text — fast path, original behaviour
+        #   2. photo — Telegram sends an array of size variants, we
+        #      pick the largest and hand it off as an image attachment
+        #   3. document — sent as a file (image/pdf), goes through the
+        #      same store as long as the mime is allowed
+        #   4. voice / audio — transcribe via Whisper, treat as text
+        # Anything else (sticker, location, contact, video without
+        # support) gets a polite reply explaining what we can read.
         text = message.get("text")
-        if not isinstance(text, str) or not text.strip():
-            # Non-text messages or empty text: one-shot reply so the
-            # operator isn't left wondering why PILK ignored their
-            # photo / sticker / voice note.
+        caption = message.get("caption") or ""
+        photos = message.get("photo")
+        document = message.get("document")
+        voice = message.get("voice") or message.get("audio")
+        video = message.get("video")
+
+        try:
+            if isinstance(text, str) and text.strip():
+                await self._queue.put(
+                    _InboundMessage(text=text.strip())
+                )
+                return
+
+            if isinstance(photos, list) and photos:
+                inbound = await self._ingest_photo(photos, caption)
+                if inbound is not None:
+                    await self._queue.put(inbound)
+                return
+
+            if isinstance(document, dict):
+                inbound = await self._ingest_document(document, caption)
+                if inbound is not None:
+                    await self._queue.put(inbound)
+                return
+
+            if isinstance(voice, dict):
+                inbound = await self._ingest_voice(voice, caption)
+                if inbound is not None:
+                    await self._queue.put(inbound)
+                return
+
+            if isinstance(video, dict):
+                # Videos can be huge and Claude vision wants frames,
+                # not raw video. Keep this honest: tell the operator
+                # to use ``analyze_video_url`` instead.
+                with contextlib.suppress(TelegramError, Exception):
+                    await self._client.send_message(
+                        "Video file uploads aren't supported yet — "
+                        "but if you paste a video LINK (Instagram / "
+                        "TikTok / YouTube / Twitter) I'll watch and "
+                        "summarise it.",
+                    )
+                return
+
+            # Sticker, location, contact, etc.
             with contextlib.suppress(TelegramError, Exception):
                 await self._client.send_message(
-                    "PILK can only read text messages right now. "
-                    "Send me a message and I'll reply.",
+                    "I can read text, photos, documents (PDFs / "
+                    "images), and voice notes. Anything else hasn't "
+                    "got a hand-off yet.",
                 )
-            return
-        # Queue for the processor; it handles coalescing + serialization.
-        await self._queue.put(text.strip())
+        except Exception as e:  # pragma: no cover - defense in depth
+            log.exception(
+                "telegram_bridge_inbound_handle_failed", error=str(e),
+            )
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    "Something tripped while I was reading that — "
+                    "give me a sec and try again.",
+                )
+
+    async def _ingest_photo(
+        self, photos: list[Any], caption: str,
+    ) -> _InboundMessage | None:
+        """Telegram sends ``photo`` as a list of progressively larger
+        size variants. Pick the largest; that's the one Claude vision
+        gets the most signal from."""
+        if self._attachment_store is None:
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    "Photos aren't wired up on this PILK install — "
+                    "ask the operator to enable the chat attachment "
+                    "store.",
+                )
+            return None
+        sized = [
+            p for p in photos
+            if isinstance(p, dict) and p.get("file_id")
+        ]
+        if not sized:
+            return None
+        # Pick by file_size when available, otherwise by w*h.
+        def _area(p: dict) -> int:
+            if "file_size" in p:
+                with contextlib.suppress(TypeError, ValueError):
+                    return int(p["file_size"])
+            try:
+                return int(p.get("width", 0)) * int(p.get("height", 0))
+            except (TypeError, ValueError):
+                return 0
+
+        biggest = max(sized, key=_area)
+        att_id = await self._download_and_save(
+            file_id=str(biggest["file_id"]),
+            mime=_TELEGRAM_PHOTO_MIME,
+            filename="telegram-photo.jpg",
+        )
+        if att_id is None:
+            return None
+        prompt = (caption or "").strip() or DEFAULT_PHOTO_PROMPT
+        return _InboundMessage(text=prompt, attachment_ids=[att_id])
+
+    async def _ingest_document(
+        self, document: dict[str, Any], caption: str,
+    ) -> _InboundMessage | None:
+        if self._attachment_store is None:
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    "Documents aren't wired up on this PILK install.",
+                )
+            return None
+        file_id = str(document.get("file_id") or "")
+        if not file_id:
+            return None
+        mime = (
+            str(document.get("mime_type") or "")
+            .split(";", 1)[0]
+            .strip()
+            .lower()
+        )
+        filename = (
+            str(document.get("file_name") or "telegram-document").strip()
+        )
+        if not is_allowed_mime(mime):
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    f"That file type ({mime or 'unknown'}) isn't "
+                    "supported yet. I can read images (PNG / JPEG / "
+                    "GIF / WebP), PDFs, and plain text / markdown / "
+                    "CSV / JSON.",
+                )
+            return None
+        att_id = await self._download_and_save(
+            file_id=file_id, mime=mime, filename=filename,
+        )
+        if att_id is None:
+            return None
+        prompt = (caption or "").strip() or DEFAULT_DOCUMENT_PROMPT
+        return _InboundMessage(text=prompt, attachment_ids=[att_id])
+
+    async def _ingest_voice(
+        self, voice: dict[str, Any], caption: str,
+    ) -> _InboundMessage | None:
+        if not self._openai_api_key:
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    "Voice notes need an OpenAI key configured for "
+                    "transcription — once that's set I can read "
+                    "voice messages. Type for now.",
+                )
+            return None
+        file_id = str(voice.get("file_id") or "")
+        if not file_id:
+            return None
+        try:
+            meta = await self._client.get_file(file_id)
+            file_path = str(meta.get("file_path") or "")
+            if not file_path:
+                raise TelegramError(
+                    status=500, message="getFile returned no file_path",
+                )
+            audio_bytes = await self._client.download_file(file_path)
+        except (TelegramError, Exception) as e:
+            log.warning(
+                "telegram_voice_download_failed", error=str(e),
+            )
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    "Couldn't fetch that voice note. Try again or "
+                    "type the message instead.",
+                )
+            return None
+        try:
+            transcript = await self._transcribe_voice(audio_bytes)
+        except Exception as e:
+            log.warning(
+                "telegram_voice_transcribe_failed", error=str(e),
+            )
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    "Whisper didn't accept that voice clip. Type the "
+                    "message instead?",
+                )
+            return None
+        if not transcript.strip():
+            return None
+        prefix = (caption.strip() + "\n\n") if caption.strip() else ""
+        full_text = f"{prefix}{DEFAULT_VOICE_TRANSCRIPT_PROMPT}\n{transcript.strip()}"
+        return _InboundMessage(text=full_text)
+
+    async def _transcribe_voice(self, audio_bytes: bytes) -> str:
+        """One-shot Whisper call. Local helper rather than reusing
+        the voice OpenAISTT driver because we don't want a structured
+        Transcript record here — just the text."""
+        # Local import keeps httpx out of the module-load path for
+        # the bridge until it's actually used.
+        import httpx
+
+        async with httpx.AsyncClient(timeout=120.0) as c:
+            files = {
+                "file": (
+                    "telegram-voice.ogg",
+                    audio_bytes,
+                    _TELEGRAM_VOICE_MIME,
+                ),
+                "model": (None, "whisper-1"),
+                "response_format": (None, "text"),
+            }
+            r = await c.post(
+                "https://api.openai.com/v1/audio/transcriptions",
+                headers={
+                    "Authorization": f"Bearer {self._openai_api_key}",
+                },
+                files=files,
+            )
+            if r.status_code >= 400:
+                raise RuntimeError(
+                    f"whisper {r.status_code}: {r.text[:300]}"
+                )
+            return r.text.strip()
+
+    async def _download_and_save(
+        self, *, file_id: str, mime: str, filename: str,
+    ) -> str | None:
+        """Common photo/document download path. Returns the saved
+        attachment id, or None on failure (with the operator already
+        notified)."""
+        assert self._attachment_store is not None  # caller guards
+        try:
+            meta = await self._client.get_file(file_id)
+        except (TelegramError, Exception) as e:
+            log.warning(
+                "telegram_get_file_failed", error=str(e),
+            )
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    "Couldn't grab that file from Telegram — try "
+                    "sending it again?",
+                )
+            return None
+        file_path = str(meta.get("file_path") or "")
+        size = meta.get("file_size")
+        if not file_path:
+            log.warning("telegram_get_file_no_path", file_id=file_id[:20])
+            return None
+        if isinstance(size, int) and size > MAX_TELEGRAM_FILE_BYTES:
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    f"That file is {size // (1024 * 1024)} MB which "
+                    "is bigger than I can read in chat (cap is 20 "
+                    "MB). Drop it in ~/PILK/workspace/ instead and "
+                    "tell me the filename.",
+                )
+            return None
+        try:
+            payload = await self._client.download_file(file_path)
+        except (TelegramError, Exception) as e:
+            log.warning(
+                "telegram_download_failed", error=str(e),
+            )
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    "Couldn't download that file — try once more?",
+                )
+            return None
+        try:
+            attachment = self._attachment_store.save(
+                payload=payload, mime=mime, filename=filename,
+            )
+        except AttachmentError as e:
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    f"Couldn't store that file: {e}",
+                )
+            return None
+        log.info(
+            "telegram_attachment_saved",
+            attachment_id=attachment.id,
+            kind=attachment.kind,
+            mime=attachment.mime,
+            size=attachment.size,
+        )
+        return attachment.id
 
     async def _process_queue(self) -> None:
         """Drain inbound messages with interrupt-and-merge semantics.
@@ -494,7 +848,9 @@ class TelegramBridge:
                     "telegram_bridge_processor_error", error=str(e)
                 )
 
-    async def _coalesce_from_queue(self, window_s: float) -> list[str]:
+    async def _coalesce_from_queue(
+        self, window_s: float,
+    ) -> list[_InboundMessage]:
         """Drain any messages that arrive within ``window_s`` of now.
 
         Shared between the initial coalesce (after the first message
@@ -505,7 +861,7 @@ class TelegramBridge:
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, window_s)
-        extras: list[str] = []
+        extras: list[_InboundMessage] = []
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
@@ -519,7 +875,9 @@ class TelegramBridge:
             extras.append(more)
         return extras
 
-    async def _supervise_dispatch(self, parts: list[str]) -> None:
+    async def _supervise_dispatch(
+        self, parts: list[_InboundMessage],
+    ) -> None:
         """Dispatch the batch, watching the queue for interrupting messages.
 
         Runs ``_dispatch`` in a child task while ``_queue.get()`` races
@@ -529,12 +887,17 @@ class TelegramBridge:
         the combined intent.
         """
         while True:
-            merged = "\n\n".join(p for p in parts if p)
-            if not merged:
+            merged_text = "\n\n".join(p.text for p in parts if p.text)
+            merged_attachment_ids = [
+                aid
+                for p in parts
+                for aid in p.attachment_ids
+            ]
+            if not merged_text and not merged_attachment_ids:
                 return
             self._current_dispatch_cancelled_for_follow_up = False
             dispatch_task = asyncio.create_task(
-                self._dispatch(merged),
+                self._dispatch(merged_text, merged_attachment_ids),
                 name="telegram-bridge-dispatch",
             )
             peek_task = asyncio.create_task(
@@ -554,7 +917,7 @@ class TelegramBridge:
                     asyncio.CancelledError, Exception
                 ):
                     straggler = await peek_task
-                    if isinstance(straggler, str):
+                    if isinstance(straggler, _InboundMessage):
                         await self._queue.put(straggler)
                 exc = dispatch_task.exception()
                 if exc is not None:
@@ -566,7 +929,7 @@ class TelegramBridge:
             # The peek won — a new message arrived mid-dispatch. Pull
             # it, drain any fast follow-ups on top of it, then cancel
             # the in-flight plan so we can rerun with the merged intent.
-            new_parts: list[str] = []
+            new_parts: list[_InboundMessage] = []
             with contextlib.suppress(Exception):
                 new_parts.append(peek_task.result())
             new_parts.extend(
@@ -609,7 +972,9 @@ class TelegramBridge:
             parts = parts + new_parts
             # Loop to redispatch.
 
-    async def _dispatch(self, text: str) -> None:
+    async def _dispatch(
+        self, text: str, attachment_ids: list[str] | None = None,
+    ) -> None:
         """Run one (possibly coalesced) message through the orchestrator
         and ship the reply back over Telegram.
 
@@ -622,6 +987,12 @@ class TelegramBridge:
         to exactly one session — rapid-fire batches coalesced upstream
         still count as a single session tick because they arrive here
         as one call.
+
+        ``attachment_ids`` references entries already saved into the
+        chat ``AttachmentStore`` by the photo/document download path.
+        We resolve them to ``ChatAttachment`` records here, just
+        before the orchestrator call, so the run sees them as a
+        first-class image / document / text content block.
         """
         now = datetime.now(UTC)
         session_id, is_new_session = self._session.tick(now)
@@ -644,9 +1015,30 @@ class TelegramBridge:
 
         prompt = _compose_prompt(list(self._history), text)
 
+        attachments: list[ChatAttachment] = []
+        if attachment_ids and self._attachment_store is not None:
+            try:
+                resolved = self._attachment_store.resolve_many(
+                    list(attachment_ids),
+                )
+                attachments = [
+                    ChatAttachment(
+                        id=a.id,
+                        kind=a.kind,
+                        mime=a.mime,
+                        filename=a.filename,
+                        path=a.path,
+                    )
+                    for a in resolved
+                ]
+            except AttachmentError as e:
+                log.warning(
+                    "telegram_attachment_resolve_failed", error=str(e),
+                )
+
         self._hub.subscribe(listener)
         try:
-            ran = await self._run_with_busy_retry(prompt)
+            ran = await self._run_with_busy_retry(prompt, attachments)
             if ran is _BusyExhausted:
                 await self._safe_send(
                     "PILK is still finishing something else — try "
@@ -693,7 +1085,11 @@ class TelegramBridge:
             is_new_session=is_new_session,
         )
 
-    async def _run_with_busy_retry(self, prompt: str) -> Any:
+    async def _run_with_busy_retry(
+        self,
+        prompt: str,
+        attachments: list[ChatAttachment] | None = None,
+    ) -> Any:
         """Call ``orchestrator.run`` with a bounded busy-retry loop.
 
         Returns ``None`` on success, the sentinel ``_BusyExhausted``
@@ -704,6 +1100,13 @@ class TelegramBridge:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._busy_retry_budget_s
         backoff = 0.75
+        attachments = list(attachments or [])
+        # Vision / document work needs a tier that supports image
+        # input. LIGHT (gpt-4o-mini / Haiku) handles vision; we keep
+        # the LIGHT pin even with attachments because Anthropic Tier
+        # 1 ITPM caps still favour Haiku for first-turn Telegram
+        # traffic. If a specific deployment hits image-resolution
+        # ceilings we'll bump to STANDARD here.
         while True:
             try:
                 await asyncio.wait_for(
@@ -715,7 +1118,11 @@ class TelegramBridge:
                     # the conversational use Telegram gets; specialist
                     # agents invoked from Telegram still honor their
                     # manifest preferred_tier pins.
-                    self._orchestrator.run(prompt, preferred_tier="light"),
+                    self._orchestrator.run(
+                        prompt,
+                        attachments=attachments,
+                        preferred_tier="light",
+                    ),
                     timeout=ORCHESTRATOR_WAIT_TIMEOUT_S,
                 )
                 return None

@@ -261,9 +261,11 @@ async def test_handle_update_ignores_foreign_chat(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_update_non_text_sends_gentle_reply(
+async def test_handle_update_unsupported_type_sends_gentle_reply(
     tmp_path: Path,
 ) -> None:
+    """Sticker / location / contact (anything that isn't text /
+    photo / document / voice / video) gets a friendly reply."""
     sends: list[dict] = []
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -275,17 +277,20 @@ async def test_handle_update_non_text_sends_gentle_reply(
     hub = Hub()
     orch = _FakeOrchestrator(hub)
     bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub)
-    # Photo message — no `text` field; the orchestrator must not run.
+    # Sticker — no text, no photo, no document, no voice. Bridge
+    # must not dispatch and must explain plainly.
     await bridge._handle_update({
         "update_id": 2,
         "message": {
             "chat": {"id": 999},
-            "photo": [{"file_id": "x"}],
+            "sticker": {"file_id": "s1"},
         },
     })
     assert orch.calls == []
     assert len(sends) == 1
-    assert "text" in sends[0]["text"].lower()
+    assert "photo" in sends[0]["text"].lower() or (
+        "voice" in sends[0]["text"].lower()
+    )
 
 
 @pytest.mark.asyncio
@@ -312,7 +317,313 @@ async def test_handle_update_text_message_enqueues(
     })
     assert orch.calls == []  # processor not running; still enqueued.
     assert bridge._queue.qsize() == 1
-    assert bridge._queue.get_nowait() == "ingest gmail please"
+    queued = bridge._queue.get_nowait()
+    assert queued.text == "ingest gmail please"
+    assert queued.attachment_ids == []
+
+
+# ── inbound photo / document / voice ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_update_photo_downloads_and_enqueues_attachment(
+    tmp_path: Path,
+) -> None:
+    """A Telegram photo arrives → the bridge resolves it via getFile,
+    downloads the bytes, saves them through the AttachmentStore, and
+    queues a single ``_InboundMessage`` carrying the attachment id."""
+    from core.chat.attachments import AttachmentStore
+    from core.io.telegram_bridge import (
+        DEFAULT_PHOTO_PROMPT,
+        _InboundMessage,
+    )
+
+    fake_photo_bytes = b"\xff\xd8\xff" + b"\x00" * 256
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        url = str(req.url)
+        if url.endswith("/getFile"):
+            return httpx.Response(
+                200,
+                json=_ok({"file_path": "photos/file_42.jpg"}),
+            )
+        if "/file/bot" in url and url.endswith("photos/file_42.jpg"):
+            return httpx.Response(200, content=fake_photo_bytes)
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    orch = _FakeOrchestrator(hub)
+    store = AttachmentStore(tmp_path / "home")
+    store.ensure_layout()
+    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub)
+    bridge._attachment_store = store
+
+    await bridge._handle_update({
+        "update_id": 11,
+        "message": {
+            "chat": {"id": 999},
+            "photo": [
+                {"file_id": "small", "width": 90, "height": 60},
+                {"file_id": "biggest", "width": 1280, "height": 720},
+            ],
+        },
+    })
+    assert bridge._queue.qsize() == 1
+    queued: _InboundMessage = bridge._queue.get_nowait()
+    assert queued.text == DEFAULT_PHOTO_PROMPT
+    assert len(queued.attachment_ids) == 1
+    [aid] = queued.attachment_ids
+    saved = store.resolve_many([aid])
+    assert len(saved) == 1
+    assert saved[0].kind == "image"
+    assert saved[0].mime == "image/jpeg"
+    assert saved[0].path.read_bytes() == fake_photo_bytes
+
+
+@pytest.mark.asyncio
+async def test_handle_update_photo_uses_caption_as_prompt(
+    tmp_path: Path,
+) -> None:
+    """When the operator includes a caption with the photo, the
+    caption becomes the user message text (default fallback only
+    fires when there's no caption)."""
+    from core.chat.attachments import AttachmentStore
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        url = str(req.url)
+        if url.endswith("/getFile"):
+            return httpx.Response(
+                200, json=_ok({"file_path": "photos/p.jpg"}),
+            )
+        if "/file/bot" in url:
+            return httpx.Response(200, content=b"\xff\xd8\xff" * 4)
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    orch = _FakeOrchestrator(hub)
+    store = AttachmentStore(tmp_path / "home")
+    store.ensure_layout()
+    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub)
+    bridge._attachment_store = store
+
+    await bridge._handle_update({
+        "update_id": 12,
+        "message": {
+            "chat": {"id": 999},
+            "caption": "what's wrong with this dashboard?",
+            "photo": [{"file_id": "p1", "width": 800, "height": 600}],
+        },
+    })
+    queued = bridge._queue.get_nowait()
+    assert queued.text == "what's wrong with this dashboard?"
+    assert queued.attachment_ids
+
+
+@pytest.mark.asyncio
+async def test_handle_update_photo_without_attachment_store_explains(
+    tmp_path: Path,
+) -> None:
+    """If the bridge isn't wired with an AttachmentStore (legacy
+    install), photo messages get a friendly explanation rather than
+    being silently dropped."""
+    sends: list[dict] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if str(req.url).endswith("/sendMessage"):
+            sends.append(_json.loads(req.content.decode()))
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    bridge, _ = _bridge(_FakeOrchestrator(hub), tmp_path=tmp_path, hub=hub)
+    bridge._attachment_store = None  # explicit — no store wired
+
+    await bridge._handle_update({
+        "update_id": 13,
+        "message": {
+            "chat": {"id": 999},
+            "photo": [{"file_id": "p"}],
+        },
+    })
+    assert bridge._queue.qsize() == 0
+    assert len(sends) == 1
+    assert "photo" in sends[0]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_update_document_with_unsupported_mime_explains(
+    tmp_path: Path,
+) -> None:
+    """Telegram documents with a mime we can't process (e.g. .exe)
+    get a clear explanation, not a silent drop."""
+    from core.chat.attachments import AttachmentStore
+
+    sends: list[dict] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if str(req.url).endswith("/sendMessage"):
+            sends.append(_json.loads(req.content.decode()))
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    store = AttachmentStore(tmp_path / "home")
+    store.ensure_layout()
+    bridge, _ = _bridge(
+        _FakeOrchestrator(hub), tmp_path=tmp_path, hub=hub,
+    )
+    bridge._attachment_store = store
+
+    await bridge._handle_update({
+        "update_id": 14,
+        "message": {
+            "chat": {"id": 999},
+            "document": {
+                "file_id": "exe1",
+                "file_name": "malware.exe",
+                "mime_type": "application/x-msdownload",
+            },
+        },
+    })
+    assert bridge._queue.qsize() == 0
+    assert len(sends) == 1
+    assert "supported" in sends[0]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_update_document_pdf_downloads_and_enqueues(
+    tmp_path: Path,
+) -> None:
+    from core.chat.attachments import AttachmentStore
+    from core.io.telegram_bridge import DEFAULT_DOCUMENT_PROMPT
+
+    fake_pdf = b"%PDF-1.4\n" + b"\x00" * 64
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        url = str(req.url)
+        if url.endswith("/getFile"):
+            return httpx.Response(
+                200, json=_ok({"file_path": "docs/a.pdf"}),
+            )
+        if "/file/bot" in url and url.endswith("docs/a.pdf"):
+            return httpx.Response(200, content=fake_pdf)
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    store = AttachmentStore(tmp_path / "home")
+    store.ensure_layout()
+    bridge, _ = _bridge(
+        _FakeOrchestrator(hub), tmp_path=tmp_path, hub=hub,
+    )
+    bridge._attachment_store = store
+
+    await bridge._handle_update({
+        "update_id": 15,
+        "message": {
+            "chat": {"id": 999},
+            "document": {
+                "file_id": "pdf1",
+                "file_name": "playbook.pdf",
+                "mime_type": "application/pdf",
+            },
+        },
+    })
+    assert bridge._queue.qsize() == 1
+    queued = bridge._queue.get_nowait()
+    assert queued.text == DEFAULT_DOCUMENT_PROMPT
+    [aid] = queued.attachment_ids
+    saved = store.resolve_many([aid])
+    assert saved[0].kind == "document"
+    assert saved[0].mime == "application/pdf"
+
+
+@pytest.mark.asyncio
+async def test_handle_update_voice_without_openai_key_explains(
+    tmp_path: Path,
+) -> None:
+    sends: list[dict] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if str(req.url).endswith("/sendMessage"):
+            sends.append(_json.loads(req.content.decode()))
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    bridge, _ = _bridge(
+        _FakeOrchestrator(hub), tmp_path=tmp_path, hub=hub,
+    )
+    bridge._openai_api_key = None  # explicit — no Whisper key
+
+    await bridge._handle_update({
+        "update_id": 16,
+        "message": {
+            "chat": {"id": 999},
+            "voice": {"file_id": "v1", "duration": 5},
+        },
+    })
+    assert bridge._queue.qsize() == 0
+    assert len(sends) == 1
+    assert "openai" in sends[0]["text"].lower() or (
+        "voice" in sends[0]["text"].lower()
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_passes_attachments_to_orchestrator(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: queue an _InboundMessage with attachment_ids → the
+    dispatch pipeline resolves them and forwards a list of
+    ChatAttachment objects to orchestrator.run."""
+    from core.chat.attachments import AttachmentStore
+    from core.io.telegram_bridge import _InboundMessage
+
+    captured_kwargs: dict = {}
+
+    class _CapturingOrch(_FakeOrchestrator):
+        async def run(self, goal: str, **kwargs: object) -> None:
+            captured_kwargs.update(kwargs)
+            await super().run(goal, **kwargs)
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    store = AttachmentStore(tmp_path / "home")
+    store.ensure_layout()
+    saved = store.save(
+        payload=b"\xff\xd8\xffabc",
+        mime="image/jpeg",
+        filename="x.jpg",
+    )
+    orch = _CapturingOrch(hub, reply_text="seen")
+    bridge, _ = _bridge(
+        orch, tmp_path=tmp_path, hub=hub, coalesce_window_s=0.0,
+    )
+    bridge._attachment_store = store
+
+    await bridge._queue.put(
+        _InboundMessage(
+            text="what's in this", attachment_ids=[saved.id],
+        )
+    )
+    task = asyncio.create_task(bridge._process_queue())
+    await asyncio.sleep(0.3)
+    bridge._stop.set()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+
+    assert orch.calls and "what's in this" in orch.calls[0]
+    forwarded = captured_kwargs.get("attachments") or []
+    assert len(forwarded) == 1
+    assert forwarded[0].id == saved.id
+    assert forwarded[0].kind == "image"
 
 
 # ── bridge state persistence ────────────────────────────────────
@@ -539,8 +850,12 @@ async def test_processor_coalesces_rapid_messages(
     bridge, _ = _bridge(
         orch, tmp_path=tmp_path, hub=hub, coalesce_window_s=0.2
     )
-    await bridge._queue.put("hello")
-    await bridge._queue.put("and another thing")
+    from core.io.telegram_bridge import _InboundMessage
+
+    await bridge._queue.put(_InboundMessage(text="hello"))
+    await bridge._queue.put(
+        _InboundMessage(text="and another thing")
+    )
     task = asyncio.create_task(bridge._process_queue())
     # Give the processor just enough time to pull both and dispatch.
     await asyncio.sleep(0.5)
@@ -570,10 +885,12 @@ async def test_processor_does_not_coalesce_across_windows(
     bridge, _ = _bridge(
         orch, tmp_path=tmp_path, hub=hub, coalesce_window_s=0.05
     )
+    from core.io.telegram_bridge import _InboundMessage
+
     task = asyncio.create_task(bridge._process_queue())
-    await bridge._queue.put("first")
+    await bridge._queue.put(_InboundMessage(text="first"))
     await asyncio.sleep(0.25)  # well past the coalesce window
-    await bridge._queue.put("second")
+    await bridge._queue.put(_InboundMessage(text="second"))
     await asyncio.sleep(0.25)
     bridge._stop.set()
     task.cancel()
