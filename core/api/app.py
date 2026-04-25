@@ -1086,6 +1086,15 @@ async def lifespan(app: FastAPI):
     registry.register(make_pilk_open_prs_tool())
     registry.register(make_pilk_deploy_status_tool())
 
+    # Self-coding ship path: ``open_pr_from_workspace`` wraps the
+    # working-tree changes that ``code_task`` produces into a real
+    # GitHub PR so the operator can review + merge from their phone.
+    # Pairs with the orchestrator's "self-modification IS in scope"
+    # block in the system prompt.
+    from core.tools.builtin.git_pr import make_open_pr_from_workspace_tool
+
+    registry.register(make_open_pr_from_workspace_tool(REPO_ROOT))
+
     def _timer_telegram_client():
         from core.integrations.telegram import TelegramClient, TelegramConfig
         from core.secrets import resolve_secret

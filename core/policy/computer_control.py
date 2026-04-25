@@ -78,7 +78,14 @@ DEFAULT_HARD_BLOCK_PREFIXES: tuple[str, ...] = (
     "/etc/",
     "/System/",
     "/private/etc/",
-    "/private/var/",
+    # ``/private/var/`` previously blanket-blocked, but on macOS the
+    # per-user TMPDIR lives at ``/private/var/folders/<id>/...`` —
+    # blocking that whole subtree breaks every legitimate use of
+    # ``tempfile`` (and every pytest fixture using tmp_path). Narrow
+    # to the actual sensitive subtrees instead.
+    "/private/var/db/",
+    "/private/var/log/",
+    "/private/var/root/",
 )
 
 

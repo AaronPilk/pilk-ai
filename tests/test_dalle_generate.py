@@ -170,10 +170,18 @@ async def test_dalle_generate_rejects_unknown_quality(tmp_path: Path) -> None:
 async def test_dalle_generate_missing_api_key(
     tmp_path: Path, monkeypatch,
 ) -> None:
+    # Clearing the env var alone isn't enough: ``_dalle_generate``
+    # resolves through ``_secret`` which checks the dashboard-stored
+    # secret first (lives on disk, survives env clears). Stub the
+    # whole helper so this test really exercises the no-key branch.
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     from core.config import settings as _settings
+    from core.tools.builtin import creative as _creative
 
     _settings.get_settings.cache_clear()  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        _creative, "_secret", lambda name, fallback: None
+    )
 
     result = await _dalle_generate(
         {"prompt": "x"}, _ctx(tmp_path),
