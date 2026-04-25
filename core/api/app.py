@@ -1095,6 +1095,27 @@ async def lifespan(app: FastAPI):
 
     registry.register(make_open_pr_from_workspace_tool(REPO_ROOT))
 
+    # Video analysis: yt-dlp + ffmpeg + Whisper + Claude vision.
+    # Operator drops an Instagram / TikTok / YouTube link, PILK
+    # downloads it, extracts keyframes + audio transcript, and
+    # returns a plain-English analysis. Lives behind the same
+    # Anthropic-key branch since the analysis call needs Sonnet.
+    if settings.anthropic_api_key:
+        from core.tools.builtin.video_analyze import (
+            make_analyze_video_url_tool,
+        )
+
+        registry.register(
+            make_analyze_video_url_tool(
+                anthropic_client=client,
+                openai_api_key=settings.openai_api_key,
+            )
+        )
+        log.info(
+            "analyze_video_url_registered",
+            whisper_configured=bool(settings.openai_api_key),
+        )
+
     def _timer_telegram_client():
         from core.integrations.telegram import TelegramClient, TelegramConfig
         from core.secrets import resolve_secret
