@@ -512,6 +512,7 @@ class Orchestrator:
         governor: Any = None,
         providers: dict[str, PlannerProvider] | None = None,
         sentinel_context_fn: Callable[[], Awaitable[str]] | None = None,
+        subscription_context_fn: Callable[[], Awaitable[str]] | None = None,
         memory: MemoryStore | None = None,
         vault: Vault | None = None,
         integration_secrets: Any = None,
@@ -534,6 +535,13 @@ class Orchestrator:
         # before the first planner turn. ``None`` keeps the legacy
         # behaviour of a perfectly silent orchestrator→sentinel link.
         self.sentinel_context_fn = sentinel_context_fn
+        # Optional async hook: returns a short "subscription quota is
+        # running low" brief that gets prepended to the system prompt
+        # when usage is in the warn/hot zone. The brief itself
+        # includes a directive telling PILK to flag this to the
+        # operator at the top of the next reply, so the operator
+        # never gets surprised by a hit-the-wall mid-conversation.
+        self.subscription_context_fn = subscription_context_fn
         # Memory hydration sources. Both optional so tests + the cold
         # boot path still work. When both are set we build a
         # ``memory_context`` block on every turn and prepend it to the
@@ -1137,6 +1145,26 @@ class Orchestrator:
             if brief:
                 effective_system_prompt = (
                     f"{brief}\n\n{rc.system_prompt}"
+                )
+
+        # Subscription pressure brief. Same pattern as the sentinel
+        # brief above — only surfaces when the 5-hour Claude Max
+        # window is approaching its cap, so the prompt stays clean
+        # the rest of the time. The brief itself includes the
+        # directive to flag it to the operator at the top of the
+        # reply, which is the whole point of bothering to surface
+        # this at all.
+        if self.subscription_context_fn is not None:
+            try:
+                sub_brief = await self.subscription_context_fn()
+            except Exception as e:
+                log.warning(
+                    "subscription_context_failed", error=str(e),
+                )
+                sub_brief = ""
+            if sub_brief:
+                effective_system_prompt = (
+                    f"{sub_brief}\n\n{effective_system_prompt}"
                 )
 
         # Agent catalog: injected when this run has the

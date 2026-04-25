@@ -1079,6 +1079,119 @@ def test_chat_session_state_round_trip() -> None:
     assert s2.started_at == s.started_at
 
 
+# ── voice-in → voice-out reply ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_voice_input_triggers_tts_reply(
+    tmp_path: Path,
+) -> None:
+    """When the operator sent a voice note and ElevenLabs is wired,
+    PILK replies with both a text message AND a voice note. The text
+    path always runs first; the audio path is best-effort companion."""
+    sends: list[dict] = []
+    voices: list[dict] = []
+    fake_mp3 = b"ID3" + b"\x00" * 256
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        url = str(req.url)
+        if url.endswith("/sendMessage"):
+            sends.append(_json.loads(req.content.decode()))
+        elif url.endswith("/sendVoice"):
+            # multipart form — capture content-type to verify file
+            voices.append(
+                {
+                    "content_type": req.headers.get("content-type", ""),
+                    "body_len": len(req.content),
+                }
+            )
+        elif "elevenlabs" in url:
+            return httpx.Response(200, content=fake_mp3)
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    orch = _FakeOrchestrator(hub, reply_text="here's what I found")
+    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub)
+    bridge._elevenlabs_api_key = "el-test"
+    bridge._elevenlabs_voice_id = "voice-x"
+
+    # Force the transcoder to "fail" so the bridge falls back to the
+    # mp3-as-voice path — this avoids actually invoking ffmpeg in
+    # tests while still exercising the voice send path.
+    async def _no_transcode(_self, _mp3: bytes) -> bytes:
+        return b""
+
+    bridge._mp3_to_ogg_opus = _no_transcode.__get__(bridge)  # type: ignore[method-assign]
+
+    await bridge._dispatch(
+        "(voice transcript)",
+        attachment_ids=None,
+        voice_reply=True,
+    )
+
+    # Text reply still goes out.
+    assert any("here's what I found" in s.get("text", "") for s in sends)
+    # Voice reply also fires.
+    assert len(voices) == 1
+
+
+@pytest.mark.asyncio
+async def test_text_input_does_not_trigger_tts(
+    tmp_path: Path,
+) -> None:
+    """When the operator sent plain text, no TTS reply happens —
+    the text path is the only response."""
+    sends: list[dict] = []
+    voices: list[dict] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        url = str(req.url)
+        if url.endswith("/sendMessage"):
+            sends.append(_json.loads(req.content.decode()))
+        elif url.endswith("/sendVoice"):
+            voices.append({"hit": True})
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    orch = _FakeOrchestrator(hub, reply_text="ok")
+    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub)
+    bridge._elevenlabs_api_key = "el-test"  # configured but unused
+
+    await bridge._dispatch("plain text msg", voice_reply=False)
+    assert len(sends) >= 1
+    assert voices == []
+
+
+@pytest.mark.asyncio
+async def test_voice_input_without_elevenlabs_key_is_text_only(
+    tmp_path: Path,
+) -> None:
+    """Voice-in without an ElevenLabs key still gets a text reply —
+    just no TTS companion. No crash, no silent failure."""
+    sends: list[dict] = []
+    voices: list[dict] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        url = str(req.url)
+        if url.endswith("/sendMessage"):
+            sends.append(_json.loads(req.content.decode()))
+        elif url.endswith("/sendVoice"):
+            voices.append({"hit": True})
+        return httpx.Response(200, json=_ok({"message_id": 1}))
+
+    _install_transport(handler)
+    hub = Hub()
+    orch = _FakeOrchestrator(hub, reply_text="got it")
+    bridge, _ = _bridge(orch, tmp_path=tmp_path, hub=hub)
+    bridge._elevenlabs_api_key = None
+
+    await bridge._dispatch("(voice)", voice_reply=True)
+    assert any("got it" in s.get("text", "") for s in sends)
+    assert voices == []
+
+
 @pytest.mark.asyncio
 async def test_dispatch_writes_per_session_vault_file(
     tmp_path: Path,

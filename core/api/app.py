@@ -840,6 +840,60 @@ async def lifespan(app: FastAPI):
         async def sentinel_context_fn() -> str:
             return _compose_sentinel_brief(sentinel_incidents)
 
+        async def subscription_context_fn() -> str:
+            """Return a one-line subscription-pressure brief when the
+            5-hour Claude Max window is in the warn/hot zone, empty
+            otherwise. Same shape the dashboard's traffic-light
+            indicator uses, plus a directive to PILK telling him to
+            warn the operator before doing more heavy work. The
+            operator explicitly asked for proactive notification
+            rather than learning about quota pressure after a
+            mid-conversation rate-limit error."""
+            try:
+                from core.ledger.claude_code_usage import (
+                    scan_usage as _scan_cli_usage,
+                )
+
+                pilk_data = await ledger.subscription_usage(
+                    window_hours=5,
+                )
+                cli = await asyncio.to_thread(
+                    _scan_cli_usage, window_hours=5,
+                )
+            except Exception as e:
+                log.warning(
+                    "subscription_context_lookup_failed",
+                    error=str(e),
+                )
+                return ""
+            count = pilk_data["count"] + cli.count
+            cap = max(1, int(settings.max_messages_per_5h))
+            pct = min(100.0, round((count / cap) * 100.0, 1))
+            if pct < 60.0:
+                return ""
+            severity = "warn" if pct < 85.0 else "HOT"
+            tag = (
+                "[Subscription pressure: "
+                f"{pct:.0f}% of the 5-hour Claude Max window used "
+                f"({count}/{cap} messages, severity {severity}). "
+            )
+            if severity == "HOT":
+                tag += (
+                    "Tell the operator FIRST in your reply — plain "
+                    "English, e.g. 'heads up — you're at "
+                    f"{pct:.0f}% of your Claude budget for the next "
+                    "few hours, anything heavy after this might "
+                    "hit a wall.' Then proceed if they want you to."
+                )
+            else:
+                tag += (
+                    "Mention this casually to the operator at the "
+                    f"top of your next reply — 'fyi we're at {pct:.0f}% "
+                    "of the 5-hour budget' — so they can pace heavy "
+                    "asks. Then carry on with the actual request."
+                )
+            return tag + "]"
+
         orchestrator = Orchestrator(
             client=client,
             registry=registry,
@@ -854,6 +908,7 @@ async def lifespan(app: FastAPI):
             governor=governor,
             providers=providers,
             sentinel_context_fn=sentinel_context_fn,
+            subscription_context_fn=subscription_context_fn,
             memory=memory,
             vault=brain,
             integration_secrets=integration_secrets,
@@ -1340,6 +1395,11 @@ async def lifespan(app: FastAPI):
                 # Whisper transcription for voice notes — visuals-only when
                 # the key is missing.
                 openai_api_key=settings.openai_api_key,
+                # ElevenLabs powers voice-OUT replies. When a voice note
+                # comes in and a key is set, PILK speaks the reply back
+                # so the operator can have a phone-style conversation.
+                elevenlabs_api_key=settings.elevenlabs_api_key,
+                elevenlabs_voice_id=settings.elevenlabs_voice_id,
             )
             await telegram_bridge.start()
             log.info(

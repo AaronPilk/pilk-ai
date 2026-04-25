@@ -5,7 +5,11 @@ into chat or Telegram and says "what is this", "summarize this",
 "could we use this", PILK runs this tool. The flow:
 
 1. Download the video with ``yt-dlp`` to a tmp dir (capped at 300 MB).
-2. Pull ~8 evenly-spaced keyframes via ``ffmpeg``.
+2. Probe duration via ``ffprobe``, then extract frames at 1 fps so
+   nothing visual gets missed in short-form content. Frame count is
+   capped at 60 so a longer clip drops fps automatically rather than
+   blowing the per-call image budget. Operator can override with
+   ``n_frames`` when they want even denser sampling on a short clip.
 3. Strip the audio track and transcribe via OpenAI Whisper.
 4. Build a multimodal Claude call (Sonnet 4.6) with the keyframes as
    image blocks and the transcript as a text block, plus the operator's
@@ -42,10 +46,20 @@ if TYPE_CHECKING:
 
 log = get_logger("pilkd.video_analyze")
 
-DEFAULT_FRAMES = 8
-MAX_FRAMES = 16
+# Frame budget. The operator's case is short-form (TikTok / Reels /
+# YouTube Shorts — typically under 60s, sometimes a full 2-3 min).
+# We sample at 1 fps so every second gets a frame; the cap below
+# is intentionally generous because cost flows through the
+# operator's Anthropic subscription, not per-token API spend. 120
+# frames covers a 2-minute clip in full at 1 fps — beyond that fps
+# drops to fit. If a future Claude release lowers the per-request
+# image cap, drop ``MAX_FRAMES`` to match.
+DEFAULT_FRAMES = 0              # 0 means "auto: 1 fps, cap MAX_FRAMES"
+MAX_FRAMES = 120
 MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024
 MAX_VIDEO_SECONDS = 600         # 10 min hard cap; longer needs chunking
+PROBE_TIMEOUT_S = 30.0
+DEFAULT_FRAMES_PER_SECOND = 1.0
 MAX_TRANSCRIPT_CHARS = 8000     # truncated to keep token cost bounded
 DOWNLOAD_TIMEOUT_S = 300.0      # 5 min — Instagram + TikTok are seconds
 FFMPEG_TIMEOUT_S = 120.0
@@ -77,7 +91,12 @@ ANALYSIS_SYSTEM = (
 )
 
 VideoDownloader = Callable[[str, Path], Awaitable[Path]]
-FrameExtractor = Callable[[Path, Path, int], Awaitable[list[Path]]]
+DurationProber = Callable[[Path], Awaitable[float]]
+# ``FrameExtractor(video_path, frames_dir, n_frames, duration_s)``
+# — duration_s is 0.0 when the prober couldn't determine it.
+FrameExtractor = Callable[
+    [Path, Path, int, float], Awaitable[list[Path]]
+]
 AudioExtractor = Callable[[Path, Path], Awaitable[Path | None]]
 Transcriber = Callable[[Path], Awaitable[str]]
 VideoAnalyzer = Callable[
@@ -139,22 +158,86 @@ async def _default_download(url: str, dest_dir: Path) -> Path:
     return matches[0]
 
 
+async def _default_probe_duration(video_path: Path) -> float:
+    """Read the video's duration in seconds via ffprobe. Returns
+    0.0 if the probe fails — the caller falls back to a fixed
+    sampling rate, which still yields a usable analysis."""
+    rc, stdout, _stderr = await _run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=nw=1:nk=1",
+            str(video_path),
+        ],
+        timeout=PROBE_TIMEOUT_S,
+    )
+    if rc != 0:
+        return 0.0
+    try:
+        return max(0.0, float(stdout.strip() or 0.0))
+    except ValueError:
+        return 0.0
+
+
+def _plan_frame_extraction(
+    duration_s: float, requested_frames: int,
+) -> tuple[float, int]:
+    """Decide the (fps, frame_count) tuple to feed ffmpeg.
+
+    Strategy:
+    - If the operator pinned ``requested_frames`` (>0), honour it and
+      pick fps to spread that many frames evenly across the duration.
+    - Otherwise default to 1 fps so every second of short-form
+      content gets a frame, capped at MAX_FRAMES. Past the cap, fps
+      drops to MAX_FRAMES / duration so we still cover the full clip
+      with the budget we have.
+
+    A duration of 0.0 means ffprobe couldn't tell us — fall back to
+    1 fps capped at MAX_FRAMES; ffmpeg's ``-frames:v`` will stop
+    early if the source is shorter than the implied window.
+    """
+    if requested_frames and requested_frames > 0:
+        target = max(1, min(int(requested_frames), MAX_FRAMES))
+        fps = (
+            target / duration_s
+            if duration_s > 0
+            else DEFAULT_FRAMES_PER_SECOND
+        )
+        return (fps, target)
+
+    if duration_s <= 0:
+        return (DEFAULT_FRAMES_PER_SECOND, MAX_FRAMES)
+
+    natural = int(duration_s * DEFAULT_FRAMES_PER_SECOND) + 1
+    if natural <= MAX_FRAMES:
+        return (DEFAULT_FRAMES_PER_SECOND, natural)
+    fps = MAX_FRAMES / duration_s
+    return (fps, MAX_FRAMES)
+
+
 async def _default_extract_frames(
     video_path: Path, frames_dir: Path, n_frames: int,
+    *, duration_s: float = 0.0,
 ) -> list[Path]:
-    """Use ffmpeg's ``select`` filter to grab ``n_frames`` evenly-
-    spaced keyframes. Resize to max 1024 px wide so each frame stays
-    well under the per-image token budget."""
+    """Sample frames densely enough to give Claude vision the whole
+    video. Default behaviour is 1 fps (i.e. every second gets a
+    frame), capped at MAX_FRAMES; for clips longer than that, fps
+    drops to fit the budget. ``n_frames`` is treated as a target
+    count when nonzero — ffmpeg picks the implied fps to spread that
+    many evenly across the duration. Frames are resized to max
+    1024 px wide so each stays well under the per-image token cost.
+    """
     frames_dir.mkdir(parents=True, exist_ok=True)
     out_pattern = str(frames_dir / "frame_%03d.jpg")
-    fps_filter = f"fps=1/{max(1, MAX_VIDEO_SECONDS // n_frames)}"
+    fps, target_count = _plan_frame_extraction(duration_s, n_frames)
     rc, _stdout, stderr = await _run(
         [
             "ffmpeg",
             "-y",
             "-i", str(video_path),
-            "-vf", f"{fps_filter},scale='min(1024,iw)':-2",
-            "-frames:v", str(n_frames),
+            "-vf", f"fps={fps:.6f},scale='min(1024,iw)':-2",
+            "-frames:v", str(target_count),
             "-q:v", "5",
             out_pattern,
         ],
@@ -287,6 +370,7 @@ def make_analyze_video_url_tool(
     openai_api_key: str | None = None,
     analysis_model: str = DEFAULT_ANALYSIS_MODEL,
     downloader: VideoDownloader | None = None,
+    duration_prober: DurationProber | None = None,
     frame_extractor: FrameExtractor | None = None,
     audio_extractor: AudioExtractor | None = None,
     transcriber: Transcriber | None = None,
@@ -298,6 +382,7 @@ def make_analyze_video_url_tool(
     callables to keep the run offline."""
 
     download = downloader or _default_download
+    probe_duration = duration_prober or _default_probe_duration
     frames = frame_extractor or _default_extract_frames
     audio = audio_extractor or _default_extract_audio
     api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
@@ -318,8 +403,23 @@ def make_analyze_video_url_tool(
                 is_error=True,
             )
         question = str(args.get("question") or DEFAULT_QUESTION).strip()
-        n_frames = int(args.get("n_frames") or DEFAULT_FRAMES)
-        n_frames = max(1, min(n_frames, MAX_FRAMES))
+        # Frame count is advisory — 0 (the default) means
+        # "auto: 1 fps capped at MAX_FRAMES based on actual duration".
+        # An explicit override is bounded to [1, MAX_FRAMES] so a
+        # typo can't blow the per-call image budget.
+        raw_frames = args.get("n_frames")
+        if raw_frames is None:
+            n_frames = DEFAULT_FRAMES
+        else:
+            try:
+                n_frames = int(raw_frames)
+            except (TypeError, ValueError):
+                n_frames = DEFAULT_FRAMES
+            n_frames = (
+                max(1, min(n_frames, MAX_FRAMES))
+                if n_frames > 0
+                else DEFAULT_FRAMES
+            )
 
         tmpdir = Path(tempfile.mkdtemp(prefix="pilk-video-"))
         try:
@@ -336,10 +436,19 @@ def make_analyze_video_url_tool(
                     ),
                     is_error=True,
                 )
+            # Probe duration first so frame extraction can adapt: a
+            # 30 s clip needs ~30 frames at 1 fps for full coverage,
+            # not the legacy fixed 8. Probe failure is non-fatal —
+            # the extractor falls back to 1 fps with the cap.
+            try:
+                duration_s = await probe_duration(video_path)
+            except Exception:
+                log.exception("video_duration_probe_failed", url=url)
+                duration_s = 0.0
             frames_dir = tmpdir / "frames"
             try:
                 frame_paths = await frames(
-                    video_path, frames_dir, n_frames,
+                    video_path, frames_dir, n_frames, duration_s,
                 )
             except Exception as e:
                 log.exception("video_frame_extract_failed", url=url)
@@ -398,6 +507,7 @@ def make_analyze_video_url_tool(
                     "transcript_chars": len(transcript),
                     "model": analysis_model,
                     "had_audio": bool(transcript),
+                    "duration_s": duration_s,
                 },
             )
         finally:
@@ -408,12 +518,16 @@ def make_analyze_video_url_tool(
         description=(
             "Watch and analyze a public short-form video at a URL "
             "(Instagram reel, TikTok, YouTube short, Twitter clip). "
-            "Downloads the video, samples keyframes, transcribes the "
-            "audio, and asks Claude vision for an analysis. Use this "
-            "whenever the operator drops a video link and asks 'what "
-            "is this', 'summarize', 'is this useful', or 'could we "
-            "implement this'. Returns plain-English analysis with "
-            "any actionable ideas called out. Auto-allowed (NET_READ): "
+            "Downloads the video, samples one frame per second across "
+            "the entire clip (so nothing visual is missed), "
+            "transcribes the audio with Whisper, and asks Claude "
+            "vision for an analysis. Default behaviour gives full "
+            "coverage on short-form (≤2 min) without the operator "
+            "needing to specify frame counts. Use this whenever the "
+            "operator drops a video link and asks 'what is this', "
+            "'summarize', 'is this useful', or 'could we implement "
+            "this'. Returns plain-English analysis with any "
+            "actionable ideas called out. Auto-allowed (NET_READ): "
             "no approval prompt. The downloaded file is deleted "
             "immediately after the analysis returns."
         ),
@@ -437,11 +551,14 @@ def make_analyze_video_url_tool(
                 },
                 "n_frames": {
                     "type": "integer",
-                    "minimum": 1,
+                    "minimum": 0,
                     "maximum": MAX_FRAMES,
                     "description": (
-                        "Optional — how many keyframes to sample "
-                        f"(default {DEFAULT_FRAMES}, max {MAX_FRAMES})."
+                        "Optional — pin a specific frame count. "
+                        "Default 0 means 'auto: 1 fps with a "
+                        f"{MAX_FRAMES}-frame ceiling for very long "
+                        "clips'. Override only if you want denser "
+                        "or sparser sampling than that."
                     ),
                 },
             },

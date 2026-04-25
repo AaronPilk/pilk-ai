@@ -15,7 +15,6 @@ from typing import Any
 import pytest
 
 from core.tools.builtin.video_analyze import (
-    DEFAULT_FRAMES,
     MAX_FRAMES,
     make_analyze_video_url_tool,
 )
@@ -59,10 +58,12 @@ def _make_frame_file(dest_dir: Path, idx: int) -> Path:
 
 def _make_seams(
     *,
-    n_frames: int = DEFAULT_FRAMES,
+    n_frames: int = 8,
     transcript: str = "spoken words from the video",
     analysis: str = "Plain-English analysis of the video.",
+    duration_s: float = 30.0,
     download_fail: bool = False,
+    probe_fail: bool = False,
     frames_fail: bool = False,
     audio_returns_none: bool = False,
     transcribe_fail: bool = False,
@@ -74,6 +75,7 @@ def _make_seams(
 
     record: dict[str, Any] = {
         "download_calls": [],
+        "duration_calls": [],
         "frames_calls": [],
         "audio_calls": [],
         "transcribe_calls": [],
@@ -86,15 +88,31 @@ def _make_seams(
             raise RuntimeError("yt-dlp 403 forbidden")
         return _make_video_file(dest_dir)
 
+    async def duration_prober(video_path: Path) -> float:
+        record["duration_calls"].append(video_path)
+        if probe_fail:
+            raise RuntimeError("ffprobe failed")
+        return duration_s
+
     async def frame_extractor(
-        video_path: Path, frames_dir: Path, count: int,
+        video_path: Path, frames_dir: Path, count: int, duration: float,
     ) -> list[Path]:
         record["frames_calls"].append(
-            {"video": video_path, "dir": frames_dir, "count": count}
+            {
+                "video": video_path,
+                "dir": frames_dir,
+                "count": count,
+                "duration": duration,
+            }
         )
         if frames_fail:
             raise RuntimeError("ffmpeg 1 unsupported codec")
         frames_dir.mkdir(parents=True, exist_ok=True)
+        # When the handler asks for 0 (default = auto), we sample
+        # at 1 fps capped against duration — same plan _plan_frame_extraction
+        # would compute. Tests just need *some* frames back.
+        if count <= 0:
+            count = max(1, int(duration)) if duration > 0 else n_frames
         return [_make_frame_file(frames_dir, i) for i in range(count)]
 
     async def audio_extractor(
@@ -132,6 +150,7 @@ def _make_seams(
         return analysis
 
     record["downloader"] = downloader
+    record["duration_prober"] = duration_prober
     record["frame_extractor"] = frame_extractor
     record["audio_extractor"] = audio_extractor
     record["transcriber"] = transcriber
@@ -148,6 +167,7 @@ def _make_tool(
         anthropic_client=_FakeAnthropic(),
         openai_api_key=openai_api_key,
         downloader=seams["downloader"],
+        duration_prober=seams["duration_prober"],
         frame_extractor=seams["frame_extractor"],
         audio_extractor=seams["audio_extractor"],
         transcriber=seams["transcriber"],
@@ -196,15 +216,24 @@ async def test_happy_path_full_pipeline() -> None:
     assert out.data["url"] == (
         "https://www.tiktok.com/@x/video/123"
     )
-    assert out.data["frames_used"] == DEFAULT_FRAMES
+    # 30s video at the default 1 fps → 30 frames extracted.
+    assert out.data["frames_used"] >= 1
     assert out.data["had_audio"] is True
     assert out.data["transcript_chars"] > 0
-    # All five stages fired once.
+    assert out.data["duration_s"] == 30.0
+    # All six stages fired once (download + probe + frames + audio
+    # + transcribe + analyze).
     assert len(seams["download_calls"]) == 1
+    assert len(seams["duration_calls"]) == 1
     assert len(seams["frames_calls"]) == 1
     assert len(seams["audio_calls"]) == 1
     assert len(seams["transcribe_calls"]) == 1
     assert len(seams["analyze_calls"]) == 1
+    # Default behaviour passes ``n_frames=0`` (auto) and the actual
+    # duration so ffmpeg can plan 1 fps coverage.
+    frames_call = seams["frames_calls"][0]
+    assert frames_call["count"] == 0
+    assert frames_call["duration"] == 30.0
     # Analyzer received the transcript and the operator's
     # default question.
     analyze_call = seams["analyze_calls"][0]
@@ -240,6 +269,71 @@ async def test_n_frames_clamped_to_max() -> None:
     assert not out.is_error
     # Frame extractor was asked for the cap, not 999.
     assert seams["frames_calls"][0]["count"] == MAX_FRAMES
+
+
+@pytest.mark.asyncio
+async def test_default_passes_zero_for_auto_sampling() -> None:
+    """Without an explicit n_frames, the handler hands the extractor
+    n_frames=0 (= ``auto: 1 fps``) plus the probed duration. The
+    real extractor uses _plan_frame_extraction to turn that into a
+    1-fps target with a generous cap."""
+    seams = _make_seams(duration_s=45.0)
+    tool = _make_tool(seams)
+    out = await tool.handler(
+        {"url": "https://x.com/i/status/2"}, ToolContext(),
+    )
+    assert not out.is_error
+    call = seams["frames_calls"][0]
+    assert call["count"] == 0
+    assert call["duration"] == 45.0
+
+
+@pytest.mark.asyncio
+async def test_probe_failure_falls_back_gracefully() -> None:
+    """ffprobe is best-effort. If it raises, frame extraction still
+    runs (with duration_s=0.0) so the analysis isn't lost."""
+    seams = _make_seams(probe_fail=True)
+    tool = _make_tool(seams)
+    out = await tool.handler(
+        {"url": "https://x.com/v"}, ToolContext(),
+    )
+    assert not out.is_error
+    call = seams["frames_calls"][0]
+    assert call["duration"] == 0.0
+
+
+def test_plan_frame_extraction_short_video() -> None:
+    """30 s clip, auto mode → 1 fps, 31 frames (one per second
+    plus the boundary)."""
+    from core.tools.builtin.video_analyze import _plan_frame_extraction
+
+    fps, count = _plan_frame_extraction(duration_s=30.0, requested_frames=0)
+    assert fps == 1.0
+    assert count == 31
+
+
+def test_plan_frame_extraction_long_video_drops_fps() -> None:
+    """200 s clip would naturally need 200 frames at 1 fps; the
+    cap kicks in and fps drops to spread MAX_FRAMES across the
+    full duration."""
+    from core.tools.builtin.video_analyze import (
+        MAX_FRAMES,
+        _plan_frame_extraction,
+    )
+
+    fps, count = _plan_frame_extraction(duration_s=200.0, requested_frames=0)
+    assert count == MAX_FRAMES
+    assert 0 < fps < 1.0
+
+
+def test_plan_frame_extraction_explicit_count() -> None:
+    """An explicit requested_frames pin honours the cap and spreads
+    that many evenly across the duration."""
+    from core.tools.builtin.video_analyze import _plan_frame_extraction
+
+    fps, count = _plan_frame_extraction(duration_s=10.0, requested_frames=5)
+    assert count == 5
+    assert fps == 0.5
 
 
 # ── Tmp-dir cleanup ─────────────────────────────────────────────

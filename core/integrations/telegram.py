@@ -243,6 +243,39 @@ class TelegramClient:
             )
         return r.content
 
+    async def send_voice(
+        self,
+        audio_bytes: bytes,
+        *,
+        chat_id: str | None = None,
+        caption: str | None = None,
+        filename: str = "pilk-voice.ogg",
+        mime: str = "audio/ogg",
+    ) -> dict[str, Any]:
+        """Send a voice-note style audio bubble to the operator.
+
+        Telegram's ``sendVoice`` endpoint expects OGG/Opus for the
+        proper "voice note" UI; sending other formats here works but
+        falls back to a generic audio attachment instead of the
+        round voice bubble. The caller is responsible for transcoding
+        before this method is called.
+
+        Caption is optional and Telegram caps it at 1024 chars.
+        """
+        data: dict[str, Any] = {
+            "chat_id": chat_id or self._cfg.chat_id,
+        }
+        if caption:
+            data["caption"] = caption[:1024]
+        async with httpx.AsyncClient(timeout=self._timeout) as c:
+            files = {
+                "voice": (filename, audio_bytes, mime),
+            }
+            r = await c.post(
+                self._url("sendVoice"), data=data, files=files,
+            )
+        return _decode(r, "sendVoice")
+
     async def send_document(
         self,
         path: Path,

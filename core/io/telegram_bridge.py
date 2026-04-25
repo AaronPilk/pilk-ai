@@ -104,6 +104,12 @@ CallbackHandler = Callable[[dict[str, Any]], Awaitable[None]]
 # AttachmentStore's own MAX_ATTACHMENT_BYTES.
 MAX_TELEGRAM_FILE_BYTES = 20 * 1024 * 1024
 
+# Cap on the text we hand to TTS for voice replies. ElevenLabs
+# accepts ~5k chars per request; staying below that keeps cost
+# bounded and prevents PILK from generating multi-minute audio
+# walls of text in response to a quick voice question.
+VOICE_REPLY_MAX_CHARS = 2000
+
 # Plain-English fallback prompts when the operator sends a photo
 # or document without a caption — gives PILK something to act on.
 DEFAULT_PHOTO_PROMPT = (
@@ -128,7 +134,8 @@ _TELEGRAM_PHOTO_MIME = "image/jpeg"  # Telegram delivers photos as JPEG
 class _InboundMessage:
     """One coalesce-able message from Telegram. Carries the operator
     text plus any attachment IDs that have already been saved into
-    the chat AttachmentStore.
+    the chat AttachmentStore, and a flag tracking whether the input
+    was a voice note (so the bridge can reply with voice too).
 
     The bridge passes a list of these through ``_supervise_dispatch``
     instead of plain strings so a coalesced batch can carry both
@@ -138,6 +145,12 @@ class _InboundMessage:
 
     text: str
     attachment_ids: list[str] = field(default_factory=list)
+    # ``True`` when any part of this message originated as a Telegram
+    # voice note. The dispatcher uses it to decide whether to reply
+    # with TTS audio in addition to text. Coalesced batches OR-merge
+    # the flag — if you sent a voice note then quickly typed a
+    # follow-up, you still get a voice reply.
+    voice_reply: bool = False
 
 
 log = get_logger("pilkd.telegram.bridge")
@@ -338,6 +351,8 @@ class TelegramBridge:
         session_idle_gap_s: float | None = None,
         attachment_store: AttachmentStore | None = None,
         openai_api_key: str | None = None,
+        elevenlabs_api_key: str | None = None,
+        elevenlabs_voice_id: str | None = None,
     ) -> None:
         self._cfg = config
         self._client = TelegramClient(
@@ -353,6 +368,15 @@ class TelegramBridge:
         # it, voice messages get a polite "configure OPENAI_API_KEY"
         # reply rather than vanishing.
         self._openai_api_key = openai_api_key
+        # ElevenLabs powers the voice-out reply path. When a key is
+        # set, voice notes from the operator get a synthesized voice
+        # reply (alongside the text reply) — like talking to a real
+        # person on Telegram. Without a key the bridge degrades to
+        # text-only on the way back, never silently drops audio.
+        self._elevenlabs_api_key = elevenlabs_api_key
+        self._elevenlabs_voice_id = (
+            elevenlabs_voice_id or "21m00Tcm4TlvDq8ikWAM"
+        )
         self._state_path = state_path
         self._longpoll = int(longpoll_seconds)
         self._stop = asyncio.Event()
@@ -718,7 +742,82 @@ class TelegramBridge:
             return None
         prefix = (caption.strip() + "\n\n") if caption.strip() else ""
         full_text = f"{prefix}{DEFAULT_VOICE_TRANSCRIPT_PROMPT}\n{transcript.strip()}"
-        return _InboundMessage(text=full_text)
+        # Voice-in → voice-out: tag the message so the dispatcher
+        # responds with TTS audio (when ElevenLabs is configured)
+        # in addition to the normal text reply.
+        return _InboundMessage(text=full_text, voice_reply=True)
+
+    async def _send_voice_reply(self, text: str) -> None:
+        """Synthesize ``text`` via ElevenLabs and push it as a
+        Telegram voice note. Text reply has already been sent at
+        this point; this is the audio companion. Errors are
+        swallowed at the caller — TTS hiccups must never block the
+        text path."""
+        capped = text[:VOICE_REPLY_MAX_CHARS]
+        if not capped.strip():
+            return
+        # Lazy import keeps the ElevenLabs voice driver out of the
+        # bridge's hot import path until voice-out actually fires.
+        from core.voice.elevenlabs_driver import ElevenLabsTTS
+
+        tts = ElevenLabsTTS(
+            api_key=self._elevenlabs_api_key or "",
+            voice_id=self._elevenlabs_voice_id,
+        )
+        spoken = await tts.synthesize(text=capped)
+        if not spoken.audio_bytes:
+            return
+        ogg_bytes = await self._mp3_to_ogg_opus(spoken.audio_bytes)
+        if not ogg_bytes:
+            # Transcode failed — fall back to sending the mp3 as a
+            # voice file. Telegram still plays it, just renders as a
+            # generic audio attachment instead of the round bubble.
+            ogg_bytes = spoken.audio_bytes
+            mime = "audio/mpeg"
+            filename = "pilk-voice.mp3"
+        else:
+            mime = "audio/ogg"
+            filename = "pilk-voice.ogg"
+        await self._client.send_voice(
+            ogg_bytes, filename=filename, mime=mime,
+        )
+
+    async def _mp3_to_ogg_opus(self, mp3_bytes: bytes) -> bytes:
+        """Transcode mp3 → ogg/opus via ffmpeg so Telegram renders
+        the reply as a proper voice note bubble. Returns an empty
+        bytes object on failure so the caller can fall back to the
+        original mp3."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-y",
+                "-loglevel", "error",
+                "-i", "pipe:0",
+                "-c:a", "libopus",
+                "-b:a", "32k",
+                "-f", "ogg",
+                "pipe:1",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except (FileNotFoundError, OSError) as e:
+            log.warning(
+                "telegram_voice_transcode_ffmpeg_missing",
+                error=str(e),
+            )
+            return b""
+        stdout, stderr = await proc.communicate(input=mp3_bytes)
+        if proc.returncode != 0:
+            log.warning(
+                "telegram_voice_transcode_failed",
+                rc=proc.returncode,
+                stderr=(stderr or b"")[:200].decode(
+                    "utf-8", errors="replace",
+                ),
+            )
+            return b""
+        return stdout
 
     async def _transcribe_voice(self, audio_bytes: bytes) -> str:
         """One-shot Whisper call. Local helper rather than reusing
@@ -893,11 +992,16 @@ class TelegramBridge:
                 for p in parts
                 for aid in p.attachment_ids
             ]
+            voice_reply = any(p.voice_reply for p in parts)
             if not merged_text and not merged_attachment_ids:
                 return
             self._current_dispatch_cancelled_for_follow_up = False
             dispatch_task = asyncio.create_task(
-                self._dispatch(merged_text, merged_attachment_ids),
+                self._dispatch(
+                    merged_text,
+                    merged_attachment_ids,
+                    voice_reply=voice_reply,
+                ),
                 name="telegram-bridge-dispatch",
             )
             peek_task = asyncio.create_task(
@@ -973,7 +1077,11 @@ class TelegramBridge:
             # Loop to redispatch.
 
     async def _dispatch(
-        self, text: str, attachment_ids: list[str] | None = None,
+        self,
+        text: str,
+        attachment_ids: list[str] | None = None,
+        *,
+        voice_reply: bool = False,
     ) -> None:
         """Run one (possibly coalesced) message through the orchestrator
         and ship the reply back over Telegram.
@@ -1073,6 +1181,17 @@ class TelegramBridge:
 
         reply = captured.get("text") or "(no response)"
         await self._safe_send(reply)
+
+        # Voice-in → voice-out: when the operator sent a voice note
+        # AND ElevenLabs is configured, also push the reply as a
+        # synthesized voice message so they can have a real
+        # conversation through Telegram. Best-effort only — TTS
+        # failure must never block the text reply path.
+        if voice_reply and self._elevenlabs_api_key and reply.strip():
+            try:
+                await self._send_voice_reply(reply)
+            except Exception:
+                log.exception("telegram_voice_reply_failed")
 
         # Only record the exchange once PILK actually replied — a
         # busy-exhausted or timed-out dispatch shouldn't pollute
