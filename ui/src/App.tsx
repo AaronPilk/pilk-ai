@@ -1,4 +1,5 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import LeftNav from "./components/LeftNav";
 import TopBar from "./components/TopBar";
 import Home from "./routes/Home";
@@ -15,12 +16,35 @@ import Settings from "./routes/Settings";
 import { AuthGate } from "./lib/AuthGate";
 
 export default function App() {
+  // Mobile-only state — drives the slide-in nav drawer. On desktop
+  // the CSS ignores ``data-nav-open`` and the sidebar is always
+  // pinned, so flipping this on a wide screen is harmless.
+  const [navOpen, setNavOpen] = useState(false);
+  const location = useLocation();
+
+  // Close the drawer whenever the route changes — picking a nav item
+  // on mobile should land you on the page without the drawer staying
+  // open over it.
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
+
   return (
     <AuthGate>
-      <div className="app">
+      <div className="app" data-nav-open={navOpen ? "true" : "false"}>
+        {/* Backdrop — visible only when the drawer is open on mobile;
+            CSS hides it everywhere else. Click to close. */}
+        <div
+          className="nav-backdrop"
+          aria-hidden={!navOpen}
+          onClick={() => setNavOpen(false)}
+        />
         <LeftNav />
         <div className="main">
-          <TopBar />
+          <TopBar
+            navOpen={navOpen}
+            onToggleNav={() => setNavOpen((v) => !v)}
+          />
           <div className="content">
             <Routes>
               <Route path="/" element={<Home />} />

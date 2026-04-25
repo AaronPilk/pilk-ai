@@ -4,9 +4,11 @@ import {
   AlertTriangle,
   DollarSign,
   LogOut,
+  Menu,
   Moon,
   Play,
   Sun,
+  X,
   Zap,
 } from "lucide-react";
 import {
@@ -29,7 +31,12 @@ import VoiceOrb from "./VoiceOrb";
 // whenever usage actually changes.
 const SUBSCRIPTION_USAGE_POLL_MS = 30_000;
 
-export default function TopBar() {
+type TopBarProps = {
+  navOpen?: boolean;
+  onToggleNav?: () => void;
+};
+
+export default function TopBar({ navOpen, onToggleNav }: TopBarProps = {}) {
   const { status } = useConnection();
   const { pathname } = useLocation();
   const [running, setRunning] = useState(0);
@@ -101,6 +108,17 @@ export default function TopBar() {
   return (
     <header className="topbar">
       <div className="topbar-left">
+        {onToggleNav && (
+          <button
+            className="topbar-burger"
+            onClick={onToggleNav}
+            aria-label={navOpen ? "Close navigation" : "Open navigation"}
+            aria-expanded={!!navOpen}
+            type="button"
+          >
+            {navOpen ? <X size={18} /> : <Menu size={18} />}
+          </button>
+        )}
         <span className={connClass}>
           <span className="topbar-conn-dot" />
           <span className="topbar-conn-label">PILKD</span>
