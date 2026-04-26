@@ -1388,11 +1388,23 @@ class Orchestrator:
                 tier_meta["reason"] = (
                     f"{tier_meta.get('reason', 'rule')}+tool_use_fallback"
                 )
-                # Use the governor's STANDARD model since the LIGHT
-                # model may not be wired into the API provider.
-                if self.governor is not None:
-                    standard = self.governor.tiers.get(Tier.STANDARD)
-                    planner_model = standard.model
+                # When falling back to the Anthropic API provider we
+                # must hand it an Anthropic-shaped model name. The
+                # governor's STANDARD tier may point at gpt-4o or
+                # gemini-* on this operator's config, which would
+                # immediately 404 against ``api.anthropic.com``. Keep
+                # the model PILK was already going to use if it's
+                # Anthropic-shaped (e.g. capability-override picked
+                # ``claude-sonnet-4-6`` for vision); otherwise fall
+                # back to the configured Anthropic default
+                # (``settings.planner_model`` — claude-haiku-4-5 by
+                # default) which is guaranteed to work with the
+                # Anthropic provider.
+                if not (
+                    isinstance(planner_model, str)
+                    and planner_model.startswith("claude-")
+                ):
+                    planner_model = self.planner_model
                 response = await self._plan_turn_with_retry(
                     provider=provider,
                     plan_id=plan_id,
