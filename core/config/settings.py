@@ -19,6 +19,21 @@ class Settings(BaseSettings):
         env_file=".env",
         env_prefix="PILK_",
         extra="ignore",
+        # Without ``case_sensitive=False`` pydantic-settings filters
+        # the .env file by the ``env_prefix`` and silently drops every
+        # variable that doesn't start with ``PILK_`` — including
+        # ``ANTHROPIC_API_KEY`` and ``OPENAI_API_KEY`` which are the
+        # whole reason the daemon boots in the first place. This was
+        # masked for months because the operator also exports them
+        # from ~/.zshrc, so any process launched from an interactive
+        # terminal still got them via os.environ. The moment pilkd
+        # starts from a non-interactive context (launchd, cron, a
+        # script, the test harness) it'd come up keyless. Setting
+        # case_sensitive=False makes the .env loader honour every
+        # entry regardless of prefix, so the .env file is the single
+        # source of truth — what the operator pastes into .env is
+        # what the daemon reads.
+        case_sensitive=False,
     )
 
     home: Path = Field(default=Path.home() / "PILK")
