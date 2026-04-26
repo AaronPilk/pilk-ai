@@ -9896,15 +9896,18 @@ body {
   display: none;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  /* Apple HIG minimum tap target is 44×44pt so the operator can
+     hit the menu without thumb-aiming. */
+  width: 44px;
+  height: 44px;
   padding: 0;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--surface-hover);
   color: var(--text);
   cursor: pointer;
   transition: background 160ms var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
 }
 .topbar-burger:hover {
   background: var(--surface-active);
@@ -9982,16 +9985,41 @@ body {
     min-width: 0;
   }
   .topbar {
-    padding: 12px 14px;
-    gap: 8px;
+    /* Push the topbar down past the iOS notch / status bar — the
+       phone's clock + battery indicators sit in the top ~50px and
+       the previous 12px padding-top let the connection pill and
+       Today stat slide right under them. ``viewport-fit=cover`` in
+       the index.html viewport meta is what makes ``env(safe-area-
+       inset-top)`` non-zero on iPhones with a notch. */
+    padding: max(12px, env(safe-area-inset-top, 12px))
+      max(14px, env(safe-area-inset-right, 14px))
+      12px
+      max(14px, env(safe-area-inset-left, 14px));
+    gap: 10px;
+    flex-wrap: wrap;
+    /* Stack rows vertically on phones — the stats overflow
+       horizontally otherwise. Connection pill on top row,
+       running/today/max stats on the next, theme + sign-out on a
+       third if needed. */
+    align-items: flex-start;
   }
   .topbar-left,
   .topbar-right {
     gap: 10px;
     flex-wrap: wrap;
   }
+  .topbar-left {
+    /* Full row to itself — burger + connection pill are the
+       primary controls and need the full width to breathe. */
+    width: 100%;
+  }
+  .topbar-right {
+    width: 100%;
+    justify-content: flex-start;
+  }
   .topbar-stats {
-    gap: 12px;
+    gap: 10px;
+    flex-wrap: wrap;
   }
   .topbar-stat {
     font-size: 12px;
