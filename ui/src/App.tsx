@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 import LeftNav from "./components/LeftNav";
 import TopBar from "./components/TopBar";
 import Home from "./routes/Home";
@@ -7,6 +7,7 @@ import Brain from "./routes/Brain";
 import Chat from "./routes/Chat";
 import Tasks from "./routes/Tasks";
 import Agents from "./routes/Agents";
+import Sentinel from "./routes/Sentinel";
 import Sandboxes from "./routes/Sandboxes";
 import Approvals from "./routes/Approvals";
 import Cost from "./routes/Cost";
@@ -57,11 +58,12 @@ export default function App() {
               <Route path="/cost" element={<Cost />} />
               <Route path="/memory" element={<Memory />} />
               <Route path="/logs" element={<Logs />} />
-              {/* Sentinel lost its dedicated tab — incidents live on the
-                  Agents page (inline supervisor row) and the top-bar
-                  badge. Old links redirect so anything bookmarked
-                  still resolves. */}
-              <Route path="/sentinel" element={<Navigate to="/agents" replace />} />
+              {/* Sentinel page shows the actual incident list with
+                  severity, cause, recommended action, and an
+                  acknowledge button. The supervisor row on /agents
+                  links here when alerts are open so the operator can
+                  see WHAT'S WRONG, not just that something is. */}
+              <Route path="/sentinel" element={<Sentinel />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>
           </div>

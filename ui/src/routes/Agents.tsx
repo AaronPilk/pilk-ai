@@ -14,7 +14,7 @@ import {
   type AutonomyProfile,
   type ConnectedAccount,
 } from "../state/api";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ChevronLeft } from "lucide-react";
 import {
   humanizeAgentName,
@@ -94,6 +94,7 @@ function blurbFor(agent: AgentRow): string {
 }
 
 export default function Agents() {
+  const navigate = useNavigate();
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   // Sentinel lives a tier above the other agents — it watches them
@@ -260,7 +261,21 @@ export default function Agents() {
                   ? "agents-supervisor-card--alert"
                   : ""
               }`}
-              onClick={() => setSelected(sentinel.name)}
+              onClick={() => {
+                // When there are open alerts, the operator's
+                // intent is "show me what's wrong" — route to the
+                // Sentinel page where each incident has its
+                // severity, summary, likely cause, recommended
+                // action, and an acknowledge button. Falls back to
+                // the agent metadata panel only when nothing's
+                // alerting (the supervisor is just another agent
+                // to inspect at that point).
+                if ((sentinelUnacked ?? 0) > 0) {
+                  navigate("/sentinel");
+                } else {
+                  setSelected(sentinel.name);
+                }
+              }}
             >
               <div className="agent-card-avatar" aria-hidden>
                 {avatarFor(sentinel.name)}

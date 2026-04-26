@@ -173,7 +173,7 @@ export default function TopBar({ navOpen, onToggleNav }: TopBarProps = {}) {
           )}
           {sentinelCount > 0 && (
             <Link
-              to="/agents"
+              to="/sentinel"
               className="topbar-stat topbar-stat--alert"
               title="Unacknowledged sentinel incidents — click to review."
             >
