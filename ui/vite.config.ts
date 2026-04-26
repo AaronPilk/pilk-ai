@@ -4,6 +4,14 @@ import path from "node:path";
 
 export default defineConfig({
   plugins: [react()],
+  // Read VITE_* env from the repo root, not the ``ui/`` package dir.
+  // The repo's single ``.env`` lives at the project root (next to
+  // ``pyproject.toml``) and pilkd reads from there too — having one
+  // file as the source of truth means ``VITE_PILK_API`` /
+  // ``VITE_PILK_WS`` / ``PILK_TAILNET_HOSTS`` all stay in sync. Without
+  // this, Vite silently fell back to its hardcoded localhost defaults
+  // and the dashboard tried to WebSocket to 127.0.0.1 from the phone.
+  envDir: path.resolve(__dirname, ".."),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
