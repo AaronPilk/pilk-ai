@@ -73,11 +73,26 @@ class CapabilityHint:
 # row is a best-cost-at-capability pick, not the provider's flagship.
 CAPABILITY_PROVIDER_MODELS: dict[Capability, dict[str, str]] = {
     Capability.VISION: {
+        # Order matters: ``_hint_for`` picks the first key as the
+        # preferred provider. The operator pays for Claude Max, so
+        # vision should ride the subscription via the claude_code
+        # CLI provider whenever it's available — that's free at the
+        # margin instead of burning OpenAI tokens (which have a
+        # 30k TPM cap on Tier 1 and rate-limit fast under any real
+        # vision workload).
+        "claude_code": "claude-sonnet-4-6",
+        # Direct Anthropic API as the second pick when claude_code
+        # isn't wired (CI, headless servers, the cloud build that
+        # doesn't ship the CLI). Sonnet handles vision cleanly.
+        "anthropic": "claude-sonnet-4-6",
         # Gemini 2.0 Flash handles images well at meaningful cost
         # savings vs. Claude Sonnet with vision or GPT-4o.
         "gemini": "gemini-2.0-flash-exp",
         # GPT-4o is the OpenAI vision workhorse — slotted as a
-        # secondary pick if Gemini isn't wired.
+        # last-resort pick. Tier 1 OpenAI accounts have a 30k TPM
+        # cap that one image + context easily blows past, so we
+        # only land here if every Anthropic + Gemini option is
+        # offline.
         "openai": "gpt-4o",
     },
     Capability.LONG_CONTEXT: {
