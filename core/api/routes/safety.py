@@ -23,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from core.config import get_settings
 from core.policy.risk import RiskClass
@@ -201,4 +201,49 @@ async def system_safety(request: Request) -> dict[str, Any]:
         },
         "last_risky_actions": last_risky_actions,
         "autonomy_profiles": profiles,
+    }
+
+
+@router.post("/refresh-capabilities")
+async def refresh_capabilities(
+    request: Request,
+    force: bool = Query(default=False),
+) -> dict[str, Any]:
+    """Manually re-summarize PILK's current capabilities into the
+    brain note. Normally fires automatically at boot when git HEAD
+    has changed; this endpoint lets the operator force a refresh.
+
+    Returns the outcome status (refreshed / up_to_date /
+    skipped_no_anthropic / failed) plus the relevant commit hashes.
+    """
+    refresher = getattr(
+        request.app.state, "self_capabilities_refresher", None,
+    )
+    if refresher is None:
+        raise HTTPException(
+            503,
+            "self-capabilities refresher not initialised "
+            "(set ANTHROPIC_API_KEY and restart pilkd)",
+        )
+    settings = get_settings()
+    alert_settings = getattr(request.app.state, "alert_settings", None)
+    workflows = getattr(request.app.state, "workflow_registry", None)
+    registry = getattr(request.app.state, "registry", None)
+    snap = (
+        await alert_settings.get() if alert_settings is not None else None
+    )
+    outcome = await refresher.refresh_if_stale(
+        registry=registry,
+        settings=settings,
+        workflows=workflows,
+        alert_settings_snapshot=snap,
+        force=force,
+    )
+    return {
+        "status": outcome.status,
+        "head_commit": outcome.head_commit,
+        "previous_commit": outcome.previous_commit,
+        "note_path": outcome.note_path,
+        "error": outcome.error,
+        "metadata": outcome.metadata,
     }

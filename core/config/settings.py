@@ -761,6 +761,20 @@ class Settings(BaseSettings):
             "INTELLIGENCE_DAEMON_ENABLED",
         ),
     )
+
+    # Auto-refresh PILK's self-capabilities note in the brain at boot
+    # whenever the running code's git HEAD differs from the hash
+    # recorded in the existing note. One Anthropic call per real
+    # deploy (~5-10¢); zero on restarts where nothing changed. Set
+    # to false to suppress the auto-fire — the manual refresh route
+    # at POST /system/refresh-capabilities still works.
+    self_capabilities_auto_refresh: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "PILK_SELF_CAPABILITIES_AUTO_REFRESH",
+            "SELF_CAPABILITIES_AUTO_REFRESH",
+        ),
+    )
     # Daemon scan tick. The daemon wakes on this interval, picks
     # sources whose ``last_checked_at + poll_interval_seconds`` is
     # in the past, and fetches them. Floor 30s; sources still get

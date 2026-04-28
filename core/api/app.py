@@ -1604,6 +1604,43 @@ async def lifespan(app: FastAPI):
         count=len(workflows_loaded),
         names=[w.name for w in workflows_loaded],
     )
+
+    # Self-capabilities refresher — auto-refresh PILK's self-summary
+    # note in the brain when the running code's git HEAD differs
+    # from the hash recorded in the existing note. One Anthropic
+    # call per real deploy (~5-10¢); zero when nothing changed.
+    from core.self_capabilities import SelfCapabilitiesRefresher
+
+    self_caps_refresher = SelfCapabilitiesRefresher(
+        vault=Vault(settings.brain_vault_path),
+        repo_root=Path(__file__).resolve().parents[2],
+        anthropic_client=client,
+    )
+    app.state.self_capabilities_refresher = self_caps_refresher
+    if settings.self_capabilities_auto_refresh:
+        try:
+            alert_snap = (
+                await alert_settings_store.get()
+                if alert_settings_store is not None
+                else None
+            )
+            outcome = await self_caps_refresher.refresh_if_stale(
+                registry=registry,
+                settings=settings,
+                workflows=app.state.workflow_registry,
+                alert_settings_snapshot=alert_snap,
+            )
+            log.info(
+                "self_capabilities_check_done",
+                status=outcome.status,
+                head=outcome.head_commit,
+                previous=outcome.previous_commit,
+            )
+        except Exception as e:  # noqa: BLE001 — never fatal at boot
+            log.warning(
+                "self_capabilities_boot_check_failed",
+                error=str(e),
+            )
     app.state.xauusd_settings = xauusd_settings
     app.state.clients = clients
     app.state.sentinel = sentinel
