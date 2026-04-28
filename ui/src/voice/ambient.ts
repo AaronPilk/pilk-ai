@@ -142,6 +142,7 @@ const WAKE_VARIANTS: Record<WakePhrase, string[]> = {
   "hey pilk": [
     "hey pilk",
     "hey polk",
+    "hey pick",
     "hey peak",
     "hey peek",
     "hey pink",
@@ -254,6 +255,7 @@ class AmbientController {
         r.isFinal &&
         minConf > 0 &&
         typeof alt.confidence === "number" &&
+        alt.confidence > 0 &&
         alt.confidence < minConf
       ) {
         return;
@@ -490,7 +492,7 @@ class AmbientController {
       }
     });
 
-    pilk.send({ type: "chat.user", id: randId(), text });
+    pilk.send({ type: "chat.user", id: randId(), text, source: "ambient_voice" });
 
     // Safety timeout: if no reply comes in 60s, give up and resume.
     window.setTimeout(() => {

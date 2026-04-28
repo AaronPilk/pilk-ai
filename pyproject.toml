@@ -31,6 +31,10 @@ dependencies = [
     "pyjwt[crypto]>=2.9",
     "pypdf>=5.0",
     "python-docx>=1.1",
+    "markdown>=3.10",
+    "weasyprint>=68.0",
+    "feedparser>=6.0",
+    "numpy>=2.4.4",
 ]
 
 [project.optional-dependencies]

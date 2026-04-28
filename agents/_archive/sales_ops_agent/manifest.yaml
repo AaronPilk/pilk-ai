@@ -105,7 +105,7 @@ integrations:
       - https://www.googleapis.com/auth/gmail.readonly
   - name: ghl_api_key
     kind: api_key
-    label: Go High Level — agency PIT
+    label: Go High Level — Private Integration Token
     docs_url: https://help.gohighlevel.com/support/solutions/articles/155000002573-private-integrations
   - name: ghl_default_location_id
     kind: api_key

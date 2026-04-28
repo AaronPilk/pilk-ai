@@ -241,10 +241,55 @@ async def test_get_happy_path(ghl_key: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_search_requires_at_least_one_filter(ghl_key: str) -> None:
+async def test_search_with_no_filter_lists_all_contacts(
+    ghl_key: str,
+) -> None:
+    """Calling ``ghl_contact_search`` with no filter is now treated
+    as 'list every contact in the location' — GHL's /contacts/ API
+    returns the full paginated list when query is empty, which is
+    exactly what 'show me my CRM' should return."""
+    captured: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured.append(req)
+        return httpx.Response(
+            200, json={"contacts": [{"id": "c1", "firstName": "Test"}]},
+        )
+
+    _install_transport(handler)
     out = await _get("ghl_contact_search").handler({}, ToolContext())
-    assert out.is_error
-    assert "email" in out.content.lower()
+    assert not out.is_error, out.content
+    assert "1 contact" in out.content
+    # The call must reach GHL with an empty query (or no query) so
+    # the API returns the full list rather than a literal-string match.
+    sent = captured[-1].url
+    assert "query=" not in str(sent) or "query=&" in str(sent) or str(sent).endswith("query=")
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_asterisk_wildcard_footgun(
+    ghl_key: str,
+) -> None:
+    """``query='*'`` is a common LLM mistake — GHL treats * as a
+    literal character so the search returns 0 contacts and the model
+    confabulates an explanation. Map it to 'list all' instead."""
+    captured: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured.append(req)
+        return httpx.Response(
+            200, json={"contacts": [{"id": "c1", "firstName": "Test"}]},
+        )
+
+    _install_transport(handler)
+    out = await _get("ghl_contact_search").handler(
+        {"query": "*"}, ToolContext(),
+    )
+    assert not out.is_error, out.content
+    sent = str(captured[-1].url)
+    # No literal asterisk should reach GHL.
+    assert "query=*" not in sent
+    assert "query=%2A" not in sent
 
 
 @pytest.mark.asyncio
@@ -581,7 +626,7 @@ async def test_401_rewritten_to_pit_hint(ghl_key: str) -> None:
         {"contact_id": "c-1"}, ToolContext(),
     )
     assert out.is_error
-    assert "agency pit" in out.content.lower()
+    assert "private integration" in out.content.lower()
 
 
 @pytest.mark.asyncio

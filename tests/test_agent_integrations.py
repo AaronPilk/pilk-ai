@@ -89,13 +89,13 @@ def test_manifest_without_integrations_defaults_to_empty() -> None:
     assert m.integrations == []
 
 
-def test_sales_ops_manifest_declares_keys() -> None:
-    path = AGENTS_DIR / "sales_ops_agent" / "manifest.yaml"
+def test_master_sales_manifest_declares_keys() -> None:
+    """Master Sales replaced sales_ops_agent and friends. Same hard
+    dependencies — GHL + Hunter + Places + PageSpeed + Gmail — must
+    surface in the panel since the outbound loop reads all of them."""
+    path = AGENTS_DIR / "master_sales" / "manifest.yaml"
     manifest = Manifest.load(path)
     names = {i.name for i in manifest.integrations}
-    # The agent's sales-ops loop reads GHL + Hunter + Places +
-    # PageSpeed + Gmail — any one missing makes the run fail, so the
-    # panel must surface them all.
     assert "ghl_api_key" in names
     assert "ghl_default_location_id" in names
     assert "hunter_io_api_key" in names
@@ -105,16 +105,6 @@ def test_sales_ops_manifest_declares_keys() -> None:
     google = next(i for i in manifest.integrations if i.name == "google")
     assert google.kind == "oauth"
     assert google.role == "user"
-
-
-def test_pitch_deck_manifest_uses_system_role_google() -> None:
-    path = AGENTS_DIR / "pitch_deck_agent" / "manifest.yaml"
-    manifest = Manifest.load(path)
-    oauths = [i for i in manifest.integrations if i.kind == "oauth"]
-    assert len(oauths) == 1
-    g = oauths[0]
-    assert g.name == "google"
-    assert g.role == "system"  # deck generation uses system-owned account
 
 
 def test_xauusd_manifest_declares_browserbase() -> None:
@@ -138,7 +128,7 @@ def test_agents_route_returns_integrations(client: TestClient) -> None:
     assert r.status_code == 200
     body = r.json()
     by_name = {a["name"]: a for a in body["agents"]}
-    sales = by_name.get("sales_ops_agent")
+    sales = by_name.get("master_sales")
     assert sales is not None
     assert isinstance(sales.get("integrations"), list)
     assert len(sales["integrations"]) > 0
@@ -160,7 +150,7 @@ def test_agents_route_reflects_configured_api_key(client: TestClient) -> None:
         try:
             r = client.get("/agents")
             by_name = {a["name"]: a for a in r.json()["agents"]}
-            sales = by_name["sales_ops_agent"]
+            sales = by_name["master_sales"]
             ghl = next(
                 i
                 for i in sales["integrations"]

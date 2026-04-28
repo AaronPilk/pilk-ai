@@ -99,10 +99,14 @@ from core.orchestrator.orchestrator import ChatAttachment, OrchestratorBusyError
 
 CallbackHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
-# Per-call cap on inbound Telegram file size. Telegram's getFile
-# tops out around 20 MiB anyway; we cap matching that and the
-# AttachmentStore's own MAX_ATTACHMENT_BYTES.
+# Per-call cap on inbound Telegram file size for non-video files.
+# Telegram's getFile tops out around 20 MiB anyway; matching that
+# and the AttachmentStore's MAX_ATTACHMENT_BYTES.
 MAX_TELEGRAM_FILE_BYTES = 20 * 1024 * 1024
+# Telegram bots can pull videos up to ~50 MiB via the bot API
+# (raw upload limit is higher but the bot endpoint caps lower).
+# Keep this slightly under 50 to leave headroom for metadata.
+MAX_TELEGRAM_VIDEO_BYTES = 48 * 1024 * 1024
 
 # Cap on the text we hand to TTS for voice replies. ElevenLabs
 # accepts ~5k chars per request; staying below that keeps cost
@@ -122,6 +126,12 @@ DEFAULT_DOCUMENT_PROMPT = (
 )
 DEFAULT_VOICE_TRANSCRIPT_PROMPT = (
     "(Transcribed voice note follows.)"
+)
+DEFAULT_VIDEO_PROMPT = (
+    "Watch this video and tell me what's in it — main message, "
+    "tone, hooks, anything noteworthy or actionable. Call out the "
+    "first 3 seconds specifically (the hook). If it's content I "
+    "could learn from or use, say so."
 )
 
 # Telegram document MIMEs we map onto our attachment store. Anything
@@ -562,8 +572,19 @@ class TelegramBridge:
 
         try:
             if isinstance(text, str) and text.strip():
+                stripped = text.strip()
+                # Slash-command pre-check: ``/project [slug]`` switches
+                # the active project (or lists if no slug) right from
+                # Telegram. Intercepted before the queue so it doesn't
+                # spawn an orchestrator run — these are operator-side
+                # state changes, not tasks.
+                if stripped.startswith("/project") or stripped.startswith(
+                    "/projects"
+                ):
+                    await self._handle_project_command(stripped)
+                    return
                 await self._queue.put(
-                    _InboundMessage(text=text.strip())
+                    _InboundMessage(text=stripped)
                 )
                 return
 
@@ -586,16 +607,9 @@ class TelegramBridge:
                 return
 
             if isinstance(video, dict):
-                # Videos can be huge and Claude vision wants frames,
-                # not raw video. Keep this honest: tell the operator
-                # to use ``analyze_video_url`` instead.
-                with contextlib.suppress(TelegramError, Exception):
-                    await self._client.send_message(
-                        "Video file uploads aren't supported yet — "
-                        "but if you paste a video LINK (Instagram / "
-                        "TikTok / YouTube / Twitter) I'll watch and "
-                        "summarise it.",
-                    )
+                inbound = await self._ingest_video(video, caption)
+                if inbound is not None:
+                    await self._queue.put(inbound)
                 return
 
             # Sticker, location, contact, etc.
@@ -614,6 +628,144 @@ class TelegramBridge:
                     "Something tripped while I was reading that — "
                     "give me a sec and try again.",
                 )
+
+    async def _ingest_video(
+        self, video: dict[str, Any], caption: str,
+    ) -> _InboundMessage | None:
+        """Pull a Telegram video file into the attachment store so
+        ``analyze_video_file`` can run frame-extraction + Whisper
+        transcription + multimodal Claude analysis on it. Telegram
+        sends videos as ``video/mp4`` by default; the attachment
+        store accepts mp4 / mov / webm / m4v / 3gpp.
+
+        The caption (if any) becomes the prompt; otherwise we use
+        a sane default that asks PILK to summarise + flag actionable
+        ideas. The orchestrator's planner sees the attachment id and
+        is expected to call ``analyze_video_file`` to actually watch
+        the clip — the raw bytes never get sent inline to the LLM.
+        """
+        if self._attachment_store is None:
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    "Video uploads aren't wired up on this PILK install.",
+                )
+            return None
+        file_id = str(video.get("file_id") or "")
+        if not file_id:
+            return None
+        mime = (
+            str(video.get("mime_type") or "video/mp4")
+            .split(";", 1)[0]
+            .strip()
+            .lower()
+        )
+        if not mime:
+            mime = "video/mp4"
+        # Telegram sends an explicit duration (seconds) on video
+        # objects — useful in the prompt so PILK can size the
+        # analysis budget appropriately.
+        duration_s = video.get("duration")
+        try:
+            duration_int = int(duration_s) if duration_s is not None else None
+        except (TypeError, ValueError):
+            duration_int = None
+        filename = (
+            str(video.get("file_name") or "telegram-video.mp4").strip()
+        )
+        if not is_allowed_mime(mime):
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    f"That video type ({mime}) isn't supported yet. "
+                    "I can read mp4, mov, webm, m4v, and 3gpp."
+                )
+            return None
+        att_id = await self._download_and_save(
+            file_id=file_id, mime=mime, filename=filename,
+        )
+        if att_id is None:
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    "I couldn't pull that video down — Telegram caps "
+                    "video file sizes around 50MB on the bot API. If "
+                    "it's bigger, paste a link instead and I'll grab "
+                    "it from there."
+                )
+            return None
+        prompt_text = (caption or "").strip() or DEFAULT_VIDEO_PROMPT
+        if duration_int is not None and duration_int > 0:
+            prompt_text = (
+                f"{prompt_text}\n\n[Uploaded video: {duration_int}s "
+                f"long, attachment id {att_id}. Use "
+                "analyze_video_file with that attachment_id to watch "
+                "it before answering.]"
+            )
+        else:
+            prompt_text = (
+                f"{prompt_text}\n\n[Uploaded video, attachment id "
+                f"{att_id}. Use analyze_video_file with that "
+                "attachment_id to watch it before answering.]"
+            )
+        return _InboundMessage(text=prompt_text, attachment_ids=[att_id])
+
+    async def _handle_project_command(self, raw: str) -> None:
+        """Handle ``/project`` and ``/projects`` from Telegram.
+
+        Forms supported:
+          /project                — list projects + show which is active
+          /projects               — same as above
+          /project <slug>         — switch the active project
+          /project list           — explicit list
+
+        Replies inline; never spawns an orchestrator run."""
+        projects = getattr(self._orchestrator, "projects", None)
+        if projects is None:
+            with contextlib.suppress(TelegramError, Exception):
+                await self._client.send_message(
+                    "Project switcher isn't wired on this daemon yet."
+                )
+            return
+
+        # Strip the command verb; leave whatever the operator typed
+        # after as the argument. ``/project skyway-sales`` → "skyway-sales".
+        parts = raw.split(maxsplit=1)
+        arg = parts[1].strip() if len(parts) > 1 else ""
+
+        try:
+            if not arg or arg.lower() in {"list", "ls"}:
+                items = projects.list()
+                active = projects.active_slug
+                if not items:
+                    text = (
+                        "No projects yet. Open the dashboard → "
+                        "Project switcher → New project to create one."
+                    )
+                else:
+                    lines = ["Projects:"]
+                    for p in items:
+                        marker = "★" if p.slug == active else " "
+                        lines.append(f"  {marker} {p.slug} — {p.name}")
+                    lines.append("")
+                    lines.append(
+                        f"Active: {active}. Switch with `/project <slug>`."
+                    )
+                    text = "\n".join(lines)
+            else:
+                slug = projects.set_active(arg)
+                info = projects.get(slug)
+                name = info.name if info else slug
+                text = (
+                    f"✓ Active project switched to '{name}' ({slug}). "
+                    "Masters will scope to this project from your "
+                    "next task."
+                )
+        except ValueError as e:
+            text = f"Couldn't switch: {e}"
+        except Exception as e:  # pragma: no cover — defensive
+            log.warning("telegram_project_command_failed", error=str(e))
+            text = f"Project command failed: {type(e).__name__}: {e}"
+
+        with contextlib.suppress(TelegramError, Exception):
+            await self._client.send_message(text)
 
     async def _ingest_photo(
         self, photos: list[Any], caption: str,
@@ -874,13 +1026,21 @@ class TelegramBridge:
         if not file_path:
             log.warning("telegram_get_file_no_path", file_id=file_id[:20])
             return None
-        if isinstance(size, int) and size > MAX_TELEGRAM_FILE_BYTES:
+        # Per-MIME size cap. Videos get the bigger ceiling because
+        # raw mp4 / mov uploads are routinely 30-50 MiB.
+        cap = (
+            MAX_TELEGRAM_VIDEO_BYTES
+            if mime.startswith("video/")
+            else MAX_TELEGRAM_FILE_BYTES
+        )
+        if isinstance(size, int) and size > cap:
             with contextlib.suppress(TelegramError, Exception):
                 await self._client.send_message(
                     f"That file is {size // (1024 * 1024)} MB which "
-                    "is bigger than I can read in chat (cap is 20 "
-                    "MB). Drop it in ~/PILK/workspace/ instead and "
-                    "tell me the filename.",
+                    f"is bigger than I can read in chat (cap is "
+                    f"{cap // (1024 * 1024)} MB). Drop it in "
+                    "~/PILK/workspace/ instead and tell me the "
+                    "filename.",
                 )
             return None
         try:
@@ -1241,6 +1401,20 @@ class TelegramBridge:
                         prompt,
                         attachments=attachments,
                         preferred_tier="light",
+                        # Telegram is a conversational surface — back-
+                        # and-forth chat, not a one-shot task launcher.
+                        # Suppressing both keeps replies on the Claude
+                        # subscription path: the cost-preflight banner
+                        # is irrelevant per turn, and the tool-capable
+                        # pre-check substring-matches the rolling chat
+                        # history that ``_compose_prompt`` folds into
+                        # the goal — once a past turn mentioned
+                        # ``api`` / ``automation`` / ``telegram`` etc.
+                        # every later reply would get bumped to the
+                        # API path. Real tool-needing turns still fall
+                        # back via ClaudeCodeToolUseUnsupportedError.
+                        suppress_cost_preflight=True,
+                        suppress_tool_capable_force=True,
                     ),
                     timeout=ORCHESTRATOR_WAIT_TIMEOUT_S,
                 )

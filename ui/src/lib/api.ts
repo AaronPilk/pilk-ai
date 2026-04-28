@@ -1,17 +1,59 @@
 import { getAccessToken } from "./session";
 
-// Resolve the pilkd base URL at build time. In a production Vite build
-// (Cloudflare Pages → app.pilk.ai), `VITE_PILK_API` points at the
-// Railway-hosted API. When running `npm run dev` on a laptop, the env
-// var is empty and we fall back to the local daemon on 127.0.0.1:7424,
-// preserving the pre-cloud developer loop.
-const API_URL =
-  (import.meta.env.VITE_PILK_API as string | undefined)?.replace(/\/$/, "") ??
-  "http://127.0.0.1:7424";
+function isLoopbackHost(host: string): boolean {
+  return (
+    host === "127.0.0.1" ||
+    host === "localhost" ||
+    host === "0.0.0.0"
+  );
+}
 
-const WS_URL =
-  (import.meta.env.VITE_PILK_WS as string | undefined) ??
-  "ws://127.0.0.1:7424/ws";
+function maybeRewriteLoopback(url: string): string {
+  if (typeof window === "undefined") return url;
+  const pageHost = window.location.hostname;
+  if (!pageHost || isLoopbackHost(pageHost)) return url;
+  try {
+    const u = new URL(url);
+    if (isLoopbackHost(u.hostname)) {
+      u.hostname = pageHost;
+      return u.toString();
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+
+function maybeUpgradeSecureContext(url: string): string {
+  if (typeof window === "undefined") return url;
+  if (window.location.protocol !== "https:") return url;
+  try {
+    const u = new URL(url);
+    if (u.protocol === "http:") {
+      u.protocol = "https:";
+      if (u.port === "7424") u.port = "7443";
+      return u.toString();
+    }
+    if (u.protocol === "ws:") {
+      u.protocol = "wss:";
+      if (u.port === "7424") u.port = "7443";
+      return u.toString();
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+
+const envApi = (import.meta.env.VITE_PILK_API as string | undefined)?.replace(/\/$/, "");
+const envWs = (import.meta.env.VITE_PILK_WS as string | undefined);
+
+const API_URL = maybeUpgradeSecureContext(
+  maybeRewriteLoopback(envApi ?? "http://127.0.0.1:7424"),
+);
+const WS_URL = maybeUpgradeSecureContext(
+  maybeRewriteLoopback(envWs ?? "ws://127.0.0.1:7424/ws"),
+);
 
 export { API_URL, WS_URL };
 

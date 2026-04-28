@@ -1,0 +1,53 @@
+name: daily_intelligence_brief
+description: |
+  Pull intelligence digest items from the last 24 hours and write a
+  consolidated brief into the brain. Operator-pulled — call POST
+  /workflows/daily_intelligence_brief/run when you want it. Does not
+  schedule itself.
+
+trigger: operator
+
+inputs:
+  - name: project_slug
+    description: Optional project to scope the brief to.
+    required: false
+  - name: min_score
+    description: Floor on relevance score (default 50).
+    required: false
+    default: 50
+  - name: since
+    description: ISO 8601 cutoff. Caller computes last 24h or 7d.
+    required: false
+
+steps:
+  - name: pull_digest
+    kind: tool
+    tool: intelligence_digest_read
+    description: Fetch newest scored items.
+    args:
+      since: "${inputs.since}"
+      project: "${inputs.project_slug}"
+      include_global: true
+      min_score: "${inputs.min_score}"
+      limit: 50
+
+  - name: write_note
+    kind: note
+    description: Save the brief into the brain.
+    path: "ingested/intel-brief/${run_id}.md"
+    body_template: |
+      ---
+      kind: intelligence_brief
+      run_id: ${run_id}
+      project: ${inputs.project_slug}
+      ---
+
+      # Daily intelligence brief
+
+      ${steps.pull_digest.text}
+
+success_criteria: |
+  pull_digest returned at least one item OR returned a clean empty
+  result. write_note succeeded.
+
+failure_behavior: stop

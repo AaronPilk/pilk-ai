@@ -32,6 +32,7 @@ from core.tools.builtin.pilk_state import (
     make_pilk_recent_changes_tool,
     make_pilk_registered_tools_tool,
 )
+from core.tools.builtin.document_studio import make_document_studio_tools
 from core.tools.builtin.print_design import PRINT_DESIGN_TOOLS
 from core.tools.builtin.sales_ops import (
     SALES_OPS_TOOLS,
@@ -89,6 +90,7 @@ __all__ = [
     "make_browser_tools",
     "make_code_task_tool",
     "make_delegate_to_agent_tool",
+    "make_document_studio_tools",
     "make_llm_ask_tool",
     "make_memory_delete_tool",
     "make_memory_list_tool",

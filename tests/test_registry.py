@@ -16,9 +16,13 @@ async def test_registry_discovers_shipped_agents(tmp_path: Path) -> None:
         manifests_dir=repo_root / "agents", db_path=settings.db_path
     )
     installed = await reg.discover_and_install()
-    assert "file_organization_agent" in installed
-    # Underscored folders are ignored.
+    assert "master_sales" in installed
+    assert "master_content" in installed
+    assert "master_brain" in installed
+    # Underscored folders are ignored (covers both _template and the
+    # archived specialists directory).
     assert "_template" not in installed
+    assert "_archive" not in installed
 
 
 @pytest.mark.asyncio

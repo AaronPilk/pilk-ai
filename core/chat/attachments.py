@@ -34,12 +34,15 @@ from core.logging import get_logger
 
 log = get_logger("pilkd.chat.attachments")
 
-AttachmentKind = Literal["image", "document", "text"]
+AttachmentKind = Literal["image", "document", "text", "video"]
 
 
 # Per-kind MIME allowlists. Anthropic's vision/document blocks accept
 # these directly; text kinds are base64-independent and are expanded
-# into plain text blocks at composition time.
+# into plain text blocks at composition time. Video kinds are stored
+# verbatim — they get analyzed via ``analyze_video_file`` (frame
+# extraction + Whisper + multimodal Claude), not sent inline to the
+# planner.
 _IMAGE_MIMES: frozenset[str] = frozenset(
     {"image/png", "image/jpeg", "image/gif", "image/webp"}
 )
@@ -54,10 +57,31 @@ _TEXT_MIMES: frozenset[str] = frozenset(
         "text/x-markdown",
     }
 )
+# Video MIMEs. Telegram sends video/mp4 by default; iPhone Safari
+# uploads video/quicktime for .mov; Android Chrome sends video/webm
+# for screen recordings. Anthropic vision can't ingest raw video so
+# these never go inline as image blocks — the analyze_video_file
+# tool handles them via the same pipeline as analyze_video_url.
+_VIDEO_MIMES: frozenset[str] = frozenset(
+    {
+        "video/mp4",
+        "video/quicktime",  # .mov from iPhone
+        "video/webm",
+        "video/x-m4v",
+        "video/3gpp",
+    }
+)
 
-# Hard size cap per file. Anthropic's per-request payload ceiling is
-# enforced at the API layer; here we stop obvious abuse at the door.
+# Hard size cap per non-video file. Videos get a higher ceiling
+# below — Anthropic's per-request payload ceiling is enforced at
+# the API layer; this stops obvious abuse at the door.
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20 MiB
+
+# Larger ceiling specifically for video uploads. A short Reel /
+# TikTok / phone-camera recording is typically 5–80 MiB; this cap
+# fits the common case and matches the analyze_video_url tool's
+# 300 MiB yt-dlp ceiling so the two paths feel symmetric.
+MAX_VIDEO_ATTACHMENT_BYTES = 250 * 1024 * 1024  # 250 MiB
 
 
 class AttachmentError(ValueError):
@@ -66,7 +90,12 @@ class AttachmentError(ValueError):
 
 def is_allowed_mime(mime: str) -> bool:
     base = (mime or "").split(";", 1)[0].strip().lower()
-    return base in _IMAGE_MIMES or base in _DOCUMENT_MIMES or base in _TEXT_MIMES
+    return (
+        base in _IMAGE_MIMES
+        or base in _DOCUMENT_MIMES
+        or base in _TEXT_MIMES
+        or base in _VIDEO_MIMES
+    )
 
 
 def attachment_kind_from_mime(mime: str) -> AttachmentKind:
@@ -77,7 +106,19 @@ def attachment_kind_from_mime(mime: str) -> AttachmentKind:
         return "document"
     if base in _TEXT_MIMES:
         return "text"
+    if base in _VIDEO_MIMES:
+        return "video"
     raise AttachmentError(f"unsupported attachment mime: {mime!r}")
+
+
+def size_cap_for_mime(mime: str) -> int:
+    """Per-MIME size limit. Video gets a higher ceiling because raw
+    short-form video (~30-90s phone recording) routinely runs 30–
+    150 MiB. Other kinds use the standard 20 MiB cap."""
+    base = (mime or "").split(";", 1)[0].strip().lower()
+    if base in _VIDEO_MIMES:
+        return MAX_VIDEO_ATTACHMENT_BYTES
+    return MAX_ATTACHMENT_BYTES
 
 
 @dataclass
@@ -127,12 +168,13 @@ class AttachmentStore:
     ) -> Attachment:
         if not payload:
             raise AttachmentError("empty upload")
-        if len(payload) > MAX_ATTACHMENT_BYTES:
+        base_mime = (mime or "application/octet-stream").split(";", 1)[0].strip().lower()
+        cap = size_cap_for_mime(base_mime)
+        if len(payload) > cap:
             raise AttachmentError(
                 f"attachment too large: {len(payload)} bytes "
-                f"(max {MAX_ATTACHMENT_BYTES})"
+                f"(max {cap})"
             )
-        base_mime = (mime or "application/octet-stream").split(";", 1)[0].strip().lower()
         if not is_allowed_mime(base_mime):
             raise AttachmentError(f"unsupported mime: {mime!r}")
         kind = attachment_kind_from_mime(base_mime)

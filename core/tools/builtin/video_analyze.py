@@ -516,8 +516,12 @@ def make_analyze_video_url_tool(
     return Tool(
         name="analyze_video_url",
         description=(
-            "Watch and analyze a public short-form video at a URL "
-            "(Instagram reel, TikTok, YouTube short, Twitter clip). "
+            "Watch and analyze a PUBLIC video at a URL (TikTok, "
+            "YouTube short, Twitter clip, public Instagram reel). "
+            "For private / login-walled content (most Instagram "
+            "Reels, gated TikToks, paid videos), the operator "
+            "downloads the file and uploads it to Telegram or chat "
+            "— that path goes through ``analyze_video_file`` instead. "
             "Downloads the video, samples one frame per second across "
             "the entire clip (so nothing visual is missed), "
             "transcribes the audio with Whisper, and asks Claude "
@@ -565,5 +569,271 @@ def make_analyze_video_url_tool(
             "required": ["url"],
         },
         risk=RiskClass.NET_READ,
+        handler=_handler,
+    )
+
+
+def make_analyze_video_file_tool(
+    anthropic_client: AsyncAnthropic,
+    *,
+    attachment_store: Any,
+    openai_api_key: str | None = None,
+    analysis_model: str = DEFAULT_ANALYSIS_MODEL,
+    duration_prober: DurationProber | None = None,
+    frame_extractor: FrameExtractor | None = None,
+    audio_extractor: AudioExtractor | None = None,
+    transcriber: Transcriber | None = None,
+    analyzer: VideoAnalyzer | None = None,
+) -> Tool:
+    """Sibling of ``make_analyze_video_url_tool`` that runs the same
+    frame + audio + Claude pipeline against an UPLOADED video file
+    (Telegram bridge stash, web chat upload). Bypasses yt-dlp; the
+    file already exists locally in the attachment store.
+
+    The operator's mental model: "I downloaded the Reel because IG
+    won't let you watch it through the API → I drop it on Telegram
+    → PILK watches it." That flow needs THIS tool.
+    """
+    probe_duration = duration_prober or _default_probe_duration
+    frames = frame_extractor or _default_extract_frames
+    audio = audio_extractor or _default_extract_audio
+    api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+    transcribe = transcriber or _make_default_transcriber(api_key)
+    analyze = analyzer or _make_default_analyzer(
+        anthropic_client, analysis_model,
+    )
+
+    async def _handler(args: dict, ctx: ToolContext) -> ToolOutcome:
+        attachment_id = str(args.get("attachment_id") or "").strip()
+        if not attachment_id:
+            return ToolOutcome(
+                content=(
+                    "analyze_video_file needs an 'attachment_id'. "
+                    "When the operator uploads a video to Telegram "
+                    "or chat, the bridge surfaces the id in your "
+                    "context — pass that id here."
+                ),
+                is_error=True,
+            )
+        if attachment_store is None:
+            return ToolOutcome(
+                content=(
+                    "Attachment store isn't wired on this daemon — "
+                    "uploads can't be analyzed yet."
+                ),
+                is_error=True,
+            )
+        # Locate the uploaded file. The store exposes ``resolve_many``
+        # which returns Attachment objects with their on-disk path.
+        try:
+            resolved = attachment_store.resolve_many([attachment_id])
+        except Exception as e:  # pragma: no cover — defensive
+            return ToolOutcome(
+                content=(
+                    f"Couldn't find attachment {attachment_id}: "
+                    f"{type(e).__name__}: {e}"
+                ),
+                is_error=True,
+            )
+        if not resolved:
+            return ToolOutcome(
+                content=(
+                    f"Attachment {attachment_id} not found. The file "
+                    "may have been cleaned up after the chat session "
+                    "ended — ask the operator to re-upload."
+                ),
+                is_error=True,
+            )
+        attachment = resolved[0]
+        if attachment.kind != "video":
+            return ToolOutcome(
+                content=(
+                    f"Attachment {attachment_id} is a "
+                    f"{attachment.kind}, not a video. "
+                    "analyze_video_file only handles uploaded "
+                    "video files (mp4 / mov / webm)."
+                ),
+                is_error=True,
+            )
+        video_path = attachment.path
+        if not video_path.is_file():
+            return ToolOutcome(
+                content=(
+                    f"Attachment {attachment_id} is missing on "
+                    f"disk at {video_path}. Re-upload and try again."
+                ),
+                is_error=True,
+            )
+
+        question = str(args.get("question") or DEFAULT_QUESTION).strip()
+        raw_frames = args.get("n_frames")
+        if raw_frames is None:
+            n_frames = DEFAULT_FRAMES
+        else:
+            try:
+                n_frames = int(raw_frames)
+            except (TypeError, ValueError):
+                n_frames = DEFAULT_FRAMES
+            n_frames = (
+                max(1, min(n_frames, MAX_FRAMES))
+                if n_frames > 0
+                else DEFAULT_FRAMES
+            )
+
+        # Frames + audio extraction need their own tmpdir; the source
+        # video itself stays in the attachment store (no copy needed,
+        # ffmpeg reads it directly).
+        tmpdir = Path(tempfile.mkdtemp(prefix="pilk-video-file-"))
+        try:
+            try:
+                duration_s = await probe_duration(video_path)
+            except Exception:
+                log.exception(
+                    "video_file_duration_probe_failed",
+                    attachment_id=attachment_id,
+                )
+                duration_s = 0.0
+            if duration_s > MAX_VIDEO_SECONDS:
+                return ToolOutcome(
+                    content=(
+                        f"Uploaded video is {duration_s:.0f}s long, "
+                        f"over the {MAX_VIDEO_SECONDS}s ({MAX_VIDEO_SECONDS // 60}-minute) "
+                        "cap for analysis. Trim it down or chunk it "
+                        "before re-uploading."
+                    ),
+                    is_error=True,
+                )
+            frames_dir = tmpdir / "frames"
+            try:
+                frame_paths = await frames(
+                    video_path, frames_dir, n_frames, duration_s,
+                )
+            except Exception as e:
+                log.exception(
+                    "video_file_frame_extract_failed",
+                    attachment_id=attachment_id,
+                )
+                return ToolOutcome(
+                    content=(
+                        f"Couldn't extract frames from the uploaded "
+                        f"video. {type(e).__name__}: {e}. The file "
+                        "may be corrupted or use an unsupported codec."
+                    ),
+                    is_error=True,
+                )
+            if not frame_paths:
+                return ToolOutcome(
+                    content=(
+                        "ffmpeg returned zero frames — the upload may "
+                        "be corrupted or have an unsupported codec."
+                    ),
+                    is_error=True,
+                )
+
+            transcript = ""
+            try:
+                audio_path = await audio(video_path, tmpdir)
+                if audio_path is not None and api_key:
+                    transcript = await transcribe(audio_path)
+            except Exception:
+                log.exception(
+                    "video_file_audio_pipeline_failed",
+                    attachment_id=attachment_id,
+                )
+                transcript = ""
+
+            try:
+                analysis = await analyze(
+                    frame_paths, transcript, question,
+                )
+            except Exception as e:
+                log.exception(
+                    "video_file_analyze_call_failed",
+                    attachment_id=attachment_id,
+                )
+                return ToolOutcome(
+                    content=(
+                        f"Frames were extracted but the analysis "
+                        f"call failed: {type(e).__name__}: {e}."
+                    ),
+                    is_error=True,
+                )
+
+            log.info(
+                "video_file_analyze_completed",
+                attachment_id=attachment_id,
+                filename=attachment.filename,
+                frames=len(frame_paths),
+                transcript_chars=len(transcript),
+                duration_s=duration_s,
+                model=analysis_model,
+            )
+            return ToolOutcome(
+                content=analysis,
+                data={
+                    "attachment_id": attachment_id,
+                    "filename": attachment.filename,
+                    "frames_used": len(frame_paths),
+                    "transcript_chars": len(transcript),
+                    "model": analysis_model,
+                    "had_audio": bool(transcript),
+                    "duration_s": duration_s,
+                },
+            )
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return Tool(
+        name="analyze_video_file",
+        description=(
+            "Watch and analyze a video the operator UPLOADED (via "
+            "Telegram, web chat, or any attachment surface). Use this "
+            "whenever the inbound message includes an 'attachment_id' "
+            "for a video file — typically because the operator hit a "
+            "login-walled platform (Instagram Reels, gated TikToks, "
+            "paid courses, private DMs) and downloaded the clip "
+            "manually before sending it. Same pipeline as "
+            "``analyze_video_url`` (1 fps frame sampling, Whisper "
+            "transcript, multimodal Claude vision call) but skips the "
+            "yt-dlp download step since the file is already local. "
+            "Auto-allowed: the file is in PILK's own temp store and "
+            "gets cleaned with the rest of the chat session."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "attachment_id": {
+                    "type": "string",
+                    "description": (
+                        "The attachment id surfaced by the bridge "
+                        "when the operator uploaded the video. "
+                        "Look for it in the inbound message's "
+                        "context (e.g. '[Uploaded video, "
+                        "attachment id abc123…]')."
+                    ),
+                },
+                "question": {
+                    "type": "string",
+                    "description": (
+                        "Optional — what specifically the operator "
+                        "wants to know about this video. Defaults to "
+                        "'summarize + flag actionable ideas'."
+                    ),
+                },
+                "n_frames": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_FRAMES,
+                    "description": (
+                        "Optional — pin a specific frame count. "
+                        "Default 0 means 'auto: 1 fps with a "
+                        f"{MAX_FRAMES}-frame ceiling for longer "
+                        "clips'."
+                    ),
+                },
+            },
+            "required": ["attachment_id"],
+        },
+        risk=RiskClass.READ,
         handler=_handler,
     )

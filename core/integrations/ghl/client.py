@@ -761,8 +761,10 @@ def client_from_settings() -> GHLClient:
     key = resolve_secret("ghl_api_key", settings.ghl_api_key)
     if not key:
         raise GHLNotConfiguredError(
-            "ghl_api_key is not set — add an agency PIT in "
-            "Settings → API Keys."
+            "ghl_api_key is not set — paste a GHL Private Integration "
+            "Token in Settings → API Keys. Either an agency PIT or a "
+            "sub-account custom integration key works; the sub-account "
+            "key is the recommended default."
         )
     return GHLClient(api_key=key, api_base=settings.ghl_api_base)
 

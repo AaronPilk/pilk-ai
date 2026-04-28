@@ -45,15 +45,27 @@ def test_is_allowed_mime_strips_charset_parameters() -> None:
 
 
 def test_is_allowed_mime_rejects_random_types() -> None:
+    # Videos became allowed in 2026-04 with the analyze_video_file tool
+    # — they take a separate (larger) size cap. Other unknown types
+    # still bounce.
     assert is_allowed_mime("application/zip") is False
-    assert is_allowed_mime("video/mp4") is False
+    assert is_allowed_mime("application/x-msdownload") is False
+    assert is_allowed_mime("audio/mpeg") is False
     assert is_allowed_mime("") is False
+
+
+def test_is_allowed_mime_accepts_video() -> None:
+    assert is_allowed_mime("video/mp4") is True
+    assert is_allowed_mime("video/quicktime") is True
+    assert is_allowed_mime("video/webm") is True
 
 
 def test_attachment_kind_from_mime_maps_correctly() -> None:
     assert attachment_kind_from_mime("image/png") == "image"
     assert attachment_kind_from_mime("application/pdf") == "document"
     assert attachment_kind_from_mime("text/markdown") == "text"
+    assert attachment_kind_from_mime("video/mp4") == "video"
+    assert attachment_kind_from_mime("video/quicktime") == "video"
 
 
 def test_attachment_kind_from_mime_rejects_unknown() -> None:

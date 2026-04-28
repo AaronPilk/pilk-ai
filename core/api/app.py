@@ -37,6 +37,8 @@ from core.api.routes.cost import router as cost_router
 from core.api.routes.governor import router as governor_router
 from core.api.routes.health import router as health_router
 from core.api.routes.integration_secrets import router as integration_secrets_router
+from core.api.routes.intelligence import router as intelligence_router
+from core.api.routes.projects import router as projects_router
 from core.api.routes.integrations import router as integrations_router
 from core.api.routes.logs import router as logs_router
 from core.api.routes.memory import router as memory_router
@@ -44,7 +46,11 @@ from core.api.routes.migration import router as migration_router
 from core.api.routes.persona import router as persona_router
 from core.api.routes.plans import router as plans_router
 from core.api.routes.sandboxes import router as sandboxes_router
+from core.api.routes.alerts import router as alerts_router
+from core.api.routes.ingest import router as ingest_router
+from core.api.routes.safety import router as safety_router
 from core.api.routes.sentinel import router as sentinel_router
+from core.api.routes.workflows import router as workflows_router
 from core.api.routes.supabase import router as supabase_router
 from core.api.routes.system_status import router as system_status_router
 from core.api.routes.telegram import router as telegram_router
@@ -114,7 +120,7 @@ from core.secrets import (
     IntegrationSecretsStore,
     set_integration_secrets_store,
 )
-from core.sentinel import HeartbeatStore, IncidentStore, Supervisor
+from core.sentinel import BUILTIN_RULES, HeartbeatStore, IncidentStore, Supervisor
 from core.sentinel.notify import Notifier as SentinelNotifier
 from core.sentinel.remediate import RemediationResult
 from core.supabase import SupabaseClient
@@ -129,6 +135,7 @@ from core.tools.builtin import (
     META_ADS_TOOLS,
     PRINT_DESIGN_TOOLS,
     SALES_OPS_TOOLS,
+    make_document_studio_tools,
     TELEGRAM_TOOLS,
     UGC_TOOLS,
     XAUUSD_TOOLS,
@@ -251,6 +258,20 @@ async def lifespan(app: FastAPI):
     hub = Hub()
     ledger = Ledger(settings.db_path)
     plans = PlanStore(settings.db_path)
+    # Recover any plans left mid-run by a previous daemon (crash,
+    # SIGKILL, hard restart). They get marked failed so the dashboard
+    # stops showing phantom "running" plans and the ``stuck_task``
+    # Sentinel rule's signal isn't polluted by zombies.
+    try:
+        recovered = await plans.recover_orphaned_plans()
+        if recovered:
+            log.info(
+                "orphaned_plans_recovered",
+                count=len(recovered),
+                plan_ids=recovered,
+            )
+    except Exception as e:  # pragma: no cover - defensive, never fatal
+        log.warning("orphaned_plan_recovery_failed", error=str(e))
     memory = MemoryStore(settings.db_path)
     # User-managed API keys for external integrations — read by tools
     # via `core.secrets.resolve_secret()` with env-var fallback, and
@@ -398,6 +419,19 @@ async def lifespan(app: FastAPI):
     for t in UGC_TOOLS:
         registry.register(t)
     log.info("ugc_registered", tools=[t.name for t in UGC_TOOLS])
+
+    # Document Studio — markdown → email-safe HTML and markdown → PDF.
+    # Eliminates the "PILK emailed me a wall of unrendered #/* chars"
+    # failure mode. PDF rendering needs Pango (brew install pango on
+    # macOS); the handler returns a clean "install pango" message if
+    # the dylib isn't found rather than crashing the daemon.
+    DOCUMENT_STUDIO_TOOLS = make_document_studio_tools()
+    for t in DOCUMENT_STUDIO_TOOLS:
+        registry.register(t)
+    log.info(
+        "document_studio_registered",
+        tools=[t.name for t in DOCUMENT_STUDIO_TOOLS],
+    )
 
     # Telegram notification toolkit — every agent (and PILK itself)
     # can push to the operator without waiting for a chat turn. COMMS
@@ -740,6 +774,21 @@ async def lifespan(app: FastAPI):
         brain.ensure_initialized()
     except OSError as e:
         log.warning("brain_vault_init_failed", path=str(brain.root), error=str(e))
+    # Project scoping. Every master agent reads from the active
+    # project's folder under the brain. Manager auto-creates the
+    # ``default`` project on first boot so the system works without
+    # explicit project setup.
+    from core.projects import ProjectsManager
+
+    projects_manager = ProjectsManager(
+        brain_root=brain.root,
+        state_dir=settings.home / "state",
+    )
+    log.info(
+        "projects_ready",
+        active=projects_manager.active_slug,
+        total=len(projects_manager.list()),
+    )
     for t in make_brain_tools(brain):
         registry.register(t)
     # Ingesters share the same Vault + write to the same tree, so
@@ -913,6 +962,7 @@ async def lifespan(app: FastAPI):
             vault=brain,
             integration_secrets=integration_secrets,
             accounts=accounts,
+            projects=projects_manager,
         )
         log.info(
             "orchestrator_ready",
@@ -979,12 +1029,27 @@ async def lifespan(app: FastAPI):
                 message=f"restart failed: {e}",
             )
 
+    # Intelligence Engine source-health rule (Batch 3B). Built here
+    # with the live db_path + failure threshold so the rule has its
+    # own settings without touching the Sentinel RuleContext shape.
+    # If the intel_sources table doesn't exist yet (pre-v9 DBs, test
+    # fixtures), the rule degrades to a no-op rather than crashing.
+    from core.intelligence.sentinel_rules import (
+        make_intel_source_health_rule,
+    )
+
+    intel_source_health_rule = make_intel_source_health_rule(
+        db_path=settings.db_path,
+        threshold=settings.intelligence_failure_backoff_after,
+    )
+
     sentinel = Supervisor(
         heartbeats=sentinel_heartbeats,
         incidents=sentinel_incidents,
         notifier=SentinelNotifier(),
         restart_fn=_sentinel_restart,
         logs_dir=settings.logs_dir,
+        rules=[*BUILTIN_RULES, intel_source_health_rule],
         llm_call=None,  # triage starts on heuristic fallback; wire
                         # Haiku via the governor in a follow-up once
                         # we've observed a day of real findings and
@@ -1089,6 +1154,7 @@ async def lifespan(app: FastAPI):
             except Exception:
                 return (True, [])
             missing: list[str] = []
+            has_ghl_tool = any(t.startswith("ghl_") for t in manifest.tools)
             for spec in manifest.integrations:
                 if spec.kind == "api_key":
                     # env var fallback first — several providers
@@ -1108,6 +1174,18 @@ async def lifespan(app: FastAPI):
                     acct = accounts.resolve_binding(binding)
                     if acct is None:
                         missing.append(spec.label or spec.name)
+            # GHL tooling needs both the API key and a default location.
+            # Several manifests only declare the key in ``integrations``,
+            # so without this guard a trigger can pass readiness and then
+            # fail every run with "no location_id configured".
+            if has_ghl_tool:
+                loc = (
+                    os.getenv("GHL_DEFAULT_LOCATION_ID")
+                    or os.getenv("PILK_GHL_DEFAULT_LOCATION_ID")
+                    or integration_secrets.get_value("ghl_default_location_id")
+                )
+                if not loc:
+                    missing.append("GHL default location ID")
             return (len(missing) == 0, missing)
 
         trigger_scheduler = TriggerScheduler(
@@ -1252,7 +1330,11 @@ async def lifespan(app: FastAPI):
 
             hub.subscribe(listener)
             try:
-                await orchestrator.run(text)
+                await orchestrator.run(
+                    text,
+                    preferred_tier="light",
+                    suppress_cost_preflight=True,
+                )
             finally:
                 hub.unsubscribe(listener)
             return captured.get("text") or ""
@@ -1317,8 +1399,211 @@ async def lifespan(app: FastAPI):
     app.state.providers = providers
     app.state.memory = memory
     app.state.brain = brain
+    app.state.projects = projects_manager
     app.state.computer_control = computer_control_gate
     app.state.integration_secrets = integration_secrets
+
+    # Intelligence Engine (Batch 2 — backend only). Wires the
+    # SQLite-backed services + pipeline + optional daemon. The
+    # daemon is **OFF by default** and stays a no-op until the
+    # operator flips PILK_INTELLIGENCE_DAEMON_ENABLED=true. Manual
+    # refresh, CRUD, and source testing all work regardless. New
+    # code; cannot affect any existing subsystem on init.
+    from core.intelligence import ItemStore, SourceRegistry, TopicRegistry
+    from core.intelligence.daemon import build_daemon
+    from core.intelligence.pipeline import IntelligencePipeline
+
+    app.state.intel_sources = SourceRegistry(settings.db_path)
+    app.state.intel_topics = TopicRegistry(settings.db_path)
+    app.state.intel_items = ItemStore(settings.db_path)
+    app.state.intel_pipeline = IntelligencePipeline(
+        sources=app.state.intel_sources,
+        topics=app.state.intel_topics,
+        items=app.state.intel_items,
+        brain=brain,
+        brain_write_threshold=settings.intelligence_brain_write_threshold,
+    )
+    app.state.intel_daemon = build_daemon(
+        db_path=settings.db_path,
+        settings=settings,
+        pipeline=app.state.intel_pipeline,
+        sources=app.state.intel_sources,
+    )
+    # ``start()`` is a no-op when settings.intelligence_daemon_enabled
+    # is False — safe to call unconditionally. No background task,
+    # no network calls, no clock work happens unless the operator
+    # explicitly opted in.
+    await app.state.intel_daemon.start()
+    log.info(
+        "intelligence_ready",
+        batch=2,
+        daemon_enabled=settings.intelligence_daemon_enabled,
+        brain_write_threshold=settings.intelligence_brain_write_threshold,
+    )
+
+    # Read-only ``intelligence_digest_read`` tool — exposes the
+    # ``ItemStore.digest`` query surface to delegated agents (Master
+    # Reporting in particular) so they can build daily / weekly
+    # intelligence briefs when the operator asks. Risk class READ;
+    # no writes possible through this tool.
+    from core.intelligence.tools import (
+        make_intelligence_digest_read_tool,
+    )
+
+    registry.register(
+        make_intelligence_digest_read_tool(settings.db_path)
+    )
+    log.info("intelligence_digest_read_registered")
+
+    # Vector brain — semantic retrieval layer over the markdown vault.
+    # Wired conditionally on a real embedding key being present. When
+    # no key is set (typical in CI / fresh installs), the search tool
+    # is intentionally NOT registered — the existing keyword-based
+    # ``brain_search`` continues to work, and ``brain_semantic_search``
+    # only appears when it can actually serve a query. Indexing is
+    # operator-pulled (no daemon) — exposed via POST /brain/reindex.
+    from core.brain.vector import (
+        LocalSQLiteVectorStore,
+        SemanticSearch,
+        make_embedder,
+    )
+    from core.brain.vector.indexer import Indexer
+    from core.brain.vector.tool import make_brain_semantic_search_tool
+
+    vector_store = LocalSQLiteVectorStore(settings.db_path)
+    embedder_key = (
+        integration_secrets.get_value("openai_api_key")
+        or settings.openai_api_key
+    )
+    if embedder_key:
+        try:
+            embedder = make_embedder(api_key=embedder_key)
+            semantic_search = SemanticSearch(
+                embedder=embedder, store=vector_store,
+            )
+            registry.register(
+                make_brain_semantic_search_tool(semantic_search)
+            )
+            app.state.vector_embedder = embedder
+            app.state.vector_store = vector_store
+            app.state.semantic_search = semantic_search
+            app.state.brain_indexer = Indexer(
+                brain_root=settings.brain_vault_path,
+                embedder=embedder,
+                store=vector_store,
+                ledger=ledger,
+            )
+            log.info(
+                "vector_brain_ready",
+                model=embedder.model,
+                dim=embedder.dim,
+            )
+        except Exception as e:  # noqa: BLE001 — defensive
+            log.warning(
+                "vector_brain_init_failed", error=str(e),
+            )
+            app.state.vector_embedder = None
+            app.state.vector_store = vector_store
+            app.state.semantic_search = None
+            app.state.brain_indexer = None
+    else:
+        log.info(
+            "vector_brain_skipped",
+            reason="no_openai_api_key",
+        )
+        app.state.vector_embedder = None
+        app.state.vector_store = vector_store
+        app.state.semantic_search = None
+        app.state.brain_indexer = None
+
+    # Proactive alerts foundation. Storage + settings + router are
+    # safe to wire unconditionally — every default route is silent
+    # or digest. Telegram pushes only fire when the operator
+    # explicitly enables them via PUT /alerts/settings.
+    from core.alerts import (
+        AlertRouter,
+        AlertSettings,
+        AlertStore,
+    )
+    from core.alerts.settings import TopicOverrideStore
+
+    alert_settings_store = AlertSettings(settings.db_path)
+    alert_store = AlertStore(settings.db_path)
+    alert_topic_overrides = TopicOverrideStore(settings.db_path)
+    alert_router = AlertRouter(
+        store=alert_store,
+        settings=alert_settings_store,
+        topic_overrides=alert_topic_overrides,
+        global_quiet_hours_local=settings.quiet_hours_local,
+        global_quiet_hours_tz=settings.quiet_hours_tz,
+    )
+    app.state.alert_settings = alert_settings_store
+    app.state.alert_store = alert_store
+    app.state.alert_topic_overrides = alert_topic_overrides
+    app.state.alert_router = alert_router
+    log.info("alerts_router_ready")
+
+    # File ingestion pipeline. Operator-pulled by default — the
+    # watcher (when added) is opt-in via a setting. The ingest
+    # surface re-uses the existing brain Vault and (when present)
+    # the vector indexer, so a single drop produces a markdown note
+    # plus a fresh semantic embedding.
+    from core.brain import Vault
+    from core.ingest import IngestPipeline, IngestRegistry
+
+    ingest_inbox = settings.home / "inbox"
+    ingest_inbox.mkdir(parents=True, exist_ok=True)
+    ingest_archive = ingest_inbox / "archive"
+    ingest_failed = ingest_inbox / "failed"
+    ingest_archive.mkdir(parents=True, exist_ok=True)
+    ingest_failed.mkdir(parents=True, exist_ok=True)
+    ingest_registry = IngestRegistry(settings.db_path)
+    ingest_pipeline = IngestPipeline(
+        registry=ingest_registry,
+        vault=Vault(settings.brain_vault_path),
+        archive_dir=ingest_archive,
+        failed_dir=ingest_failed,
+        indexer=app.state.brain_indexer,
+    )
+    app.state.ingest_inbox_dir = ingest_inbox
+    app.state.ingest_registry = ingest_registry
+    app.state.ingest_pipeline = ingest_pipeline
+    log.info(
+        "ingest_pipeline_ready",
+        inbox=str(ingest_inbox),
+        indexer_wired=app.state.brain_indexer is not None,
+    )
+
+    # Workflow engine — load YAML manifests from workflows/ at boot,
+    # wire the engine, and expose the API. No workflow auto-fires;
+    # the operator triggers a run via POST /workflows/{name}/run.
+    from core.workflows import (
+        WorkflowEngine,
+        WorkflowStore,
+        load_all_workflows,
+    )
+
+    workflow_root = Path(__file__).resolve().parents[2] / "workflows"
+    workflow_store = WorkflowStore(settings.db_path)
+    workflows_loaded = load_all_workflows(workflow_root)
+    workflow_engine = WorkflowEngine(
+        store=workflow_store,
+        registry=registry,
+        gateway=gateway,
+        vault=Vault(settings.brain_vault_path),
+        orchestrator=None,  # wired post-boot if needed
+    )
+    app.state.workflow_root = workflow_root
+    app.state.workflow_store = workflow_store
+    app.state.workflow_engine = workflow_engine
+    app.state.workflow_registry = {
+        w.name: w for w in workflows_loaded
+    }
+    log.info(
+        "workflows_ready",
+        count=len(workflows_loaded),
+        names=[w.name for w in workflows_loaded],
+    )
     app.state.xauusd_settings = xauusd_settings
     app.state.clients = clients
     app.state.sentinel = sentinel
@@ -1345,6 +1630,29 @@ async def lifespan(app: FastAPI):
     chat_attachments = AttachmentStore(home)
     chat_attachments.ensure_layout()
     app.state.chat_attachments = chat_attachments
+
+    # analyze_video_file — sibling of analyze_video_url that runs the
+    # frame + Whisper + multimodal Claude pipeline against an UPLOADED
+    # video instead of a URL. Registered here (not next to the URL
+    # tool above) because it needs the attachment_store reference to
+    # resolve ids → paths, and the store is only available at this
+    # point in the lifespan.
+    if settings.anthropic_api_key:
+        from core.tools.builtin.video_analyze import (
+            make_analyze_video_file_tool,
+        )
+
+        registry.register(
+            make_analyze_video_file_tool(
+                anthropic_client=client,
+                attachment_store=chat_attachments,
+                openai_api_key=settings.openai_api_key,
+            )
+        )
+        log.info(
+            "analyze_video_file_registered",
+            whisper_configured=bool(settings.openai_api_key),
+        )
 
     # Telegram chat bridge — long-polls getUpdates and feeds inbound
     # messages into the orchestrator. Only starts when both bot token
@@ -1462,6 +1770,8 @@ async def lifespan(app: FastAPI):
         if trigger_scheduler is not None:
             await trigger_scheduler.stop()
         await timer_daemon.stop()
+        if getattr(app.state, "intel_daemon", None) is not None:
+            await app.state.intel_daemon.stop()
         if getattr(app.state, "voice_bridge", None) is not None:
             await app.state.voice_bridge.stop()
         if telegram_bridge is not None:
@@ -1519,10 +1829,16 @@ def create_app() -> FastAPI:
     app.include_router(persona_router)
     app.include_router(migration_router)
     app.include_router(integration_secrets_router)
+    app.include_router(projects_router)
+    app.include_router(intelligence_router)
     app.include_router(chat_uploads_router)
     app.include_router(xauusd_settings_router)
     app.include_router(logs_router)
     app.include_router(sentinel_router)
+    app.include_router(alerts_router)
+    app.include_router(ingest_router)
+    app.include_router(safety_router)
+    app.include_router(workflows_router)
     app.include_router(coding_http_router)
     app.include_router(supabase_router)
     app.include_router(ws_router)

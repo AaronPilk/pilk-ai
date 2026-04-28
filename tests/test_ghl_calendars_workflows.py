@@ -787,7 +787,7 @@ async def test_401_rewritten_to_pit_hint_on_calendar_list(
     _install_transport(handler)
     out = await _get("ghl_calendar_list").handler({}, ToolContext())
     assert out.is_error
-    assert "agency pit" in out.content.lower()
+    assert "private integration" in out.content.lower()
 
 
 @pytest.mark.asyncio

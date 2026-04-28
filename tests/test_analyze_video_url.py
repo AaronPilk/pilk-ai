@@ -428,9 +428,10 @@ async def test_transcription_failure_falls_back_to_visuals() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_openai_key_skips_transcription() -> None:
+async def test_no_openai_key_skips_transcription(monkeypatch) -> None:
     """Without an OpenAI key, the tool runs visuals-only and
     never calls the transcriber even if audio is present."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     seams = _make_seams()
     tool = _make_tool(seams, openai_api_key=None)
     out = await tool.handler(

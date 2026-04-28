@@ -25,6 +25,7 @@ import { isCloudMode } from "../lib/supabase";
 import { signOutAndReturnToPortal } from "../lib/AuthGate";
 import { useTheme } from "../lib/theme";
 import VoiceOrb from "./VoiceOrb";
+import ProjectSwitcher from "./ProjectSwitcher";
 
 // Poll interval for the Claude Max usage bar. Every 30s is plenty —
 // plan turns fire a cost.updated event that forces a live refresh
@@ -124,6 +125,7 @@ export default function TopBar({ navOpen, onToggleNav }: TopBarProps = {}) {
           <span className="topbar-conn-label">PILKD</span>
           <span className="topbar-conn-state">{status}</span>
         </span>
+        <ProjectSwitcher />
       </div>
       <div className="topbar-right">
         {running > 0 && (

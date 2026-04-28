@@ -109,6 +109,49 @@ class Ledger:
             await conn.commit()
         return usd
 
+    async def record_embedding(
+        self,
+        *,
+        model: str,
+        input_tokens: int,
+        usd: float,
+        agent_name: str | None = None,
+        plan_id: str | None = None,
+        step_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> float:
+        """Persist one embedding-batch's cost row.
+
+        Embeddings are conceptually similar to LLM calls (provider
+        + model + tokens → USD) but they have no output tokens and
+        no per-plan attribution by default. Kept as ``kind='embedding'``
+        in ``cost_entries`` so the Cost tab can pivot on it without
+        confusing it with chat LLM spend.
+        """
+        meta = dict(metadata or {})
+        async with connect(self.db_path) as conn:
+            await conn.execute(
+                """
+                INSERT INTO cost_entries
+                  (plan_id, step_id, agent_name, kind, model,
+                   input_tokens, output_tokens, usd, occurred_at,
+                   metadata_json)
+                VALUES (?, ?, ?, 'embedding', ?, ?, 0, ?, ?, ?)
+                """,
+                (
+                    plan_id,
+                    step_id,
+                    agent_name,
+                    model,
+                    int(input_tokens),
+                    float(usd),
+                    datetime.now(UTC).isoformat(),
+                    json.dumps(meta),
+                ),
+            )
+            await conn.commit()
+        return float(usd)
+
     async def subscription_usage(
         self, *, window_hours: int = 5,
     ) -> dict[str, Any]:

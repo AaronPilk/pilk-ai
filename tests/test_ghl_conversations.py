@@ -536,7 +536,7 @@ async def test_send_sms_401_rewritten_to_pit_hint(
         ToolContext(),
     )
     assert out.is_error
-    assert "agency pit" in out.content.lower()
+    assert "private integration" in out.content.lower()
 
 
 @pytest.mark.asyncio

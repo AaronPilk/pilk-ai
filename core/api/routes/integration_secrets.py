@@ -63,13 +63,16 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         "env": "NOTION_API_KEY",
     },
     "ghl_api_key": {
-        "label": "Go High Level — agency PIT",
+        "label": "Go High Level — Private Integration Token",
         "description": (
-            "Agency-level Private Integration Token from GHL "
-            "(Settings → Company → Private Integrations). Check "
-            "EVERY scope box when issuing — the token represents "
-            "PILK's full access across every sub-account the agency "
-            "owns. Shown once; copy and paste here."
+            "Either an agency-level PIT (Settings → Company → Private "
+            "Integrations on the agency) OR a sub-account custom "
+            "integration key (Settings → Integrations → Private "
+            "Integrations inside the sub-account). The sub-account "
+            "key is the safer default — it scopes PILK to one "
+            "location instead of the whole agency. Check every scope "
+            "box you want PILK to use when issuing the token. Shown "
+            "once; copy and paste here."
         ),
         "env": "GHL_API_KEY",
     },
@@ -77,9 +80,11 @@ KNOWN_SECRETS: dict[str, dict[str, str | None]] = {
         "label": "Go High Level — default location id",
         "description": (
             "Default sub-account (location) id PILK operates in when "
-            "a tool call doesn't specify one. Grab the 24-char id "
-            "from any sub-account URL: "
-            "https://app.gohighlevel.com/location/<id>/…"
+            "a tool call doesn't specify one. Grab it from the URL of "
+            "the sub-account: https://app.gohighlevel.com/location/"
+            "<id>/… — paste the value between /location/ and the next "
+            "slash. Length varies by tenant (typically 20 chars for "
+            "current sub-accounts; older ones may be longer)."
         ),
         "env": "GHL_DEFAULT_LOCATION_ID",
     },
@@ -492,6 +497,7 @@ async def list_secrets(request: Request) -> dict:
             "env": meta["env"],
             "configured": name in have,
             "updated_at": have.get(name),
+            "testable": name in _TESTERS,
         }
         for name, meta in KNOWN_SECRETS.items()
     ]
@@ -552,3 +558,383 @@ async def delete_secret(name: str, request: Request) -> dict:
     removed = store.delete(name)
     log.info("integration_secret_deleted", name=name, existed=removed)
     return {"name": name, "configured": False, "removed": removed}
+
+
+# Names that have a real connection-test we can run. Each entry maps
+# to an async function that returns ``(ok: bool, message: str)``. Any
+# name not in this map returns 400 from the test endpoint — the UI
+# uses ``testable`` on the list response to decide whether to render
+# the Test button at all.
+async def _test_ghl(_store: IntegrationSecretsStore) -> tuple[bool, str]:
+    """Cheap GHL connectivity check: list pipelines for the default
+    location. 200 = token + location both work. 401 = bad token.
+    404 / empty = bad location id."""
+    from core.integrations.ghl.client import (
+        GHLError,
+        GHLNotConfiguredError,
+        client_from_settings,
+        resolve_location_id,
+    )
+    from core.integrations.ghl.tools import _default_location
+
+    try:
+        client = client_from_settings()
+    except GHLNotConfiguredError as e:
+        return False, str(e)
+
+    try:
+        loc = resolve_location_id(arg=None, default=_default_location())
+    except GHLError:
+        return False, (
+            "No default location id configured. Paste the sub-account "
+            "id (the value between /location/ and the next slash in "
+            "your GHL URL — typically 20 chars) into the location id "
+            "field above."
+        )
+
+    try:
+        result = await client.pipelines_list(location_id=loc)
+    except GHLError as e:
+        if e.status == 401:
+            return False, (
+                "GHL rejected the token (401 Unauthorized). The key is "
+                "either invalid, expired, or doesn't have the scopes "
+                "PILK needs. Re-issue with every relevant scope checked."
+            )
+        if e.status == 403:
+            return False, (
+                "GHL refused the request (403). The token is missing "
+                "a scope, or this sub-account isn't reachable from "
+                "this token."
+            )
+        if e.status == 404:
+            return False, (
+                f"Location id '{loc}' not found. Double-check it's "
+                "the value between /location/ and the next slash in "
+                "your sub-account URL."
+            )
+        return False, f"GHL error {e.status}: {e.message}"
+    except Exception as e:  # pragma: no cover — defensive
+        return False, f"unexpected error: {type(e).__name__}: {e}"
+
+    pipelines = result.get("pipelines") if isinstance(result, dict) else None
+    count = len(pipelines) if isinstance(pipelines, list) else 0
+    if count == 0:
+        return True, (
+            f"Connected to location '{loc}'. No pipelines defined yet "
+            "in this sub-account — that's fine, the token works."
+        )
+    return True, (
+        f"Connected to location '{loc}'. Found {count} pipeline(s) — "
+        "token + location id both look correct."
+    )
+
+
+async def _test_hunter(_store: IntegrationSecretsStore) -> tuple[bool, str]:
+    """Hunter.io: GET /v2/account?api_key=… returns plan + quota when
+    the key is valid; 401 when it isn't."""
+    import httpx
+    from core.config import get_settings
+    from core.secrets import resolve_secret
+
+    key = resolve_secret("hunter_io_api_key", get_settings().hunter_io_api_key)
+    if not key:
+        return False, "hunter_io_api_key is not set."
+    url = f"https://api.hunter.io/v2/account?api_key={key}"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(url)
+    except httpx.HTTPError as e:
+        return False, f"network error: {e}"
+    if r.status_code == 401:
+        return False, "Hunter rejected the key (401). Re-issue from hunter.io → API."
+    if r.status_code != 200:
+        return False, f"Hunter returned HTTP {r.status_code}: {r.text[:200]}"
+    try:
+        data = r.json().get("data", {})
+        plan = data.get("plan_name", "unknown")
+        searches = data.get("requests", {}).get("searches", {})
+        used = searches.get("used", "?")
+        avail = searches.get("available", "?")
+    except Exception:
+        return True, "Connected to Hunter — could not parse plan details."
+    return True, f"Connected to Hunter — plan '{plan}', {used}/{avail} searches used."
+
+
+async def _test_notion(_store: IntegrationSecretsStore) -> tuple[bool, str]:
+    """Notion: GET /v1/users/me returns the bot's identity when the
+    integration secret is valid."""
+    import httpx
+    from core.config import get_settings
+    from core.secrets import resolve_secret
+
+    key = resolve_secret("notion_api_key", get_settings().notion_api_key)
+    if not key:
+        return False, "notion_api_key is not set."
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Notion-Version": "2022-06-28",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(
+                "https://api.notion.com/v1/users/me", headers=headers,
+            )
+    except httpx.HTTPError as e:
+        return False, f"network error: {e}"
+    if r.status_code == 401:
+        return False, "Notion rejected the secret (401). Re-issue from notion.com/my-integrations."
+    if r.status_code != 200:
+        return False, f"Notion returned HTTP {r.status_code}: {r.text[:200]}"
+    try:
+        bot = r.json()
+        name = bot.get("name") or bot.get("bot", {}).get("owner", {}).get("user", {}).get("name") or "unknown"
+    except Exception:
+        name = "unknown"
+    return True, (
+        f"Connected to Notion as '{name}'. Remember: pages/databases "
+        "are opt-in — share each one with the integration before "
+        "PILK can read or write to it."
+    )
+
+
+async def _test_apify(_store: IntegrationSecretsStore) -> tuple[bool, str]:
+    """Apify: GET /v2/users/me returns account info when the token works."""
+    import httpx
+    from core.config import get_settings
+    from core.secrets import resolve_secret
+
+    key = resolve_secret("apify_api_token", get_settings().apify_api_token)
+    if not key:
+        return False, "apify_api_token is not set."
+    headers = {"Authorization": f"Bearer {key}"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(
+                "https://api.apify.com/v2/users/me", headers=headers,
+            )
+    except httpx.HTTPError as e:
+        return False, f"network error: {e}"
+    if r.status_code == 401:
+        return False, "Apify rejected the token (401). Re-issue from console.apify.com → Settings → Integrations."
+    if r.status_code != 200:
+        return False, f"Apify returned HTTP {r.status_code}: {r.text[:200]}"
+    try:
+        user = r.json().get("data", {})
+        username = user.get("username", "unknown")
+        plan = user.get("plan", {}).get("id", "?")
+    except Exception:
+        return True, "Connected to Apify — could not parse account details."
+    return True, f"Connected to Apify as '{username}' (plan: {plan})."
+
+
+async def _test_google_places(_store: IntegrationSecretsStore) -> tuple[bool, str]:
+    """Google Places (New): a single Places Text Search with a tiny
+    query proves the key + the Places API enablement."""
+    import httpx
+    from core.config import get_settings
+    from core.secrets import resolve_secret
+
+    key = resolve_secret(
+        "google_places_api_key", get_settings().google_places_api_key,
+    )
+    if not key:
+        return False, "google_places_api_key is not set."
+    url = "https://places.googleapis.com/v1/places:searchText"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+        "X-Goog-FieldMask": "places.displayName",
+    }
+    body = {"textQuery": "coffee", "pageSize": 1}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(url, json=body, headers=headers)
+    except httpx.HTTPError as e:
+        return False, f"network error: {e}"
+    if r.status_code == 403:
+        return False, (
+            "Google rejected the key (403) — most likely the Places "
+            "API (New) isn't enabled on this Cloud project, or the "
+            "key is restricted to other APIs. Enable Places API (New) "
+            "in console.cloud.google.com."
+        )
+    if r.status_code == 400:
+        return False, f"Google returned 400 (bad request): {r.text[:200]}"
+    if r.status_code != 200:
+        return False, f"Google Places returned HTTP {r.status_code}: {r.text[:200]}"
+    return True, "Connected to Google Places (New) — Text Search returned a result."
+
+
+async def _test_pagespeed(_store: IntegrationSecretsStore) -> tuple[bool, str]:
+    """PageSpeed Insights: run against example.com — fastest known
+    target. 200 with a lighthouse payload = key works."""
+    import httpx
+    from core.config import get_settings
+    from core.secrets import resolve_secret
+
+    key = resolve_secret(
+        "pagespeed_api_key", get_settings().pagespeed_api_key,
+    )
+    if not key:
+        return False, "pagespeed_api_key is not set."
+    url = (
+        "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+        f"?url=https://example.com&strategy=desktop&key={key}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            r = await client.get(url)
+    except httpx.HTTPError as e:
+        return False, f"network error: {e}"
+    if r.status_code == 400 and "API key not valid" in r.text:
+        return False, "Google rejected the key (400 — API key not valid)."
+    if r.status_code == 403:
+        return False, (
+            "Google rejected the key (403) — most likely PageSpeed "
+            "Insights API isn't enabled on this Cloud project, or the "
+            "key is restricted to other APIs."
+        )
+    if r.status_code != 200:
+        return False, f"PageSpeed returned HTTP {r.status_code}: {r.text[:200]}"
+    return True, "Connected to PageSpeed Insights — audit ran successfully against example.com."
+
+
+async def _test_telegram(_store: IntegrationSecretsStore) -> tuple[bool, str]:
+    """Telegram: GET /bot<token>/getMe returns the bot's identity."""
+    import httpx
+    from core.config import get_settings
+    from core.secrets import resolve_secret
+
+    key = resolve_secret(
+        "telegram_bot_token", get_settings().telegram_bot_token,
+    )
+    if not key:
+        return False, "telegram_bot_token is not set."
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(f"https://api.telegram.org/bot{key}/getMe")
+    except httpx.HTTPError as e:
+        return False, f"network error: {e}"
+    if r.status_code == 401:
+        return False, "Telegram rejected the token (401). Re-issue with @BotFather."
+    if r.status_code != 200:
+        return False, f"Telegram returned HTTP {r.status_code}: {r.text[:200]}"
+    try:
+        bot = r.json().get("result", {})
+        username = bot.get("username", "unknown")
+    except Exception:
+        username = "unknown"
+    return True, f"Connected to Telegram bot @{username}."
+
+
+async def _test_browserbase(_store: IntegrationSecretsStore) -> tuple[bool, str]:
+    """Browserbase: list sessions for the configured project. 200 =
+    key + project both valid. 401 = bad key. 403 / 404 = project id
+    doesn't match the key."""
+    import httpx
+    from core.config import get_settings
+    from core.secrets import resolve_secret
+
+    settings = get_settings()
+    key = resolve_secret("browserbase_api_key", settings.browserbase_api_key)
+    project_id = resolve_secret(
+        "browserbase_project_id", settings.browserbase_project_id,
+    )
+    if not key:
+        return False, "browserbase_api_key is not set."
+    if not project_id:
+        return False, "browserbase_project_id is not set."
+    headers = {"X-BB-API-Key": key}
+    url = f"https://api.browserbase.com/v1/sessions?projectId={project_id}&limit=1"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(url, headers=headers)
+    except httpx.HTTPError as e:
+        return False, f"network error: {e}"
+    if r.status_code == 401:
+        return False, "Browserbase rejected the API key (401)."
+    if r.status_code in (403, 404):
+        return False, (
+            "Browserbase couldn't match the project id to this key "
+            f"(HTTP {r.status_code}). Double-check the project id."
+        )
+    if r.status_code != 200:
+        return False, f"Browserbase returned HTTP {r.status_code}: {r.text[:200]}"
+    return True, f"Connected to Browserbase — project '{project_id}' is reachable."
+
+
+async def _test_arcads(_store: IntegrationSecretsStore) -> tuple[bool, str]:
+    """Arcads: list available products / actors as a cheap auth check."""
+    import httpx
+    from core.secrets import resolve_secret
+
+    # Arcads has no settings field today; resolve straight from the
+    # secrets store so the dashboard-paste path works.
+    key = resolve_secret("arcads_api_key", None)
+    if not key:
+        return False, "arcads_api_key is not set."
+    headers = {"Authorization": f"Bearer {key}"}
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.get(
+                "https://external-api.arcads.ai/v1/products", headers=headers,
+            )
+    except httpx.HTTPError as e:
+        return False, f"network error: {e}"
+    if r.status_code == 401:
+        return False, "Arcads rejected the key (401). Re-issue from app.arcads.ai → Settings → API."
+    if r.status_code != 200:
+        return False, f"Arcads returned HTTP {r.status_code}: {r.text[:200]}"
+    return True, "Connected to Arcads — products endpoint is reachable."
+
+
+_TESTERS: dict[str, Any] = {
+    "ghl_api_key": _test_ghl,
+    "ghl_default_location_id": _test_ghl,
+    "hunter_io_api_key": _test_hunter,
+    "notion_api_key": _test_notion,
+    "apify_api_token": _test_apify,
+    "google_places_api_key": _test_google_places,
+    "pagespeed_api_key": _test_pagespeed,
+    "telegram_bot_token": _test_telegram,
+    "telegram_chat_id": _test_telegram,
+    "browserbase_api_key": _test_browserbase,
+    "browserbase_project_id": _test_browserbase,
+    "arcads_api_key": _test_arcads,
+}
+
+
+@router.post("/{name}/test")
+async def test_secret(name: str, request: Request) -> dict:
+    """Run a live connectivity test for a configured integration.
+
+    Returns ``{ok, message}``. ``ok=True`` means the credential
+    actually works against the upstream API; ``ok=False`` means it's
+    set but failed (bad scope, wrong location, expired token, etc.).
+    Names without a registered tester get a 400.
+    """
+    _ensure_known(name)
+    tester = _TESTERS.get(name)
+    if tester is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"no connection test available for '{name}' yet. "
+                "Implement one in core/api/routes/integration_secrets.py."
+            ),
+        )
+    store = _store(request)
+    try:
+        ok, message = await tester(store)
+    except Exception as e:  # pragma: no cover — defensive
+        log.warning(
+            "integration_secret_test_failed", name=name, error=str(e),
+        )
+        return {"name": name, "ok": False, "message": str(e)}
+    log.info(
+        "integration_secret_tested",
+        name=name,
+        ok=ok,
+    )
+    return {"name": name, "ok": ok, "message": message}

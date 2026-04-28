@@ -14,6 +14,10 @@ import Orb, { type OrbMode, type OrbSize } from "./Orb";
 
 type Local = "idle" | "recording" | "uploading" | "playing" | "error";
 
+const AUTO_STOP_SILENCE_MS = 1400;
+const AUTO_STOP_MAX_MS = 18000;
+const AUTO_STOP_RMS_THRESHOLD = 0.012;
+
 interface VoiceOrbProps {
   size?: OrbSize;
   showLabel?: boolean;
@@ -45,6 +49,104 @@ export default function VoiceOrb({
   const chunksRef = useRef<BlobPart[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const monitorCtxRef = useRef<AudioContext | null>(null);
+  const monitorSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const monitorAnalyserRef = useRef<AnalyserNode | null>(null);
+  const monitorRafRef = useRef<number | null>(null);
+  const monitorStateRef = useRef<{
+    startedAtMs: number;
+    lastVoiceAtMs: number;
+    heardVoice: boolean;
+  } | null>(null);
+
+  const clearAutoStopMonitor = () => {
+    if (monitorRafRef.current !== null) {
+      cancelAnimationFrame(monitorRafRef.current);
+      monitorRafRef.current = null;
+    }
+    try {
+      monitorSourceRef.current?.disconnect();
+    } catch {}
+    try {
+      monitorAnalyserRef.current?.disconnect();
+    } catch {}
+    monitorSourceRef.current = null;
+    monitorAnalyserRef.current = null;
+    monitorStateRef.current = null;
+    const ctx = monitorCtxRef.current;
+    monitorCtxRef.current = null;
+    if (ctx) void ctx.close().catch(() => {});
+  };
+
+  const stopRecorderNow = () => {
+    const r = recorderRef.current;
+    if (r && r.state !== "inactive") {
+      r.stop();
+      recorderRef.current = null;
+    }
+    clearAutoStopMonitor();
+  };
+
+  const startAutoStopMonitor = (stream: MediaStream, recorder: MediaRecorder) => {
+    clearAutoStopMonitor();
+    const AudioCtx: typeof AudioContext | undefined =
+      (window as any).AudioContext ?? (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    try {
+      const ctx = new AudioCtx();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.82;
+      const source = ctx.createMediaStreamSource(stream);
+      source.connect(analyser);
+
+      monitorCtxRef.current = ctx;
+      monitorSourceRef.current = source;
+      monitorAnalyserRef.current = analyser;
+      monitorStateRef.current = {
+        startedAtMs: performance.now(),
+        lastVoiceAtMs: performance.now(),
+        heardVoice: false,
+      };
+
+      const pcm = new Float32Array(analyser.fftSize);
+      const tick = () => {
+        if (recorderRef.current !== recorder || recorder.state === "inactive") {
+          clearAutoStopMonitor();
+          return;
+        }
+        const st = monitorStateRef.current;
+        if (!st) {
+          clearAutoStopMonitor();
+          return;
+        }
+        analyser.getFloatTimeDomainData(pcm);
+        let sum = 0;
+        for (let i = 0; i < pcm.length; i++) {
+          const v = pcm[i];
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / pcm.length);
+        const now = performance.now();
+        if (rms >= AUTO_STOP_RMS_THRESHOLD) {
+          st.heardVoice = true;
+          st.lastVoiceAtMs = now;
+        }
+        const silentTooLong =
+          st.heardVoice && now - st.lastVoiceAtMs >= AUTO_STOP_SILENCE_MS;
+        const maxReached = now - st.startedAtMs >= AUTO_STOP_MAX_MS;
+        if (silentTooLong || maxReached) {
+          stopRecorderNow();
+          return;
+        }
+        monitorRafRef.current = requestAnimationFrame(tick);
+      };
+
+      monitorRafRef.current = requestAnimationFrame(tick);
+    } catch {
+      clearAutoStopMonitor();
+    }
+  };
 
   useEffect(() => {
     fetchVoiceStatus().then(setStatus).catch(() => {});
@@ -73,6 +175,7 @@ export default function VoiceOrb({
           r.stop();
         } catch {}
       }
+      clearAutoStopMonitor();
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
       recorderRef.current = null;
@@ -94,6 +197,17 @@ export default function VoiceOrb({
       await voiceDone().catch(() => {});
     }
     try {
+      if (
+        typeof navigator === "undefined" ||
+        !navigator.mediaDevices ||
+        typeof navigator.mediaDevices.getUserMedia !== "function"
+      ) {
+        const secureHint =
+          typeof window !== "undefined" && !window.isSecureContext
+            ? "Mic needs a secure page (HTTPS). Open PILK from your HTTPS URL."
+            : "Mic APIs are unavailable in this browser context.";
+        throw new Error(secureHint);
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       const mimeType = pickMimeType();
@@ -103,6 +217,7 @@ export default function VoiceOrb({
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
       recorder.onstop = async () => {
+        clearAutoStopMonitor();
         const blob = new Blob(chunksRef.current, { type: mimeType });
         streamRef.current?.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
@@ -153,20 +268,19 @@ export default function VoiceOrb({
       await voiceListen().catch(() => {});
       recorder.start();
       recorderRef.current = recorder;
+      startAutoStopMonitor(stream, recorder);
       setLocal("recording");
     } catch (e: any) {
-      setErr(`mic error: ${e?.message ?? e}`);
+      clearAutoStopMonitor();
+      const msg = e?.message ?? String(e);
+      setErr(`mic error: ${msg}`);
       setLocal("error");
       setTimeout(() => setLocal("idle"), 2000);
     }
   };
 
   const stopRecording = () => {
-    const r = recorderRef.current;
-    if (r && r.state !== "inactive") {
-      r.stop();
-      recorderRef.current = null;
-    }
+    stopRecorderNow();
   };
 
   const toggle = () => {

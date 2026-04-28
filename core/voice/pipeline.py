@@ -178,7 +178,11 @@ class VoicePipeline:
 
         self.orchestrator.broadcast = tap
         try:
-            await self.orchestrator.run(text)
+            await self.orchestrator.run(
+                text,
+                preferred_tier="light",
+                suppress_cost_preflight=True,
+            )
             # `run` awaits until completion, but plan.completed may arrive
             # microseconds after — give it a short settle.
             with contextlib.suppress(TimeoutError):

@@ -66,15 +66,17 @@ def test_status_lists_agents(client: TestClient) -> None:
     body = client.get("/system/status").json()
     assert isinstance(body["agents"], list)
     names = {a["name"] for a in body["agents"]}
-    # The reference set after PR G — every agent merged to main.
+    # The reference set after the masters consolidation. Specialists
+    # were archived into agents/_archive/ — they should NOT show up
+    # in registry discovery anymore.
     expected = {
-        "file_organization_agent",
-        "sales_ops_agent",
-        "xauusd_execution_agent",
+        "master_sales",
+        "master_content",
+        "master_comms",
+        "master_reporting",
+        "master_brain",
         "sentinel",
-        "web_design_agent",
-        "pitch_deck_agent",
-        "elementor_converter_agent",
+        "xauusd_execution_agent",
     }
     missing = expected - names
     assert not missing, f"missing agents: {missing}"

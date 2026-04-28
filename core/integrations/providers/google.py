@@ -10,8 +10,10 @@ requested at OAuth time depends on the *groups* the UI opts into —
 the user re-link an existing account to widen access without baking
 the kitchen sink into every connection.
 
-System role is deliberately limited to Gmail send only — PILK acting
-as itself doesn't need to read your Drive or your calendar.
+System role is deliberately limited to mail-only by default (no Drive
+or Calendar), but includes Gmail read/modify so PILK can complete
+service-account workflows that depend on inbox verification links
+(e.g. account signup + email confirm) using PILK's own mailbox.
 """
 
 from __future__ import annotations
@@ -114,7 +116,7 @@ _BASE_SCOPE_NAMES: list[str] = ["openid", "userinfo.email", "userinfo.profile"]
 
 # Per-group scope lists, split by role where the answer differs.
 _GROUP_SCOPES_SYSTEM: dict[str, list[str]] = {
-    "mail": ["gmail.send"],
+    "mail": ["gmail.send", "gmail.modify", "gmail.readonly"],
 }
 _GROUP_SCOPES_USER: dict[str, list[str]] = {
     "mail": ["gmail.send", "gmail.modify", "gmail.readonly"],

@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from core.api.auth import SupabaseJWTMiddleware
 from core.config import Settings
 
-_HS256_SECRET = "unit-test-hs256-secret"
+_HS256_SECRET = "unit-test-hs256-secret-32-bytes-min"
 _SUPABASE_URL = "https://example.supabase.co"
 
 
@@ -30,6 +30,10 @@ def _app_with_middleware(settings: Settings) -> FastAPI:
 
     @app.get("/system/status")
     async def status():
+        return {"ok": True}
+
+    @app.get("/version")
+    async def version():
         return {"ok": True}
 
     return app
@@ -128,8 +132,14 @@ def test_missing_bearer_rejected():
 
 def test_public_path_skips_auth():
     client = TestClient(_app_with_middleware(_settings()))
-    r = client.get("/system/status")
+    r = client.get("/version")
     assert r.status_code == 200
+
+
+def test_system_status_requires_auth_in_cloud_mode():
+    client = TestClient(_app_with_middleware(_settings()))
+    r = client.get("/system/status")
+    assert r.status_code == 401
 
 
 def test_expired_hs256_returns_401():
@@ -143,7 +153,13 @@ def test_expired_hs256_returns_401():
 
 def test_wrong_secret_hs256_rejected():
     client = TestClient(
-        _app_with_middleware(_settings(supabase_jwt_secret="different-secret"))
+        _app_with_middleware(
+            _settings(
+                supabase_jwt_secret=(
+                    "different-secret-but-32-bytes-minimum"
+                )
+            )
+        )
     )
     r = client.get(
         "/protected",

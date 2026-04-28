@@ -1,0 +1,30 @@
+name: ingest_file_to_brain
+description: |
+  Run the file ingestion pipeline against ~/PILK/inbox/ — extract
+  text from every file the operator dropped, write clean markdown
+  notes into the brain, and (when the embedder is configured)
+  semantic-index them. Pure operator-pulled.
+
+trigger: operator
+
+inputs:
+  - name: project_slug
+    description: Project tag for the resulting notes.
+    required: false
+
+steps:
+  - name: scan_inbox
+    kind: approval
+    description: Confirm the operator wants to process current inbox contents.
+    approval_message: |
+      About to ingest every plain file currently in ~/PILK/inbox/.
+      Existing brain markdown is untouched. Source files move to
+      inbox/archive/ on success or inbox/failed/ on extraction error.
+      Resume to proceed; cancel to abort.
+
+success_criteria: |
+  Operator approved the scan. (Actual scan invocation is a follow-up
+  step the engine wires up to the ingestion pipeline once Phase 4
+  exposes a tool surface.)
+
+failure_behavior: stop

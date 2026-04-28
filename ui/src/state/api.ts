@@ -1082,6 +1082,10 @@ export interface IntegrationSecretEntry {
   env: string | null;
   configured: boolean;
   updated_at: string | null;
+  // True when the backend has a real connectivity test for this
+  // integration (e.g. ghl_api_key → list pipelines). UI shows a
+  // Test button only when this is true.
+  testable?: boolean;
 }
 
 export async function fetchIntegrationSecrets(): Promise<{
@@ -1110,6 +1114,59 @@ export async function clearIntegrationSecret(
 ): Promise<{ name: string; configured: boolean; removed: boolean }> {
   const r = await apiFetch(`/integration-secrets/${encodeURIComponent(name)}`, {
     method: "DELETE",
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function testIntegrationSecret(
+  name: string,
+): Promise<{ name: string; ok: boolean; message: string }> {
+  const r = await apiFetch(
+    `/integration-secrets/${encodeURIComponent(name)}/test`,
+    { method: "POST" },
+  );
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+// ── Projects ─────────────────────────────────────────────────────
+
+export interface ProjectEntry {
+  slug: string;
+  name: string;
+  description: string;
+  is_active: boolean;
+}
+
+export async function fetchProjects(): Promise<{
+  active: string;
+  projects: ProjectEntry[];
+}> {
+  const r = await apiFetch(`/projects`);
+  if (!r.ok) throw new Error(`GET /projects failed: ${r.status}`);
+  return r.json();
+}
+
+export async function createProject(body: {
+  slug: string;
+  name: string;
+  description: string;
+}): Promise<ProjectEntry> {
+  const r = await apiFetch(`/projects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await detail(r));
+  return r.json();
+}
+
+export async function setActiveProject(slug: string): Promise<{ active: string }> {
+  const r = await apiFetch(`/projects/active`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slug }),
   });
   if (!r.ok) throw new Error(await detail(r));
   return r.json();

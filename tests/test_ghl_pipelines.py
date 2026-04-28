@@ -655,7 +655,7 @@ async def test_401_rewritten_to_pit_hint(ghl_key: str) -> None:
     _install_transport(handler)
     out = await _get("ghl_pipeline_list").handler({}, ToolContext())
     assert out.is_error
-    assert "agency pit" in out.content.lower()
+    assert "private integration" in out.content.lower()
 
 
 @pytest.mark.asyncio

@@ -20,9 +20,12 @@ import asyncio
 import json
 import uuid
 
+import jwt
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from core.api.auth import decode_auth_context
 from core.chat import AttachmentError
+from core.config import get_settings
 from core.logging import get_logger
 from core.orchestrator.orchestrator import ChatAttachment
 from core.orchestrator.router import classify_agent
@@ -33,6 +36,37 @@ log = get_logger("pilkd.ws")
 
 @router.websocket("/ws")
 async def websocket(ws: WebSocket) -> None:
+    settings = get_settings()
+    if settings.cloud:
+        token = (ws.query_params.get("token") or "").strip()
+        if not token:
+            await ws.close(code=4401, reason="missing token")
+            return
+        jwks_client = None
+        if settings.supabase_url:
+            jwks_url = (
+                settings.supabase_url.rstrip("/")
+                + "/auth/v1/.well-known/jwks.json"
+            )
+            jwks_client = jwt.PyJWKClient(
+                jwks_url,
+                cache_keys=True,
+                lifespan=3600,
+            )
+        try:
+            auth = decode_auth_context(
+                token=token,
+                jwt_secret=settings.supabase_jwt_secret,
+                jwks_client=jwks_client,
+            )
+        except RuntimeError:
+            await ws.close(code=1011, reason="server misconfigured")
+            return
+        except (jwt.InvalidTokenError, jwt.PyJWTError):
+            await ws.close(code=4401, reason="invalid token")
+            return
+        ws.state.auth = auth
+
     hub = ws.app.state.hub
     orchestrator = ws.app.state.orchestrator
 
@@ -60,6 +94,12 @@ async def websocket(ws: WebSocket) -> None:
             mtype = msg.get("type")
             if mtype == "chat.user":
                 text = (msg.get("text") or "").strip()
+                source = str(msg.get("source") or "").strip().lower()
+                is_ambient_voice = source in {
+                    "ambient_voice",
+                    "ambient",
+                    "voice_ambient",
+                }
                 raw_attachments = msg.get("attachments") or []
                 if not text and not raw_attachments:
                     continue
@@ -125,6 +165,7 @@ async def websocket(ws: WebSocket) -> None:
                 routed_agent: str | None = None
                 if (
                     not attachments
+                    and not is_ambient_voice
                     and agents_registry is not None
                 ):
                     match = classify_agent(
@@ -155,7 +196,12 @@ async def websocket(ws: WebSocket) -> None:
                     )
                 else:
                     task = asyncio.create_task(
-                        orchestrator.run(text, attachments=attachments)
+                        orchestrator.run(
+                            text,
+                            attachments=attachments,
+                            preferred_tier="light" if is_ambient_voice else None,
+                            suppress_cost_preflight=is_ambient_voice,
+                        )
                     )
                 tasks.add(task)
                 task.add_done_callback(tasks.discard)

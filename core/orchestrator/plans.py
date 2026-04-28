@@ -30,7 +30,11 @@ class PlanStore:
         self.db_path = db_path
 
     async def create_plan(
-        self, goal: str, *, metadata: dict[str, Any] | None = None
+        self,
+        goal: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        estimated_usd: float | None = None,
     ) -> dict[str, Any]:
         pid = _uid("plan")
         now = _now()
@@ -38,8 +42,8 @@ class PlanStore:
         async with connect(self.db_path) as conn:
             await conn.execute(
                 "INSERT INTO plans(id, goal, status, created_at, updated_at, "
-                "metadata_json) VALUES (?, ?, 'running', ?, ?, ?)",
-                (pid, goal, now, now, meta_json),
+                "estimated_usd, metadata_json) VALUES (?, ?, 'running', ?, ?, ?, ?)",
+                (pid, goal, now, now, estimated_usd, meta_json),
             )
             await conn.commit()
         return {
@@ -49,10 +53,20 @@ class PlanStore:
             "created_at": now,
             "updated_at": now,
             "actual_usd": 0.0,
-            "estimated_usd": None,
+            "estimated_usd": estimated_usd,
             "metadata": metadata or {},
             "agent_name": (metadata or {}).get("agent_name"),
         }
+
+    async def set_estimated_usd(self, plan_id: str, estimated_usd: float) -> dict[str, Any]:
+        now = _now()
+        async with connect(self.db_path) as conn:
+            await conn.execute(
+                "UPDATE plans SET estimated_usd = ?, updated_at = ? WHERE id = ?",
+                (float(estimated_usd), now, plan_id),
+            )
+            await conn.commit()
+        return await self.get_plan(plan_id)
 
     async def finish_plan(self, plan_id: str, status: str) -> dict[str, Any]:
         now = _now()
@@ -63,6 +77,53 @@ class PlanStore:
             )
             await conn.commit()
         return await self.get_plan(plan_id)
+
+    async def recover_orphaned_plans(self) -> list[str]:
+        """Mark plans left mid-run by a previous daemon process as
+        ``failed``. Called once at app startup.
+
+        A plan whose ``status`` is one of {running, pending, paused}
+        when the daemon boots was orphaned by a crash, kill, or
+        restart — there is no live executor for it and it will never
+        progress. Leaving these in the DB makes the dashboard
+        misleading ('something is running!') and corrupts the
+        ``stuck_task`` Sentinel rule's signal. We mark them failed
+        with a clear error so the operator can see what happened.
+
+        Steps belonging to those plans get the same treatment for
+        consistency (a step in 'running' is never live across a
+        daemon restart).
+
+        Returns the list of plan IDs that were recovered.
+        """
+        now = _now()
+        recovered: list[str] = []
+        async with connect(self.db_path) as conn:
+            async with conn.execute(
+                "SELECT id FROM plans "
+                "WHERE status IN ('running', 'pending', 'paused')"
+            ) as cur:
+                rows = await cur.fetchall()
+            for r in rows:
+                recovered.append(r["id"])
+            if recovered:
+                await conn.execute(
+                    "UPDATE plans SET status = 'failed', updated_at = ? "
+                    "WHERE status IN ('running', 'pending', 'paused')",
+                    (now,),
+                )
+                # Same for any non-terminal steps under those plans.
+                await conn.execute(
+                    "UPDATE steps SET status = 'failed', "
+                    "finished_at = COALESCE(finished_at, ?), "
+                    "error = COALESCE(error, "
+                    "'orphaned: daemon restarted before completion') "
+                    "WHERE status IN ('pending', 'running', "
+                    "'awaiting_approval')",
+                    (now,),
+                )
+                await conn.commit()
+        return recovered
 
     async def get_plan(self, plan_id: str) -> dict[str, Any]:
         async with connect(self.db_path) as conn:

@@ -11,7 +11,10 @@ goal: |
   new contact, score them per the rubric and file the result —
   note + tag + task (if hot) + Telegram ping (if hot). If no new
   contacts surfaced this window, stay silent and exit cleanly.
-enabled: true
+# Disabled until GHL integration (API key + location setup) is complete.
+# Re-enable once ghl_api_key is configured in the portal — the agent
+# will start scoring new contacts automatically on the next cron tick.
+enabled: false
 schedule:
   kind: cron
   expression: "*/15 * * * *"

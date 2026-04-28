@@ -9,6 +9,7 @@ import {
   setAgentPolicy,
   setIntegrationSecret,
   startOAuthConnection,
+  testIntegrationSecret,
   type AgentIntegration,
   type AgentRow,
   type AutonomyProfile,
@@ -678,6 +679,26 @@ function IntegrationsPanel({
   );
 }
 
+// Integration secrets that the backend has a real connectivity probe
+// for. The Test button only appears for keys in this set; others
+// would just get a 400 ("no probe wired") so we hide the button
+// instead of teasing it. Keep in sync with the _TESTERS dict in
+// core/api/routes/integration_secrets.py.
+const TESTABLE_API_KEYS = new Set<string>([
+  "ghl_api_key",
+  "ghl_default_location_id",
+  "hunter_io_api_key",
+  "notion_api_key",
+  "apify_api_token",
+  "google_places_api_key",
+  "pagespeed_api_key",
+  "telegram_bot_token",
+  "telegram_chat_id",
+  "browserbase_api_key",
+  "browserbase_project_id",
+  "arcads_api_key",
+]);
+
 function ApiKeyIntegrationRow({
   integration,
   onConfigured,
@@ -689,6 +710,10 @@ function ApiKeyIntegrationRow({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(!integration.configured);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<
+    { ok: boolean; message: string } | null
+  >(null);
 
   const save = async () => {
     if (!value.trim()) return;
@@ -698,11 +723,25 @@ function ApiKeyIntegrationRow({
       await setIntegrationSecret(integration.name, value.trim());
       setValue("");
       setEditing(false);
+      setTestResult(null);
       onConfigured();
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const runTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await testIntegrationSecret(integration.name);
+      setTestResult({ ok: r.ok, message: r.message });
+    } catch (e: any) {
+      setTestResult({ ok: false, message: e?.message ?? String(e) });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -724,12 +763,37 @@ function ApiKeyIntegrationRow({
       </div>
       <div className="agent-integration-key-name">Key: {integration.name}</div>
       {integration.configured && !editing && (
-        <button
-          className="btn btn--ghost"
-          onClick={() => setEditing(true)}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            className="btn btn--ghost"
+            onClick={() => setEditing(true)}
+          >
+            Rotate key
+          </button>
+          {TESTABLE_API_KEYS.has(integration.name) && (
+            <button
+              className="btn btn--ghost"
+              onClick={runTest}
+              disabled={testing}
+            >
+              {testing ? "Testing…" : "Test connection"}
+            </button>
+          )}
+        </div>
+      )}
+      {testResult && (
+        <div
+          className={`agent-flash agent-flash--${
+            testResult.ok ? "ok" : "error"
+          }`}
+          style={{
+            color: testResult.ok ? "#7ee787" : "#ff8080",
+            marginTop: 8,
+          }}
         >
-          Rotate key
-        </button>
+          {testResult.ok ? "✓ Connection good — " : "✗ Connection failed — "}
+          {testResult.message}
+        </div>
       )}
       {editing && (
         <div className="agent-integration-form">

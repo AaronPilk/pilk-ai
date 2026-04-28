@@ -235,6 +235,13 @@ CATEGORIES: list[dict[str, Any]] = [
         "upload_folder": "ingested/uploads/projects",
     },
     {
+        "id": "prompting",
+        "label": "Prompting Library",
+        "icon": "✏️",
+        "prefixes": ["standing-instructions/prompting/"],
+        "upload_folder": "standing-instructions/prompting",
+    },
+    {
         "id": "chat_archive", "label": "Chat Archive", "icon": "💬",
         "prefixes": ["ingested/chatgpt/"],
         # Chat Archive is ingester-owned — uploads don't land here.
@@ -493,6 +500,109 @@ async def search_notes(
             {"path": h.path, "line": h.line, "snippet": h.snippet}
             for h in hits
         ],
+    }
+
+
+# ── semantic-search (Phase 2 — vector brain) ────────────────────────
+
+
+@router.get("/semantic-search")
+async def semantic_search(
+    request: Request,
+    q: str = Query(..., min_length=1, max_length=500),
+    limit: int = Query(default=8, ge=1, le=30),
+    project_slug: str | None = Query(default=None, max_length=64),
+    source_type: str | None = Query(default=None, max_length=32),
+    min_score: float | None = Query(default=None, ge=0.0, le=1.0),
+) -> dict[str, Any]:
+    """Cosine-similarity search across the vector brain index.
+
+    Returns 503 when the vector brain wasn't initialised (no embedding
+    key configured at boot). The keyword endpoint at ``/brain/search``
+    keeps working in that case, so the UI can fall back gracefully.
+    """
+    semantic = getattr(request.app.state, "semantic_search", None)
+    if semantic is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Vector brain is not configured. Set OPENAI_API_KEY "
+                "(or Settings → API Keys → openai_api_key) and restart "
+                "PILK to enable semantic search."
+            ),
+        )
+    try:
+        hits = await semantic.search(
+            q,
+            limit=limit,
+            project_slug=project_slug,
+            source_type=source_type,
+            min_score=min_score,
+        )
+    except Exception as e:  # noqa: BLE001 — defensive
+        log.warning("brain_semantic_search_failed", q=q, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    return {
+        "query": q,
+        "filters": {
+            "limit": limit,
+            "project_slug": project_slug,
+            "source_type": source_type,
+            "min_score": min_score,
+        },
+        "hits": [
+            {
+                "brain_path": h.brain_path,
+                "chunk_idx": h.chunk_idx,
+                "heading": h.heading,
+                "content": h.content,
+                "project_slug": h.project_slug,
+                "source_type": h.source_type,
+                "score": h.score,
+            }
+            for h in hits
+        ],
+    }
+
+
+@router.post("/reindex")
+async def reindex(
+    request: Request,
+    force: bool = Query(default=False),
+    max_files: int = Query(default=5000, ge=1, le=20000),
+) -> dict[str, Any]:
+    """Rebuild the vector index from the markdown vault.
+
+    Operator-pulled — there is no daemon driving this. ``force=true``
+    re-embeds every note regardless of mtime/hash; ``force=false``
+    (default) is the cheap incremental walk. Returns 503 if the
+    embedder isn't configured.
+    """
+    indexer = getattr(request.app.state, "brain_indexer", None)
+    if indexer is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Vector brain is not configured. Set OPENAI_API_KEY "
+                "and restart PILK to enable indexing."
+            ),
+        )
+    try:
+        result = await indexer.index_all(
+            max_files=max_files, force=force,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("brain_reindex_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    return {
+        "files_seen": result.files_seen,
+        "files_changed": result.files_changed,
+        "files_skipped": result.files_skipped,
+        "files_failed": result.files_failed,
+        "chunks_indexed": result.chunks_indexed,
+        "embedding_tokens": result.embedding_tokens,
+        "estimated_cost_usd": round(result.estimated_cost_usd, 6),
+        "deleted_paths": result.deleted_paths,
     }
 
 

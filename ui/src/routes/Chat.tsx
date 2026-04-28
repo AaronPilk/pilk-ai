@@ -66,6 +66,7 @@ export default function Chat() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textRef = useRef<HTMLTextAreaElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -339,6 +340,16 @@ export default function Chat() {
         className={
           "chat-composer" + (dragOver ? " chat-composer--dragover" : "")
         }
+        onPointerDown={(e) => {
+          // iOS standalone/PWA can occasionally miss textarea focus
+          // when tapping around the composer chrome. If the tap was on
+          // the wrapper itself, force focus in the same gesture so the
+          // keyboard appears reliably.
+          if (busy) return;
+          if (e.target === e.currentTarget) {
+            requestAnimationFrame(() => textRef.current?.focus());
+          }
+        }}
         onDrop={onDrop}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
@@ -383,6 +394,7 @@ export default function Chat() {
           <div className="chat-upload-error">{uploadError}</div>
         )}
         <textarea
+          ref={textRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}

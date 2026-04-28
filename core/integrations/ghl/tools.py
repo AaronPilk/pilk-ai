@@ -49,7 +49,17 @@ log = get_logger("pilkd.ghl.tools")
 
 
 def _default_location() -> str | None:
-    return get_settings().ghl_default_location_id
+    """Resolve the default GHL location id from the secrets store first,
+    falling back to the settings env var. This matches how
+    ``client_from_settings`` resolves the API key — pasting a value in
+    the dashboard's API Keys form must be enough to make tools work,
+    even when no env var is set."""
+    from core.secrets import resolve_secret
+
+    return resolve_secret(
+        "ghl_default_location_id",
+        get_settings().ghl_default_location_id,
+    )
 
 
 def _unwrap_location(
@@ -77,14 +87,19 @@ def _surface(e: GHLError, tool_name: str) -> ToolOutcome:
     if e.status == 401:
         hint = (
             f"{e.message} — ghl_api_key is invalid or missing. "
-            "Reissue an agency PIT at Settings → Company → Private "
-            "Integrations in GHL and paste into pilkd's Settings → "
-            "API Keys."
+            "Reissue a Private Integration Token in GHL (sub-account "
+            "Settings → Integrations → Private Integrations for a "
+            "single-location key, or agency Settings → Company → "
+            "Private Integrations for an agency-wide key) and paste "
+            "it into pilkd's Settings → API Keys."
         )
     elif e.status == 403:
         hint = (
-            f"{e.message} — PIT is missing a scope. Reissue the "
-            "token in GHL with every scope box checked."
+            f"{e.message} — the token is missing a scope, or this "
+            "operation requires an agency-level token and you've "
+            "supplied a sub-account key. Reissue the token in GHL "
+            "with every scope you need checked, or switch to an "
+            "agency PIT if you genuinely need cross-location access."
         )
     elif e.status == 404:
         hint = (
@@ -109,7 +124,9 @@ def _not_configured(tool_name: str) -> ToolOutcome:
     return ToolOutcome(
         content=(
             f"{tool_name} failed: Go High Level not configured. "
-            "Add ghl_api_key (agency PIT) in Settings → API Keys."
+            "Add a GHL Private Integration Token in Settings → API "
+            "Keys (a sub-account custom integration key works; an "
+            "agency PIT also works)."
         ),
         is_error=True,
     )
@@ -863,18 +880,23 @@ def _contact_search_tool() -> Tool:
             limit = 25
         limit = max(1, min(limit, 100))
         # email > phone > query precedence (matches client-side order
-        # — exact match wins over fuzzy).
+        # — exact match wins over fuzzy). When all three are empty,
+        # treat the call as "list all contacts in this location"
+        # (paginated to ``limit``). GHL's /contacts/?locationId=...
+        # endpoint returns the full list when query is empty, which
+        # is exactly what an operator wants when asking "show me my
+        # CPA leads" or "what's in the pipeline".
         email = str(args.get("email") or "").strip() or None
         phone = str(args.get("phone") or "").strip() or None
         query = str(args.get("query") or "").strip() or None
-        if not (email or phone or query):
-            return ToolOutcome(
-                content=(
-                    "ghl_contact_search requires at least one of "
-                    "'email', 'phone', or 'query'."
-                ),
-                is_error=True,
-            )
+        # Reject the asterisk-as-wildcard footgun explicitly. GHL
+        # treats ``*`` as a literal character, not a wildcard, and
+        # zero contact names contain it — so an LLM that tries
+        # ``query="*"`` thinking it's a wildcard gets back "0
+        # contacts" and confabulates an explanation. Map it to "list
+        # all" instead.
+        if query == "*":
+            query = None
         try:
             client = client_from_settings()
         except GHLNotConfiguredError:
@@ -912,10 +934,14 @@ def _contact_search_tool() -> Tool:
     return Tool(
         name="ghl_contact_search",
         description=(
-            "Search contacts in a GHL location. At least one of: "
-            "email (exact match, fastest), phone (exact match), or "
-            "query (substring across name + email). limit 1-100, "
-            "default 25. NET_READ — first call may queue for approval."
+            "Search or list contacts in a GHL location. With email "
+            "(exact match), phone (exact match), or query (substring "
+            "across name + email): returns matches. With NO filter at "
+            "all: returns the most-recent N contacts in the location "
+            "(use this to answer 'what's in my CRM?' / 'show me my "
+            "leads'). DO NOT pass query='*' — GHL treats it as a "
+            "literal asterisk, not a wildcard; just omit the query "
+            "field to list all. limit 1-100, default 25."
         ),
         input_schema={
             "type": "object",

@@ -24,12 +24,14 @@ def test_default_user_is_mail_only() -> None:
     assert SCOPE_CATALOG["calendar.readonly"].scope_uri not in scopes
 
 
-def test_default_system_is_send_only() -> None:
+def test_default_system_is_mail_only_with_read_write() -> None:
     scopes = set(google_provider.scopes_for_role("system", None))
     assert SCOPE_CATALOG["gmail.send"].scope_uri in scopes
-    # System never gets mail read/modify/drive/calendar.
-    assert SCOPE_CATALOG["gmail.readonly"].scope_uri not in scopes
-    assert SCOPE_CATALOG["gmail.modify"].scope_uri not in scopes
+    # System role now includes mailbox read/modify so PILK can complete
+    # verification-email loops for service-account onboarding.
+    assert SCOPE_CATALOG["gmail.readonly"].scope_uri in scopes
+    assert SCOPE_CATALOG["gmail.modify"].scope_uri in scopes
+    # Still no Drive/Calendar unless explicitly requested.
     assert SCOPE_CATALOG["drive.readonly"].scope_uri not in scopes
     assert SCOPE_CATALOG["calendar.readonly"].scope_uri not in scopes
     assert BASE_URIS.issubset(scopes)

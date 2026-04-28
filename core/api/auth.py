@@ -19,17 +19,16 @@ Local mode (PILK_CLOUD=0) bypasses this middleware entirely — pilkd on
 127.0.0.1 trusts its local caller and keeps the pre-cloud behaviour.
 
 Public paths that skip auth even in cloud mode:
-    /health, /version, /system/status — liveness + deploy diagnostics
-    /ws/*                              — WebSocket upgrade; WS auth lives
-                                         in the route itself via ?token=
-                                         query param (browsers can't
-                                         attach Authorization headers on
-                                         WS upgrade).
+    /health, /version — bare liveness/version checks only.
+
+WebSocket auth is handled in the WS route via `?token=` because browsers
+can't attach Authorization headers on upgrade.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import jwt
 from jwt import PyJWKClient
@@ -43,10 +42,10 @@ from core.logging import get_logger
 
 log = get_logger("pilkd.auth")
 
-_PUBLIC_PATHS = frozenset({"/health", "/version", "/system/status"})
-_PUBLIC_PREFIXES = ("/ws",)
+_PUBLIC_PATHS = frozenset({"/health", "/version"})
 
 _ASYMMETRIC_ALGS = ("ES256", "RS256")
+_HS256_MIN_SECRET_BYTES = 32
 
 
 @dataclass
@@ -57,9 +56,66 @@ class AuthContext:
 
 
 def _is_public(path: str) -> bool:
-    if path in _PUBLIC_PATHS:
-        return True
-    return any(path.startswith(p) for p in _PUBLIC_PREFIXES)
+    return path in _PUBLIC_PATHS
+
+
+def _decode_claims(
+    *,
+    token: str,
+    jwt_secret: str | None,
+    jwks_client: PyJWKClient | None,
+) -> dict[str, Any]:
+    """Decode + verify a Supabase access token.
+
+    Shared by HTTP middleware and WS auth so cloud-mode verification
+    stays identical across transports.
+    """
+    unverified = jwt.get_unverified_header(token)
+    alg = unverified.get("alg", "")
+    if alg in _ASYMMETRIC_ALGS:
+        if jwks_client is None:
+            raise RuntimeError("jwks_client_unconfigured")
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        return jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=[alg],
+            audience="authenticated",
+        )
+    if alg == "HS256":
+        if not jwt_secret:
+            raise RuntimeError("jwt_secret_missing_in_cloud_mode")
+        if len(jwt_secret.encode("utf-8")) < _HS256_MIN_SECRET_BYTES:
+            raise RuntimeError("jwt_secret_too_short_for_hs256")
+        return jwt.decode(
+            token,
+            jwt_secret,
+            algorithms=["HS256"],
+            audience="authenticated",
+        )
+    raise jwt.InvalidTokenError(f"unsupported algorithm: {alg}")
+
+
+def decode_auth_context(
+    *,
+    token: str,
+    jwt_secret: str | None,
+    jwks_client: PyJWKClient | None,
+) -> AuthContext:
+    """Decode a token into AuthContext or raise."""
+    claims = _decode_claims(
+        token=token,
+        jwt_secret=jwt_secret,
+        jwks_client=jwks_client,
+    )
+    user_id = claims.get("sub")
+    if not user_id:
+        raise jwt.InvalidTokenError("missing sub claim")
+    return AuthContext(
+        user_id=user_id,
+        email=claims.get("email"),
+        role=claims.get("role", "authenticated"),
+    )
 
 
 class SupabaseJWTMiddleware(BaseHTTPMiddleware):
@@ -93,58 +149,23 @@ class SupabaseJWTMiddleware(BaseHTTPMiddleware):
         token = auth_header.split(" ", 1)[1].strip()
 
         try:
-            unverified = jwt.get_unverified_header(token)
-        except jwt.InvalidTokenError as e:
-            log.info("jwt_header_unreadable", reason=str(e))
-            return JSONResponse({"error": "invalid_token"}, status_code=401)
-
-        alg = unverified.get("alg", "")
-        try:
-            if alg in _ASYMMETRIC_ALGS:
-                if self._jwks_client is None:
-                    log.error("jwks_client_unconfigured", alg=alg)
-                    return JSONResponse(
-                        {"error": "server_misconfigured"},
-                        status_code=500,
-                    )
-                signing_key = self._jwks_client.get_signing_key_from_jwt(token)
-                claims = jwt.decode(
-                    token,
-                    signing_key.key,
-                    algorithms=[alg],
-                    audience="authenticated",
-                )
-            elif alg == "HS256":
-                if not self._jwt_secret:
-                    log.error("jwt_secret_missing_in_cloud_mode")
-                    return JSONResponse(
-                        {"error": "server_misconfigured"},
-                        status_code=500,
-                    )
-                claims = jwt.decode(
-                    token,
-                    self._jwt_secret,
-                    algorithms=["HS256"],
-                    audience="authenticated",
-                )
-            else:
-                log.info("jwt_alg_unsupported", alg=alg)
-                return JSONResponse({"error": "invalid_token"}, status_code=401)
+            auth = decode_auth_context(
+                token=token,
+                jwt_secret=self._jwt_secret,
+                jwks_client=self._jwks_client,
+            )
+        except RuntimeError as e:
+            log.error(str(e))
+            return JSONResponse(
+                {"error": "server_misconfigured"},
+                status_code=500,
+            )
         except jwt.ExpiredSignatureError:
             return JSONResponse({"error": "token_expired"}, status_code=401)
         except jwt.InvalidTokenError as e:
-            log.info("jwt_rejected", reason=str(e), alg=alg)
+            log.info("jwt_rejected", reason=str(e))
             return JSONResponse({"error": "invalid_token"}, status_code=401)
-
-        user_id = claims.get("sub")
-        if not user_id:
-            return JSONResponse({"error": "invalid_token"}, status_code=401)
-
-        request.state.auth = AuthContext(
-            user_id=user_id,
-            email=claims.get("email"),
-            role=claims.get("role", "authenticated"),
-        )
+        request.state.auth = auth
         return await call_next(request)
 
 

@@ -43,8 +43,12 @@ class AgentRegistry:
         """Scan the manifests directory, validate, and upsert into the DB.
 
         Skips folders without a manifest.yaml and folders whose name starts
-        with an underscore (reserved for templates). Returns the names of
-        the agents now registered.
+        with an underscore (reserved for templates + archived specialists).
+        After upserting, prunes DB rows whose manifest file no longer
+        exists — that's how archived agents (moved to ``_archive/``)
+        disappear from the dashboard cleanly.
+
+        Returns the names of the agents now registered.
         """
         installed: list[str] = []
         if not self.manifests_dir.exists():
@@ -82,7 +86,38 @@ class AgentRegistry:
                 tools=manifest.tools,
                 sandbox=manifest.sandbox.type,
             )
+        await self._prune_orphans()
         return installed
+
+    async def _prune_orphans(self) -> None:
+        """Remove DB rows whose manifest file no longer exists on disk.
+
+        This is how archived agents (whose manifests got moved into
+        ``_archive/`` or deleted) drop out of the dashboard. We only
+        prune when the recorded ``manifest_path`` is genuinely missing
+        — a row whose manifest had a transient parse error this boot
+        is left alone, so we don't lose state on a one-off read
+        failure. Running plans aren't affected; this just cleans the
+        registry's metadata table."""
+        async with connect(self.db_path) as conn:
+            async with conn.execute(
+                "SELECT name, manifest_path FROM agents"
+            ) as cur:
+                rows = await cur.fetchall()
+            stale: list[str] = []
+            for r in rows:
+                path_str = r["manifest_path"]
+                if not path_str:
+                    continue
+                if not Path(path_str).exists():
+                    stale.append(r["name"])
+            for name in stale:
+                await conn.execute(
+                    "DELETE FROM agents WHERE name = ?", (name,)
+                )
+                log.info("agent_pruned_orphan", name=name)
+            if stale:
+                await conn.commit()
 
     async def _upsert(self, manifest: Manifest, manifest_path: Path) -> None:
         now = datetime.now(UTC).isoformat()

@@ -30,6 +30,7 @@ from typing import Any
 import anthropic
 
 from core.brain import Vault
+from core.config import get_settings
 from core.governor import Tier
 from core.governor.capability import classify_capability, resolve_model
 from core.governor.providers import PlannerProvider, PlannerResponse
@@ -37,6 +38,7 @@ from core.governor.providers.claude_code_provider import (
     ClaudeCodeToolUseUnsupportedError,
 )
 from core.ledger import Ledger, UsageSnapshot
+from core.ledger.pricing import price_usage
 from core.logging import get_logger
 from core.memory import MemoryStore, extract_topics, hydrate
 from core.orchestrator.plans import PlanStore
@@ -121,6 +123,356 @@ The operator is NOT a coder. Critical communication rule:
   (b) if the operator explicitly asks for technical detail
   ("what file did you change?"), give it.
 
+YOUR ORG CHART (this is the most important capability section —
+read carefully):
+
+The operator (CEO) gives you (COO) intent. You don't try to do
+everything yourself. You delegate to one of FIVE Master agents,
+each of whom owns a department and runs the work end-to-end.
+
+  • **Master Sales** — outbound revenue. Prospecting, qualifying,
+    enrichment, GHL CRM, cold outreach, sales copy, deal logging,
+    follow-up sequences. Owns the whole sales loop as one operator.
+  • **Master Content** — content + creative production. Scripts,
+    hooks, UGC video (Arcads), motion (Higgsfield), images (Nano
+    Banana / DALL·E), ad creative, captions, creator scouting +
+    outreach for sourced UGC, design (print/web/Elementor),
+    content scheduling.
+  • **Master Comms** — non-sales, non-marketing communication.
+    Inbox triage, outbound emails (replies, follow-ups, intros,
+    thank-yous), Telegram messages, DMs, scheduling threads.
+  • **Master Reporting** — synthesis + analytics. Morning brief,
+    nightly recap, weekly digests, ad-hoc reports across projects.
+    Also runs the **performance feedback loop** that updates each
+    master's wins.md with what's worked.
+  • **Master Brain** — the vault itself. Ingestion, organization,
+    search, dedup, project setup, persona + standing-instructions
+    curation. The librarian for the whole org.
+
+Plus two standalone agents that don't sit under a master:
+  • **xauusd_execution_agent** — gold trading, isolated by design;
+    operator is building an external trading system that hooks
+    back in. Don't route trading-adjacent work elsewhere.
+  • **sentinel** — passive watchdog, not invoked by you; surfaces
+    incidents through the gateway.
+
+Meta Ads + Google Ads are currently parked under "Other" category
+— the operator hasn't decided how he wants those wired yet. Don't
+build campaigns on those platforms until he gives explicit intent.
+
+The 28 old specialist agents (sales_ops, copy_agent, prospector,
+ugc_scout, etc.) have been **archived**. They no longer exist as
+delegation targets. If a task previously would have called one of
+those specialists, route it through the matching master instead
+(prospector → Master Sales; ugc_scout → Master Content; daily_brief
+→ Master Reporting; inbox_triage → Master Comms; etc.).
+
+Tonality reminder: **the masters do not share your blunt operator
+voice for outbound work.** Each master has its own brand voice
+loaded from the active project's voice.md. Master Sales sounds
+like a consultative closer in cold emails, Master Content matches
+the project's content brand, Master Comms is warm + polished. Your
+voice (direct, blunt, charismatic) is for talking to the operator.
+
+PROJECT SCOPING (every task runs inside an "active project"):
+
+The operator works on multiple distinct things — one project might
+be running outbound sales for Skyway Media (his digital marketing
+agency), another might be a faceless YouTube channel about real
+estate wholesaling, another might be a boat-club client. These have
+totally different voices, audiences, scripts, and CRM sub-accounts.
+
+There is always exactly one project active. Its slug is in your
+context (look for the ``[Active project: <slug>]`` marker prepended
+to your system prompt). Every master scopes its knowledge reads to
+``projects/<active>/<master-domain>/``. Switching projects = the
+masters effectively become different people because they're reading
+different scripts/voices/wins.
+
+When the operator references a project by name ("for Skyway", "in
+the YouTube one"), check the project list — if it matches an
+existing slug, switch the active project before running. If the
+operator describes work that clearly belongs to a different project
+than the one currently active, ask before silently switching.
+
+A "default" project always exists for catch-all work that isn't
+client-specific.
+
+PROPOSE-THEN-EXECUTE (this is the new approval flow):
+
+You no longer just take a task and run. For non-trivial work,
+generate a PLAN BRIEF first, send it to the operator, and run only
+after they approve.
+
+The brief is plain English. Required sections:
+  1. **Task** — one sentence restating what you understood.
+  2. **Project** — which active project this runs against.
+  3. **Master(s)** — which master(s) you'd route to. Usually one;
+     occasionally two (e.g. Master Content produces a video, Master
+     Comms sends the announcement email).
+  4. **Steps** — numbered, plain English, what each step does.
+  5. **Time estimate** — rough; honest is better than precise.
+  6. **Cost estimate** — rough; honest is better than precise.
+  7. **Reply 'go' to run, or send adjustments.**
+
+WHEN TO SKIP THE BRIEF and just act:
+  • Conversational chat ("how's it going?", "what's on my plate?",
+    quick questions). Just answer.
+  • Recall + reporting questions you can answer from existing
+    data without spawning a master run.
+  • Trivial single-step asks ("send this Telegram message",
+    "save this note").
+  • Operator explicitly says "just do it" / "skip the brief".
+
+WHEN TO REQUIRE THE BRIEF:
+  • Anything that costs > $0.20 in API calls.
+  • Anything that touches an external account (sends email, posts,
+    updates CRM, runs ads).
+  • Anything that takes more than ~30 seconds of work.
+  • Anything that consumes a creative budget (image / video gen).
+
+Mid-execution: do NOT stop to ask for re-approval on every step.
+The brief covered the plan; run it. Only re-prompt if something
+genuinely outside the plan comes up (a tool error you can't recover,
+a real money decision, a destructive operation).
+
+PROMPTING LIBRARY (consult this before writing any task brief):
+
+The brain has a cross-project prompt-engineering library at
+``standing-instructions/prompting/``. It contains:
+  • ``principles.md`` — the rules every prompt should follow
+    (role, constraints, format, audience, length, voice).
+  • ``frameworks.md`` — named patterns (CoT, ReAct, structured
+    output, few-shot, role priming, critique-then-revise,
+    best-of-N) and when to use each.
+  • ``task-brief-template.md`` — the canonical shape of the
+    brief you send to a master. Use this as your skeleton.
+  • ``anti-patterns.md`` — common mistakes that produce bad
+    output. Avoid these explicitly.
+
+When you draft a task brief for a master, you are doing
+prompting — what you write becomes part of the master's prompt.
+Apply the library:
+  1. Pick the right framework for the task (CoT for reasoning
+     tasks, structured output for handoffs, best-of-N for high-
+     stakes copy, etc.).
+  2. Make every constraint explicit (voice, length, format,
+     banned moves, audience).
+  3. Include reference materials the master should read first.
+  4. Match the brief shape in ``task-brief-template.md``.
+  5. If you spot an anti-pattern in your own draft (vague topic,
+     hidden constraints, mixed voices, no format spec), revise
+     before sending.
+
+The library is the operator's place to drop new prompt
+engineering wisdom. Read it on demand — don't try to hold it all
+in your head. When the operator drops a new doc in there, the
+next brief you write should reflect the new pattern.
+
+Per-project prompt patterns (``projects/<active>/<master>/prompts/``)
+override the library when they exist — if the project has a
+specific cold-email format that's been validated, use that
+instead of generic library wisdom.
+
+HARD RULE — GO HIGH LEVEL BILLING GUARD (read this every turn,
+this is a non-negotiable operator instruction):
+
+You and every agent under you (Master Sales especially) are
+**FORBIDDEN** from activating, enabling, toggling on, subscribing
+to, or otherwise causing billing on ANY GHL feature without an
+explicit, separate "yes, turn this on" from Aaron in the same
+conversation. This applies to:
+
+  • Email Verification / Email Validation services (LC Email
+    Verification — charged per validation)
+  • Email rebilling toggles, SMS rebilling toggles, Phone
+    rebilling toggles
+  • LC Email + LC Phone subscription tiers and any premium
+    add-on with usage-based charges
+  • Workflow activations that fire paid SMS / Email / AI actions
+    (you can DESIGN them in draft state; do NOT toggle them
+    "Active" if they include paid steps)
+  • Any "Upgrade plan" / "Add credits" / "Buy more" action
+  • Conversation AI / Voice AI premium features
+  • Any toggle in Settings → Billing that costs money
+  • Any toggle in Settings → Email Services / Phone Numbers /
+    Integrations that triggers a fee
+
+WHAT YOU CAN DO without approval:
+  • Read everything (contacts, pipelines, opportunities,
+    conversations, workflows, tags, calendars, tasks, custom
+    fields)
+  • Create / update / move CRM records (contacts, opportunities,
+    pipeline stages, tags, notes)
+  • DRAFT workflows (build them but leave Active=false)
+  • Add contacts to EXISTING active workflows (those are
+    already-approved automations)
+  • Send individual transactional emails / SMS via
+    ghl_send_email / ghl_send_sms (these go through the
+    sub-account's existing send capacity, not a new billing
+    toggle — but flag the per-message cost in your plan brief)
+
+When the operator asks for something that would cross the line,
+your response is: "That requires turning on <feature>, which is
+billed. I'll tell you exactly which toggle to flip and what it
+costs — you click it. I won't activate it for you." Then give
+the path (Settings → X → Y) and the pricing.
+
+This rule supersedes any manifest, any prompting-library
+suggestion, and any prior conversation. If a master agent
+proposes a step that violates this rule, refuse the step and
+tell Aaron what tripped.
+
+LIBRARY ABSORPTION (this is how new uploads make PILK smarter):
+
+When the operator says any of:
+  • "I just put new docs in your prompting library"
+  • "I uploaded some files / I added some PDFs / new data"
+  • "absorb the new docs" / "integrate what I uploaded"
+  • "go read the prompting folder and learn it"
+  • "you've got new stuff" / "you have new files"
+
+— that's an explicit instruction to refresh the library digest. Do
+NOT just acknowledge and move on. Do NOT ask "which files?" or
+"can you give me the filenames?" — that's exactly what frustrates
+the operator. The flow:
+
+1. Tell the operator: "On it — Master Brain is going to absorb
+   what's new and update the digest. Give me 30 seconds."
+2. Delegate to Master Brain with a goal like:
+   "Absorb new prompting library docs. Find files in
+   standing-instructions/prompting/ that aren't in
+   _synthesis/log.md yet. Read each in full. Append a synthesis
+   section to _synthesis/digest.md. Update _synthesis/log.md.
+   Report back with what you absorbed and the top 3 takeaways."
+3. When Master Brain reports back, surface his summary to the
+   operator in plain English. "I absorbed 7 files — biggest
+   takeaways: <top 3>. The digest is updated and will inform
+   every future task." Don't paste the full digest.
+
+The operator never has to name files. He drops things in, says
+"absorb it," PILK + Master Brain handle the rest.
+
+The synthesized digest at
+``standing-instructions/prompting/_synthesis/digest.md`` is
+auto-loaded at the top of every PILK plan turn (see the digest
+brief in your system prompt). So once Master Brain absorbs a doc,
+its lessons inform every future conversation without anyone
+re-reading the original file.
+
+How your own routing works (read this before answering ANY question
+about cost, API spend, or whether something "burns credits"):
+- Plain conversational replies — Telegram chat, voice, web chat —
+  run through the operator's Claude Max subscription via the
+  Claude Code CLI. **These cost $0 in API spend.** They count
+  against the 5-hour Max-plan rate limit, not the API bill.
+- Anything that needs a tool (browsing, sending emails, scraping,
+  reading attachments, ad-platform calls, image/vision, file
+  edits, code execution) runs through the Anthropic API and
+  costs real money — usually a few cents per task. The CLI cannot
+  execute tools; that is a hard limit, not a choice.
+- Premium / heavy-reasoning work (Opus tier) runs through the
+  API by design.
+- If a casual chat reply genuinely needs a tool mid-turn, the
+  system falls back to the API for that turn only and bills that
+  turn only — the rest of the conversation stays free.
+- When the operator asks "do these chats cost money?" the honest
+  answer is: **plain chat = $0; tasks that use tools = a few
+  cents; heavy reasoning = more, but rare.** The cost dashboard
+  shows real numbers; quote those, not guesses.
+- DO NOT say "every message I process burns API credits" or
+  "the subscription only covers Claude.ai, not me." That was true
+  for chat before the routing fix on 2026-04-26, and it is no
+  longer accurate. Telegram + web chat both run on the
+  subscription path now.
+
+How your memory of past conversations works (read this before
+answering "do you remember what we talked about earlier"):
+- Every Telegram exchange is auto-journaled to disk, in full, the
+  moment it completes. Three places get written every time:
+  * ``chats/telegram/YYYY-MM-DD.md`` — the day's running digest.
+  * ``ingested/telegram/YYYY-MM-DD-HH.md`` — per-hour file the
+    next-turn memory hydration layer reads automatically.
+  * ``sessions/telegram/{session_id}.md`` — one file per
+    conversation session (e.g. ``tg-20260426-161124.md``).
+- **Nothing gets truncated on write.** A 5-hour deep conversation
+  gets stored in full — 40k+ chars is normal. If a session feels
+  important and you want it indexed for fast recall later, ALSO
+  call ``brain_note_write`` to drop a structured summary into
+  ``sessions/`` or ``persona/`` (emotional context, what mattered,
+  what the operator wants you to remember).
+- **Recall protocol when the operator references an earlier
+  conversation** ("remember what we talked about this morning?",
+  "the rough headspace I was in earlier", "what did I tell you
+  before?"). Follow this exact order — DO NOT improvise:
+  1. Look at the ``[Recent significant Telegram sessions …]``
+     brief at the top of your system prompt. It already lists the
+     3 largest sessions from the past 48h with their UTC
+     timestamps. **The first entry is almost always the right
+     file.** Skip steps 2-3 and go straight to step 4 if the
+     timestamp matches the operator's reference.
+  2. Only if that brief is missing or doesn't fit: call
+     ``brain_note_list`` with ``folder="sessions/telegram"`` AND
+     ``sort="size"`` — **never sort="mtime"** for recall, because
+     "earlier today" in the operator's local time spans two UTC
+     dates and recency-sorted lists bury the morning.
+  3. Identify the right file by size + UTC timestamp. The
+     operator is on US Eastern (UTC-4). "This morning" =
+     ~13:00–17:00 UTC. "Earlier today" or "today" = the past 24
+     hours of *their* day, which always spans TWO UTC dates.
+     Pick the largest file in the right window.
+  4. ``brain_note_read`` the chosen file in full. The read tool
+     returns up to 60,000 chars per call. If the response shows
+     ``[partial read — …]`` with a ``next_offset``, call again
+     with that offset until you've read the WHOLE file. Do NOT
+     form any opinion on what the file does or does not contain
+     until you have read every chunk.
+  5. ``brain_search`` only as a fallback when the operator's
+     reference is too vague to pin down one session.
+- **NEVER claim "the system truncated the note" or "I don't have
+  that conversation."** The conversation is on disk. If you can't
+  find it, you searched the wrong place — try a different scope or
+  a broader query. If a read returns ``[partial read — ...]``, that
+  is not data loss; it's pagination, and the next call with the
+  given offset will give you the rest.
+
+When the operator asks about HOW YOU WORK — investigate, don't
+guess. (This is the most important rule against confabulation.)
+- "Why didn't you remember X?", "do these chats cost money?",
+  "what's the cap on tool Y?", "why did you route to Z?" — these
+  are questions whose answers live in files on disk, not in your
+  intuition. The honest answer is rarely the first plausible
+  explanation that comes to mind.
+- Default move: say "one sec, let me actually check" and CALL A
+  TOOL. ``fs_read`` for source files. ``brain_search`` /
+  ``brain_note_read`` for memory state. ``shell_exec`` with a
+  ``sqlite3`` query against ``~/PILK/pilk.db`` for runtime data.
+  Then answer from what you actually saw.
+- On the Telegram / voice / subscription chat path you currently
+  have no tools — the Claude Code CLI is text-only. **Attempting
+  a tool call anyway is the right move.** It triggers an automatic
+  fallback to the tool-capable API path for that turn, and you
+  get to read the file. Costs a few cents; saves you from
+  inventing an answer.
+- Specific anti-patterns to never do again:
+  * "The body parameter is capped at 2000 chars" — that's
+    ``memory_remember``, not ``brain_note_write``. The latter
+    has no cap. Read ``core/tools/builtin/brain.py`` if unsure.
+  * "Every message burns API credits" — false since
+    2026-04-26; light chat runs on the subscription via the
+    Claude Code CLI at $0 marginal cost.
+  * "The system truncated the write" — the write is uncapped;
+    the *read* echo had a 3k cap (now 60k with offset support).
+  * Any sentence of the form "I think the issue is X" about
+    your own implementation, delivered without having read X
+    in the last minute. If you haven't read it, say "I don't
+    know, let me check" — then check.
+- The operator has been burned by confident-but-wrong answers
+  three times in one evening. They would much rather hear "give
+  me 10 seconds, let me actually look" than another plausible-
+  sounding guess. Confident guessing is the failure mode here,
+  not slow investigation.
+
 ACT, DON'T ASK (read this carefully — most important capability rule):
 - You are an executive operating system, not a permission-asking
   intern. The operator has already decided you can do almost anything
@@ -167,20 +519,33 @@ ACT, DON'T ASK (read this carefully — most important capability rule):
   in plain English, and either retry or ask for direction. "Tests
   failed on the autosave thing — something about a missing import.
   Want me to dig in or punt?" beats silence every time.
-- **Video links from the operator are first-class input — and the
-  operator wants the FULL chain by default.** A bare URL with no
-  instructions IS an instruction: "watch this, tell me what's in it,
-  and if it's useful, build it into me." Don't ask "what would you
-  like me to do with this link?" — the answer is always: analyze
-  it, then act on what you learned.
-  The full chain (run the whole thing unless the operator
-  explicitly says "just look, don't build"):
-  1. ``analyze_video_url`` with the URL. Tool downloads the video,
-     samples keyframes, transcribes the audio via Whisper, and
-     returns a plain-English analysis. The operator sends videos
-     about prompts, agent design patterns, coding tricks, growth
-     tactics — surface those concretely. If it's just hype or a
-     promo, say so plainly and stop.
+- **Video input from the operator is first-class — TWO surfaces,
+  same expected behaviour.** The operator either pastes a public
+  URL OR uploads a video file. Either way, "watch this and act on
+  what you learned" is the assumed instruction. Never tell the
+  operator you can't watch videos — you can.
+
+  **Surface 1 — Public URL** (TikTok, YouTube, public Reels,
+  Twitter clips): use ``analyze_video_url`` with the URL.
+
+  **Surface 2 — Uploaded video file** (Telegram video, web chat
+  upload — typically used when the operator hit a login-walled
+  Instagram Reel or gated TikTok and downloaded it manually):
+  the inbound message will include a marker like
+  ``[Uploaded video, attachment id abc123…]``. Use
+  ``analyze_video_file`` with that ``attachment_id`` — same
+  pipeline (1 fps frames + Whisper + multimodal Claude), no
+  download step. **Do NOT ask the operator to "send the file as
+  a download link" or "post it on YouTube first" — they already
+  uploaded it; just analyze it.**
+
+  The full chain after analysis (run the whole thing unless the
+  operator explicitly says "just look, don't build"):
+  1. ``analyze_video_url`` (URL) OR ``analyze_video_file``
+     (uploaded id). Returns a plain-English analysis. The
+     operator sends videos about prompts, agent design patterns,
+     coding tricks, growth tactics — surface those concretely.
+     If it's just hype or a promo, say so plainly and stop.
   2. If the analysis flags something concrete and useful (a
      prompt pattern, a tool idea, a workflow PILK doesn't have
      yet, a code technique), summarise it for the operator in 2-3
@@ -261,6 +626,19 @@ Rules of engagement:
 - Prefer the cheapest adequate action. Read before you edit. Use
   shell_exec only when a dedicated tool won't do. Use llm_ask for
   bounded sub-tasks.
+- Natural-language operator commands are the default interface. The
+  operator should be able to say "go handle this" in plain speech and
+  you should infer the workflow from context.
+- Ambiguity protocol (think like a strong human operator):
+  * If intent is clear enough to act safely, execute immediately.
+  * If partially clear, do the safest first concrete step, then ask
+    one short clarification if needed.
+  * If outcome/budget/constraints are unclear enough to risk waste,
+    ask 1-3 short questions max, then execute.
+- Clarifying questions must be high-leverage and plain language.
+  Prioritize: (1) what "done" looks like, (2) budget/time cap, (3)
+  hard constraints ("do not contact people", "do not spend money",
+  etc.). Never ask long questionnaires.
 - Filesystem and shell work is scoped to your workspace. Do not retry
   refused paths with absolute forms — they will refuse too.
 - On completion, a one-sentence summary is plenty. No speculative
@@ -280,9 +658,17 @@ External communication defaults (email / phone / text / social):
   mailbox that matches where the thread actually lives. Searching
   ``gmail_search_pilk_inbox`` for a thread that lives in the
   operator's personal inbox won't find it.
-- Outbound content to third parties is mode 2 above — professional,
-  on-brand, respectful. The mode-1 voice stays between you and the
-  operator.
+  - Outbound content to third parties is mode 2 above — professional,
+    on-brand, respectful. The mode-1 voice stays between you and the
+    operator.
+  - Service-account operations are NOT the same as person-targeted
+    outreach. When the operator asks you to create or configure an
+    account for PILK itself (for example: Trello, Notion workspace,
+    ad platform, SaaS tooling) and use PILK's own identity/mailbox,
+    you should execute it directly via browser tools. Prefer
+    ``browser_form_fill_account`` for signup/onboarding forms and
+    reserve ``browser_form_fill`` for outreach/contact forms that may
+    message a real person.
 - For cold outreach, important first emails, or anything where draft
   quality noticeably affects whether the recipient replies, prefer
   ``gmail_draft_best_of_n_as_pilk`` (or ``_as_me`` for operator-mailbox
@@ -478,6 +864,19 @@ class RunContext:
     # orchestrator refuses hops past ``MAX_DELEGATION_DEPTH`` to
     # prevent runaway chains + circular delegation.
     delegation_depth: int = 0
+    # True for conversational surfaces (for example voice chat) where
+    # we want fast back-and-forth without announcing a cost preflight
+    # banner before every reply.
+    suppress_cost_preflight: bool = False
+    # True for conversational surfaces (Telegram, voice) that fold
+    # rolling chat history into the goal text. The pre-emptive
+    # tool-capable check substring-matches against the whole goal,
+    # so once history mentions a marker (``automation``, ``api``,
+    # ``telegram``, …) every later reply gets force-routed off the
+    # subscription path. Set this on the chat surface to skip that
+    # pre-check; if a turn genuinely needs tools the typed
+    # ``ClaudeCodeToolUseUnsupportedError`` fallback still kicks in.
+    suppress_tool_capable_force: bool = False
 
 
 @dataclass
@@ -493,6 +892,19 @@ class ChatAttachment:
     mime: str
     filename: str
     path: Path
+
+
+@dataclass(frozen=True)
+class CostPreflightEstimate:
+    estimate_usd: float
+    low_usd: float
+    high_usd: float
+    expected_turns: int
+    tier: str
+    provider: str
+    model: str
+    confidence: str
+    note: str = ""
 
 
 class Orchestrator:
@@ -517,6 +929,7 @@ class Orchestrator:
         vault: Vault | None = None,
         integration_secrets: Any = None,
         accounts: Any = None,
+        projects: Any = None,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -556,6 +969,12 @@ class Orchestrator:
         # agent (preserves the pre-gating behaviour).
         self.integration_secrets = integration_secrets
         self.accounts = accounts
+        # Project scoping. When wired, ``_active_project_brief`` reads
+        # the active project off this manager and prepends a marker to
+        # PILK's system prompt every turn so masters know which folder
+        # to scope to. None when running in tests or without the
+        # projects subsystem booted.
+        self.projects = projects
         self._lock = asyncio.Lock()
         self._running_plan_id: str | None = None
         self._cancel_event: asyncio.Event | None = None
@@ -791,6 +1210,193 @@ class Orchestrator:
             return "rejected"
         return decision.decision
 
+    async def _request_cost_preflight_approval(
+        self,
+        *,
+        plan_id: str,
+        rc: RunContext,
+        estimate: CostPreflightEstimate,
+        threshold_usd: float,
+    ) -> str:
+        """Require explicit approval for expensive top-level runs."""
+        assert self.gateway.approvals is not None
+        req = await self.gateway.approvals.request(
+            plan_id=plan_id,
+            step_id=None,
+            agent_name=rc.agent_name,
+            tool_name="__cost_preflight",
+            args={
+                "goal": rc.goal[:280],
+                "estimate_usd": round(estimate.estimate_usd, 4),
+                "range_low_usd": round(estimate.low_usd, 4),
+                "range_high_usd": round(estimate.high_usd, 4),
+                "threshold_usd": round(threshold_usd, 4),
+                "tier": estimate.tier,
+                "provider": estimate.provider,
+                "model": estimate.model,
+                "expected_turns": estimate.expected_turns,
+                "confidence": estimate.confidence,
+            },
+            risk_class=RiskClass.READ,
+            reason=(
+                "Estimated spend for this task exceeds your preflight threshold. "
+                "Approve to run now, or reject to skip this task."
+            ),
+            bypass_trust=True,
+        )
+        try:
+            decision = await req.future
+        except Exception as e:  # pragma: no cover — unexpected
+            log.warning("cost_preflight_future_failed", detail=str(e))
+            return "rejected"
+        return decision.decision
+
+    @staticmethod
+    def _needs_tool_capable_execution(goal: str, attachments: list[ChatAttachment]) -> bool:
+        g = (goal or "").lower()
+        if attachments:
+            return True
+        markers = (
+            "browser",
+            "signup",
+            "sign up",
+            "create account",
+            "oauth",
+            "api",
+            "webhook",
+            "integrat",
+            "automation",
+            "fill form",
+            "scrape",
+            "crawl",
+            "login",
+        )
+        return any(m in g for m in markers)
+
+    @staticmethod
+    def _run_requires_tool_capable_provider(rc: "RunContext") -> bool:
+        """Batch 4A — does this run definitely need a tool-capable
+        provider path?
+
+        Returns True iff the run is a delegated agent (``rc.agent_name``
+        is set) AND the agent's manifest declares a non-empty tool
+        allowlist AND the caller hasn't explicitly suppressed the
+        tool-capable force. Top-level Pilk chat (``rc.agent_name is
+        None``) and agents with no declared tools are unaffected; the
+        existing content-heuristic check covers Pilk's tool needs based
+        on goal/attachment signals.
+
+        The Claude Code CLI subprocess provider doesn't bridge PILK's
+        tool registry through to the spawned model, so a True result
+        here means: do not route this run to ``claude_code``; force a
+        tool-capable provider (Anthropic API today).
+        """
+        if rc.agent_name is None:
+            return False
+        if rc.suppress_tool_capable_force:
+            return False
+        return bool(rc.allowed_tools)
+
+    @staticmethod
+    def _fmt_usd(usd: float) -> str:
+        if usd < 0.01:
+            return "$0.00"
+        if usd < 1.0:
+            return f"${usd:.2f}"
+        return f"${usd:.2f}"
+
+    def _estimate_cost_preflight(
+        self, *, rc: RunContext, tier_meta: dict[str, Any], model: str
+    ) -> CostPreflightEstimate:
+        """Rough pre-run dollar estimate for operator visibility.
+
+        This is intentionally conservative and coarse. It estimates LLM
+        cost from expected turns + token volume, then adds a small buffer
+        for tool-heavy tasks. External platform fees (ad spend, SaaS
+        subscriptions, paid third-party APIs) are not included.
+        """
+        goal = rc.goal or ""
+        goal_l = goal.lower()
+        provider = str(tier_meta.get("effective_provider") or tier_meta.get("provider") or "")
+        tier = str(tier_meta.get("tier") or "legacy")
+
+        turns = 2 + min(6, len(goal) // 220)
+        if rc.agent_name:
+            turns += 1
+        if rc.attachments:
+            turns += min(3, len(rc.attachments))
+        if any(
+            k in goal_l
+            for k in (
+                "research", "scrape", "crawl", "analyze", "analysis",
+                "build", "create", "pipeline", "automation",
+            )
+        ):
+            turns += 2
+        turns = max(2, min(12, turns))
+
+        in_per_turn = 700 + min(5000, len(goal) * 2)
+        if rc.attachments:
+            in_per_turn += 1200 * len(rc.attachments)
+        out_per_turn = max(180, int(in_per_turn * 0.35))
+
+        llm_usd = price_usage(
+            model,
+            input_tokens=in_per_turn * turns,
+            output_tokens=out_per_turn * turns,
+        )
+        confidence = "medium"
+        note = ""
+
+        if llm_usd <= 0.0:
+            confidence = "low"
+            if provider == "claude_code":
+                llm_usd = 0.0
+                note = "Subscription-backed route; API spend should be near $0."
+                confidence = "high"
+            else:
+                fallback = {
+                    "light": 0.08,
+                    "standard": 0.45,
+                    "premium": 2.25,
+                    "legacy": 0.60,
+                }
+                llm_usd = fallback.get(tier, 0.60)
+                note = "Model pricing table missing for this provider/model."
+
+        tool_buffer = 0.0
+        if any(k in goal_l for k in ("browser", "signup", "create account", "oauth")):
+            tool_buffer += 0.12
+        if any(k in goal_l for k in ("email", "telegram", "slack", "outreach", "lead")):
+            tool_buffer += 0.18
+        if any(k in goal_l for k in ("video", "image", "transcribe", "vision")):
+            tool_buffer += 0.30
+        if any(k in goal_l for k in ("campaign", "meta ads", "google ads", "ads")):
+            tool_buffer += 0.45
+
+        estimate = max(0.0, llm_usd + tool_buffer)
+        if provider == "claude_code":
+            low = 0.0
+            high = max(0.10, tool_buffer + 0.25)
+        elif confidence == "high":
+            low = estimate * 0.65
+            high = estimate * 1.60
+        else:
+            low = estimate * 0.50
+            high = estimate * 2.00
+
+        return CostPreflightEstimate(
+            estimate_usd=round(estimate, 4),
+            low_usd=round(low, 4),
+            high_usd=round(high, 4),
+            expected_turns=turns,
+            tier=tier,
+            provider=provider or "unknown",
+            model=model,
+            confidence=confidence,
+            note=note,
+        )
+
     # ── Entry points ─────────────────────────────────────────────────
 
     async def run(
@@ -799,6 +1405,8 @@ class Orchestrator:
         *,
         attachments: list[ChatAttachment] | None = None,
         preferred_tier: str | None = None,
+        suppress_cost_preflight: bool = False,
+        suppress_tool_capable_force: bool = False,
     ) -> None:
         """Free chat path. No agent; shared workspace."""
         ctx = RunContext(
@@ -812,6 +1420,8 @@ class Orchestrator:
             metadata={},
             attachments=list(attachments or []),
             preferred_tier=preferred_tier,
+            suppress_cost_preflight=suppress_cost_preflight,
+            suppress_tool_capable_force=suppress_tool_capable_force,
         )
         await self._execute(ctx)
 
@@ -1063,6 +1673,318 @@ class Orchestrator:
                 error=str(e),
             )
 
+    # Map of master agent name → the subfolder under
+    # ``projects/<active>/`` that holds its knowledge base. The
+    # context-hydration hook reads this folder on every master run so
+    # the master starts with project-specific scripts, voice, wins,
+    # and any uploaded reference docs already in its prompt — instead
+    # of having to call brain_search to find them.
+    _MASTER_DOMAIN_FOLDER: dict[str, str] = {
+        "master_sales": "sales",
+        "master_content": "content",
+        "master_comms": "comms",
+        "master_reporting": "reporting",
+        "master_brain": "brain",
+    }
+
+    # Total character budget for the master domain brief. Big enough
+    # that a project with 20 short scripts + a voice doc + wins all
+    # fit, small enough that the master's own LLM turn still has
+    # plenty of room for its goal + tools + the operator's task.
+    _MASTER_BRIEF_CHAR_BUDGET = 30_000
+
+    # Per-file char cap so one runaway doc doesn't eat the whole
+    # budget. Anything bigger gets truncated with a hint pointing the
+    # master at brain_note_read for the rest.
+    _MASTER_BRIEF_PER_FILE_CAP = 6_000
+
+    def _master_domain_brief(self, agent_name: str | None) -> str:
+        """Return a project-scoped knowledge brief for a master agent.
+
+        When a master (master_sales, master_content, etc.) runs, this
+        sweeps its domain folder under the active project, packs the
+        files into a single block, and prepends it to the agent's
+        system prompt. Files are ordered newest-first; per-file and
+        total char caps stop a 100-MB folder from blowing out the
+        prompt budget.
+
+        Returns an empty string when:
+          - the agent isn't a master in the map
+          - the projects manager isn't wired
+          - the project's domain folder doesn't exist yet
+          - the folder exists but is empty
+        """
+        if agent_name is None or self.projects is None or self.vault is None:
+            return ""
+        domain = self._MASTER_DOMAIN_FOLDER.get(agent_name)
+        if domain is None:
+            return ""
+        try:
+            slug = self.projects.active_slug
+            domain_dir = self.projects.domain_dir(domain, slug)
+        except Exception as e:
+            log.warning(
+                "master_domain_brief_path_failed",
+                agent=agent_name,
+                error=str(e),
+            )
+            return ""
+        if not domain_dir.is_dir():
+            return ""
+
+        # Walk the domain folder + the project root (so project.md
+        # comes along too). Rank by mtime descending so the most-
+        # recently-touched files take priority when we run out of
+        # budget.
+        from pathlib import Path
+
+        candidates: list[tuple[Path, float]] = []
+        try:
+            project_root = self.projects.project_dir(slug)
+            project_md = project_root / "project.md"
+            if project_md.is_file():
+                candidates.append((project_md, project_md.stat().st_mtime))
+            for p in domain_dir.rglob("*"):
+                if not p.is_file():
+                    continue
+                # Skip dotfiles + binaries — knowledge here lives in
+                # markdown / text. Operator-uploaded PDFs would need a
+                # separate ingestion path anyway.
+                if p.name.startswith("."):
+                    continue
+                if p.suffix.lower() not in {".md", ".txt", ".yaml", ".yml"}:
+                    continue
+                try:
+                    candidates.append((p, p.stat().st_mtime))
+                except OSError:
+                    continue
+        except Exception as e:
+            log.warning(
+                "master_domain_brief_walk_failed",
+                agent=agent_name,
+                error=str(e),
+            )
+            return ""
+
+        if not candidates:
+            return ""
+
+        candidates.sort(key=lambda t: t[1], reverse=True)
+        budget = self._MASTER_BRIEF_CHAR_BUDGET
+        sections: list[str] = []
+        skipped = 0
+        for path, _mtime in candidates:
+            if budget <= 200:
+                skipped += 1
+                continue
+            try:
+                body = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if not body.strip():
+                continue
+            cap = min(self._MASTER_BRIEF_PER_FILE_CAP, budget - 200)
+            truncated = ""
+            if len(body) > cap:
+                body = body[:cap]
+                truncated = (
+                    f"\n[truncated to {cap} chars — full file at "
+                    f"{path.relative_to(self.vault.root)} via brain_note_read]"
+                )
+            try:
+                rel = path.relative_to(self.vault.root)
+            except ValueError:
+                rel = path
+            section = f"### {rel}\n{body}{truncated}"
+            sections.append(section)
+            budget -= len(section)
+
+        if not sections:
+            return ""
+
+        header = (
+            f"[Master {agent_name} — project '{slug}' knowledge brief]\n"
+            "Below are the project-specific docs for your domain "
+            "(scripts, voice, wins, reference materials), ordered by "
+            "recency. Read these before deciding how to run the task. "
+            "If you need broader context across the whole vault, call "
+            "brain_search."
+        )
+        if skipped:
+            header += (
+                f" ({skipped} additional file(s) omitted to keep this "
+                "brief under budget — call brain_note_list with "
+                f"folder='projects/{slug}/{domain}' if you need them.)"
+            )
+        return header + "\n\n" + "\n\n".join(sections)
+
+    # Hard cap on how much of the prompting digest gets prepended to
+    # PILK's system prompt every turn. The digest accumulates over
+    # time — without a cap it'd eat into context budget forever. 8K
+    # is enough to carry the synthesized lessons from ~10-20 absorbed
+    # docs; if it grows past that, Master Brain should compact older
+    # entries (a separate playbook) rather than letting the digest
+    # crowd everything else out.
+    _PROMPTING_DIGEST_CHAR_BUDGET = 8_000
+
+    def _prompting_digest_brief(self) -> str:
+        """Auto-load the synthesized prompting library digest into
+        PILK's system prompt. The digest is the rolled-up wisdom from
+        every doc Master Brain has absorbed — it lives at
+        ``standing-instructions/prompting/_synthesis/digest.md`` and
+        gets updated whenever the operator drops new files in and
+        says "absorb."
+
+        Empty when the vault isn't wired or the digest is missing /
+        empty (the boilerplate scaffolding doesn't count — Master
+        Brain only writes real content under dated ``## Absorbed``
+        headers, so we look for those before deciding the digest is
+        worth surfacing)."""
+        if self.vault is None:
+            return ""
+        try:
+            digest_path = (
+                self.vault.root
+                / "standing-instructions"
+                / "prompting"
+                / "_synthesis"
+                / "digest.md"
+            )
+            if not digest_path.is_file():
+                return ""
+            body = digest_path.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+        # Skip if the digest hasn't been populated yet — the starter
+        # boilerplate has no "## Absorbed" sections.
+        if "## Absorbed" not in body:
+            return ""
+        # Trim to budget. We trim from the END, keeping the most
+        # recent absorbed sections (Master Brain appends new ones at
+        # the bottom). Older absorptions still live in the file on
+        # disk; PILK just doesn't get them in his auto-context.
+        if len(body) > self._PROMPTING_DIGEST_CHAR_BUDGET:
+            cutoff = self._PROMPTING_DIGEST_CHAR_BUDGET
+            tail = body[-cutoff:]
+            # Snap to the start of the next ``## Absorbed`` boundary
+            # so we don't slice a section in half.
+            idx = tail.find("## Absorbed")
+            if idx > 0:
+                tail = tail[idx:]
+            body = (
+                "[Older entries trimmed — full digest at "
+                "standing-instructions/prompting/_synthesis/digest.md]\n\n"
+                + tail
+            )
+        header = (
+            "[Prompting library digest — distilled patterns from every "
+            "doc Master Brain has absorbed. Apply these when drafting "
+            "task briefs and when judging whether a generated output "
+            "(email copy, ad creative, sales script, etc.) is on-target.]"
+        )
+        return header + "\n\n" + body.strip()
+
+    def _active_project_brief(self) -> str:
+        """Return a short marker telling PILK which project is active
+        and where its knowledge folder lives. Prepended to the system
+        prompt on every top-level turn so the operator can say
+        "Skyway" and PILK knows what they mean.
+
+        Empty string when no projects manager is wired (e.g. tests)."""
+        if self.projects is None:
+            return ""
+        try:
+            slug = self.projects.active_slug
+            info = self.projects.get(slug)
+        except Exception as e:
+            log.warning("active_project_brief_failed", error=str(e))
+            return ""
+        if info is None:
+            return ""
+        # Compact intentionally — this prepends every turn. The
+        # detailed project description lives in
+        # ``projects/<slug>/project.md`` which masters read at run
+        # start; PILK only needs the slug + name + one-liner here.
+        desc_one_line = " ".join(info.description.split())
+        if len(desc_one_line) > 220:
+            desc_one_line = desc_one_line[:217] + "…"
+        lines = [
+            f"[Active project: {info.slug} ({info.name})]",
+        ]
+        if desc_one_line:
+            lines.append(desc_one_line)
+        lines.append(
+            f"All master agents scope their knowledge to "
+            f"projects/{info.slug}/<sales|content|comms|reporting|brain>/. "
+            "If the operator references a different project by name, "
+            "check the project list before running."
+        )
+        return "\n".join(lines)
+
+    def _recent_session_brief(self) -> str:
+        """Return a compact catalog of the operator's largest Telegram
+        sessions in the past 48 hours, formatted for prepending to the
+        system prompt.
+
+        Empty string when the vault is missing, the sessions folder
+        doesn't exist, or no recent sessions are large enough to
+        bother surfacing. The catalog gives PILK a direct path to the
+        meaningful conversations so recall questions don't depend on
+        him guessing the right ``brain_note_list`` sort order.
+        """
+        if self.vault is None:
+            return ""
+        from datetime import datetime, timedelta, timezone
+
+        try:
+            sessions_dir = self.vault.root / "sessions" / "telegram"
+            if not sessions_dir.is_dir():
+                return ""
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(hours=48)
+            ).timestamp()
+            rows: list[tuple[str, int, float]] = []
+            for p in sessions_dir.iterdir():
+                if not p.is_file() or p.suffix != ".md":
+                    continue
+                try:
+                    st = p.stat()
+                except OSError:
+                    continue
+                if st.st_mtime < cutoff:
+                    continue
+                # Skip trivial sessions ("Hey", "yes" exchanges) — the
+                # point of this catalog is to highlight long, meaningful
+                # conversations, not echo every micro-exchange.
+                if st.st_size < 1500:
+                    continue
+                rows.append((p.name, st.st_size, st.st_mtime))
+            if not rows:
+                return ""
+            rows.sort(key=lambda r: r[1], reverse=True)
+            top = rows[:3]
+            lines = [
+                "[Recent significant Telegram sessions — past 48h, "
+                "largest first. The biggest file is almost always where "
+                "the deep conversation lives. Filenames + timestamps "
+                "are UTC; the operator is on US Eastern (UTC-4), so "
+                "their 'this morning' = ~13:00–17:00 UTC. Read these "
+                "with brain_note_read before claiming you don't "
+                "remember something.]"
+            ]
+            for name, size, mtime in top:
+                ts = datetime.fromtimestamp(
+                    mtime, tz=timezone.utc
+                ).strftime("%Y-%m-%d %H:%M UTC")
+                kb = size / 1024
+                lines.append(
+                    f"- sessions/telegram/{name} — {kb:.1f}KB — {ts}"
+                )
+            return "\n".join(lines)
+        except Exception as e:
+            log.warning("recent_session_brief_failed", error=str(e))
+            return ""
+
     async def _plan_turn_with_retry(
         self,
         *,
@@ -1167,6 +2089,82 @@ class Orchestrator:
                     f"{sub_brief}\n\n{effective_system_prompt}"
                 )
 
+        # Recall brief: catalog of the operator's largest Telegram
+        # sessions in the past 48h. Without this, recall questions
+        # ("remember our morning chat?") force PILK to list +
+        # heuristically pick a file, and on the chat path he tends to
+        # mis-sort by recency and miss the long meaningful conversation
+        # that's actually 12+ hours old. Pre-loading the catalog into
+        # the system prompt removes the search step entirely — PILK
+        # can read straight from the right path on turn 1.
+        if rc.delegation_depth == 0:
+            try:
+                recall_brief = self._recent_session_brief()
+            except Exception as e:
+                log.warning("recall_context_failed", error=str(e))
+                recall_brief = ""
+            if recall_brief:
+                effective_system_prompt = (
+                    f"{recall_brief}\n\n{effective_system_prompt}"
+                )
+
+        # Active project marker. Every master agent scopes its
+        # knowledge reads to the active project's folder, and PILK
+        # himself needs to know which project is in scope when the
+        # operator says "for Skyway, do X". Always present (default
+        # project exists from boot) and tiny so it's safe to always
+        # prepend — even when the operator's task is project-agnostic.
+        try:
+            project_brief = self._active_project_brief()
+        except Exception as e:
+            log.warning("project_context_failed", error=str(e))
+            project_brief = ""
+        if project_brief:
+            effective_system_prompt = (
+                f"{project_brief}\n\n{effective_system_prompt}"
+            )
+
+        # Prompting library digest. Master Brain rolls up every doc
+        # the operator absorbs into a synthesized digest; this hook
+        # surfaces it on every turn so PILK applies the lessons when
+        # drafting briefs / judging output quality. Capped at 8K to
+        # keep context budget healthy as the digest grows.
+        try:
+            digest_brief = self._prompting_digest_brief()
+        except Exception as e:
+            log.warning("prompting_digest_failed", error=str(e))
+            digest_brief = ""
+        if digest_brief:
+            effective_system_prompt = (
+                f"{digest_brief}\n\n{effective_system_prompt}"
+            )
+
+        # Master domain brief. Only fires when a master agent is
+        # running (delegation_depth > 0 + agent_name in the master
+        # map). Pre-loads the project's domain folder — scripts,
+        # voice.md, wins.md, uploaded reference docs — so the master
+        # starts the task with all the project-specific knowledge
+        # already in its prompt instead of having to call
+        # brain_search / brain_note_read to find it. This is the
+        # "chief of staff already pulled the briefing before the
+        # meeting" pattern: less round-trip, smarter first turn,
+        # and the master automatically biases toward the project's
+        # voice + what's worked before.
+        if rc.delegation_depth > 0 and rc.agent_name is not None:
+            try:
+                master_brief = self._master_domain_brief(rc.agent_name)
+            except Exception as e:
+                log.warning(
+                    "master_domain_brief_failed",
+                    agent=rc.agent_name,
+                    error=str(e),
+                )
+                master_brief = ""
+            if master_brief:
+                effective_system_prompt = (
+                    f"{master_brief}\n\n{effective_system_prompt}"
+                )
+
         # Agent catalog: injected when this run has the
         # ``delegate_to_agent`` tool available — always for Pilk
         # (allowed_tools=None → all tools); for agents only when
@@ -1259,6 +2257,50 @@ class Orchestrator:
             planner_model = tier_choice.model
             requested_provider = tier_choice.provider
             tier_meta: dict[str, Any] = tier_choice.to_public()
+            # Batch 4A — tool-required routing guard.
+            # The Claude Code CLI subprocess provider does not currently
+            # bridge PILK's tool registry through to the spawned model,
+            # so any agent run with a non-empty tool allowlist must NOT
+            # land on ``claude_code``. Force a tool-capable provider
+            # (Anthropic API today; OpenAI in the future) and record
+            # the override reason so the smoke-test surface can audit
+            # it. Top-level Pilk chat is unaffected — Pilk's
+            # ``allowed_tools`` is ``None`` (all tools allowed), and
+            # the existing content-heuristic block below still covers
+            # cases where Pilk's goal text signals tool need.
+            if (
+                requested_provider == "claude_code"
+                and self._run_requires_tool_capable_provider(rc)
+            ):
+                original_provider = requested_provider
+                requested_provider = "anthropic"
+                if not str(planner_model).startswith("claude-"):
+                    planner_model = self.planner_model
+                tier_meta["reason"] = (
+                    f"{tier_meta.get('reason', 'rule')}+tool_required"
+                )
+                tier_meta["tool_required"] = True
+                tier_meta["original_provider"] = original_provider
+                log.info(
+                    "provider_override_tool_required",
+                    plan_id=plan_id,
+                    agent=rc.agent_name,
+                    original_provider=original_provider,
+                    effective_provider="anthropic",
+                    tool_count=len(rc.allowed_tools or []),
+                )
+            if (
+                requested_provider == "claude_code"
+                and not rc.suppress_tool_capable_force
+                and self._needs_tool_capable_execution(rc.goal, rc.attachments)
+            ):
+                requested_provider = "anthropic"
+                if not str(planner_model).startswith("claude-"):
+                    planner_model = self.planner_model
+                tier_meta["reason"] = (
+                    f"{tier_meta.get('reason', 'rule')}+tool_capable_forced"
+                )
+                tier_meta["tool_capable_forced"] = True
 
             # Capability override: if the task signals vision or
             # long-context, swap to the provider best suited for
@@ -1324,11 +2366,88 @@ class Orchestrator:
                     detail="credentials for requested provider not configured",
                 )
         if provider is None:
-            # No provider at all — surface a clear failure.
+            # No provider at all — surface a clear failure. For agent
+            # runs that need PILK tools, name the agent + tool count so
+            # the operator knows exactly what failed and why a CLI
+            # fallback would silently strip tools.
+            if rc.agent_name is not None and rc.allowed_tools:
+                raise RuntimeError(
+                    f"agent '{rc.agent_name}' requires PILK tools "
+                    f"({len(rc.allowed_tools)} declared in manifest) "
+                    f"but no tool-capable provider is configured. "
+                    f"Set ANTHROPIC_API_KEY (or another tool-capable "
+                    f"provider) and retry."
+                )
             raise RuntimeError(
                 "no planner provider configured (set ANTHROPIC_API_KEY)"
             )
         tier_meta["effective_provider"] = effective_provider
+
+        settings = get_settings()
+        if (
+            settings.cost_preflight_enabled
+            and rc.delegation_depth == 0
+            and not rc.suppress_cost_preflight
+            and self._needs_tool_capable_execution(rc.goal, rc.attachments)
+        ):
+            estimate = self._estimate_cost_preflight(
+                rc=rc, tier_meta=tier_meta, model=planner_model,
+            )
+            try:
+                await self.plans.set_estimated_usd(plan_id, estimate.estimate_usd)
+            except Exception:  # pragma: no cover - best effort
+                log.warning("plan_estimate_persist_failed", plan_id=plan_id)
+
+            note_suffix = f" {estimate.note}" if estimate.note else ""
+            await self.broadcast(
+                "chat.assistant",
+                {
+                    "text": (
+                        "Cost preflight: this task is estimated at "
+                        f"{self._fmt_usd(estimate.estimate_usd)} "
+                        f"(range {self._fmt_usd(estimate.low_usd)}-"
+                        f"{self._fmt_usd(estimate.high_usd)}), using "
+                        f"{estimate.provider}/{estimate.model}.{note_suffix} "
+                        "This estimate covers PILK runtime/model usage; "
+                        "external platform spend can add on top."
+                    ),
+                    "plan_id": plan_id,
+                },
+            )
+
+            threshold = max(0.0, float(settings.cost_preflight_approval_usd))
+            if (
+                threshold > 0.0
+                and estimate.estimate_usd >= threshold
+                and self.gateway.approvals is not None
+            ):
+                await self.broadcast(
+                    "chat.assistant",
+                    {
+                        "text": (
+                            "Estimated cost is above your auto-run threshold "
+                            f"({self._fmt_usd(threshold)}). Waiting for your approval."
+                        ),
+                        "plan_id": plan_id,
+                    },
+                )
+                decision = await self._request_cost_preflight_approval(
+                    plan_id=plan_id,
+                    rc=rc,
+                    estimate=estimate,
+                    threshold_usd=threshold,
+                )
+                if decision != "approved":
+                    raise PlanCancelledError(
+                        f"cost preflight {decision}"
+                    )
+                await self.broadcast(
+                    "chat.assistant",
+                    {
+                        "text": "Cost preflight approved. Starting execution now.",
+                        "plan_id": plan_id,
+                    },
+                )
 
         # Per-agent per-run budget: cumulative spend this run. Only
         # meaningful when an agent manifest is driving — Pilk runs

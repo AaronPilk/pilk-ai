@@ -22,4 +22,3 @@ async def test_health_ok() -> None:
         assert v.status_code == 200
         body = v.json()
         assert "version" in body
-        assert "home" in body

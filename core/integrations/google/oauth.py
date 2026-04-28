@@ -31,13 +31,16 @@ from core.logging import get_logger
 
 log = get_logger("pilkd.google")
 
-# Scopes are split per role. The system account only needs to *send*
-# (it emails the user and signs up for services). The user account
-# needs read+modify so PILK can triage and draft replies on the user's
-# real inbox. Keeping each scope list narrow is a deliberate isolation
-# boundary — we can always re-link to widen.
+# Scopes are split per role. The system account is still mail-only
+# (no Drive/Calendar), but includes read+modify so PILK can complete
+# verification-email flows for service-account signup tasks. The user
+# account keeps the same read+modify set for triage and drafting on the
+# operator's real inbox. Keeping each scope list narrow is a deliberate
+# isolation boundary — we can always re-link to widen.
 SYSTEM_SCOPES: list[str] = [
     "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.readonly",
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",

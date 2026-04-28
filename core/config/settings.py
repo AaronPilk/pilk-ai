@@ -229,11 +229,16 @@ class Settings(BaseSettings):
             "NOTION_API_KEY", "PILK_NOTION_API_KEY"
         ),
     )
-    # Go High Level — Agency-level Private Integration Token.
-    # Create at Settings → Company → Private Integrations in GHL's
-    # agency view. Check EVERY scope box when issuing — the token
-    # represents PILK's full access across every sub-account the
-    # agency owns. Bearer auth; no OAuth flow, no token refresh.
+    # Go High Level — Private Integration Token. Either an agency-
+    # level PIT (Settings → Company → Private Integrations on the
+    # agency) OR a sub-account custom integration key (Settings →
+    # Integrations → Private Integrations inside the sub-account).
+    # Sub-account key is the recommended default — it scopes PILK
+    # to one location instead of the whole agency, which is what
+    # most per-tenant deployments want. Both auth as Bearer; no
+    # OAuth flow, no token refresh. With a sub-account key, agency-
+    # only tools (ghl_location_list across the agency, etc.) will
+    # 401 — that's expected.
     ghl_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices(
@@ -243,8 +248,10 @@ class Settings(BaseSettings):
     # Default GHL location (sub-account) id. Every GHL call is
     # scoped to a location; tools accept an optional ``location_id``
     # override per invocation but fall back here when the operator
-    # hasn't specified. Grab the 24-char id from the URL of any
-    # sub-account: https://app.gohighlevel.com/location/<id>/…
+    # hasn't specified. Grab it from the URL of the sub-account:
+    # https://app.gohighlevel.com/location/<id>/… — paste the value
+    # between /location/ and the next slash. Length varies by tenant
+    # (typically 20 chars for current sub-accounts, longer for older).
     ghl_default_location_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices(
@@ -709,6 +716,22 @@ class Settings(BaseSettings):
         default=5.00,
         validation_alias=AliasChoices("PILK_DAILY_CAP_USD", "DAILY_CAP_USD"),
     )
+    # Cost preflight: before a top-level task starts, PILK computes a
+    # rough dollar estimate and sends it in chat/Telegram. If the
+    # estimate is at or above this threshold, execution pauses until the
+    # operator explicitly approves.
+    cost_preflight_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "PILK_COST_PREFLIGHT_ENABLED", "COST_PREFLIGHT_ENABLED",
+        ),
+    )
+    cost_preflight_approval_usd: float = Field(
+        default=2.00,
+        validation_alias=AliasChoices(
+            "PILK_COST_PREFLIGHT_APPROVAL_USD", "COST_PREFLIGHT_APPROVAL_USD",
+        ),
+    )
     premium_gate: str = Field(
         default="ask",
         validation_alias=AliasChoices("PILK_PREMIUM_GATE", "PREMIUM_GATE"),
@@ -722,6 +745,65 @@ class Settings(BaseSettings):
         default=225,
         validation_alias=AliasChoices(
             "PILK_MAX_MESSAGES_PER_5H", "MAX_MESSAGES_PER_5H",
+        ),
+    )
+
+    # ── Intelligence Engine (Batch 2) ────────────────────────────
+    # Daemon is OFF by default. Set the env var to ``true`` to start
+    # background polling; everything else (manual refresh, CRUD,
+    # source kinds) works regardless. While disabled, the daemon
+    # registers but never schedules any fetch — operator drives all
+    # collection through ``POST /intelligence/sources/{id}/refresh``.
+    intelligence_daemon_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "PILK_INTELLIGENCE_DAEMON_ENABLED",
+            "INTELLIGENCE_DAEMON_ENABLED",
+        ),
+    )
+    # Daemon scan tick. The daemon wakes on this interval, picks
+    # sources whose ``last_checked_at + poll_interval_seconds`` is
+    # in the past, and fetches them. Floor 30s; sources still get
+    # their own poll_interval_seconds independently — this is just
+    # how often the daemon notices a source is due.
+    intelligence_daemon_tick_seconds: int = Field(
+        default=60,
+        validation_alias=AliasChoices(
+            "PILK_INTELLIGENCE_DAEMON_TICK_S",
+            "INTELLIGENCE_DAEMON_TICK_S",
+        ),
+    )
+    # How many fetches run in parallel within one tick. Bounded so
+    # the daemon never floods external hosts even if 50 sources go
+    # due simultaneously.
+    intelligence_daemon_max_concurrent: int = Field(
+        default=4,
+        validation_alias=AliasChoices(
+            "PILK_INTELLIGENCE_DAEMON_MAX_CONCURRENT",
+            "INTELLIGENCE_DAEMON_MAX_CONCURRENT",
+        ),
+    )
+    # Consecutive-failure threshold before a source's poll interval
+    # gets exponentially extended. After 5 failures we double the
+    # interval until the source recovers; doesn't disable, just
+    # pauses pressure.
+    intelligence_failure_backoff_after: int = Field(
+        default=5,
+        validation_alias=AliasChoices(
+            "PILK_INTELLIGENCE_BACKOFF_AFTER_FAILURES",
+            "INTELLIGENCE_BACKOFF_AFTER_FAILURES",
+        ),
+    )
+    # Minimum keyword score (0-100) required to write an item into
+    # the brain vault under ``world/<date>/``. Items below this
+    # threshold still land in SQLite + dedup, just don't get a
+    # markdown note. Set to 0 to write everything; set to 101 to
+    # write nothing.
+    intelligence_brain_write_threshold: int = Field(
+        default=30,
+        validation_alias=AliasChoices(
+            "PILK_INTELLIGENCE_BRAIN_THRESHOLD",
+            "INTELLIGENCE_BRAIN_THRESHOLD",
         ),
     )
 
@@ -811,6 +893,10 @@ class Settings(BaseSettings):
             "http://localhost:1420",
             "http://127.0.0.1:1421",
             "http://localhost:1421",
+            "https://127.0.0.1:1420",
+            "https://localhost:1420",
+            "https://127.0.0.1:1421",
+            "https://localhost:1421",
         ]
         # When the operator routes mobile traffic through Tailscale,
         # the dashboard's origin is ``http://<machine>.<tailnet>.ts.net:1420``
@@ -827,6 +913,12 @@ class Settings(BaseSettings):
                 continue
             origins.append(f"http://{host}:1420")
             origins.append(f"http://{host}:1421")
+            # Tailscale Serve/Funnel exposes HTTPS origins. Include the
+            # bare host (default 443) plus explicit dev ports so iPhone
+            # PWA + secure mic capture can still call the local API.
+            origins.append(f"https://{host}")
+            origins.append(f"https://{host}:1420")
+            origins.append(f"https://{host}:1421")
         return origins
 
     @property

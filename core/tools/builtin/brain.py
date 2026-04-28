@@ -23,7 +23,14 @@ from core.policy.risk import RiskClass
 from core.tools.registry import Tool, ToolContext, ToolOutcome
 
 MAX_LIST_SHOWN = 200
-MAX_CONTENT_ECHO = 3000  # when the model reads a note, clamp what we echo
+# When the model reads a note, clamp what we echo back. Big enough
+# that a full Telegram session log (typical: 5-50k chars) shows in
+# one read, so PILK can recall the whole conversation when the
+# operator asks "what did we talk about earlier?". The old 3k cap
+# was sized for short note snippets and silently truncated long
+# session journals — operator would ask about a long chat and PILK
+# would only see the first 3k, then confabulate the rest.
+MAX_CONTENT_ECHO = 60_000
 
 
 def make_brain_tools(vault: Vault) -> list[Tool]:
@@ -47,20 +54,43 @@ def _read_tool(vault: Vault) -> Tool:
                 is_error=True,
             )
         try:
+            offset = max(0, int(args.get("offset") or 0))
+        except (TypeError, ValueError):
+            offset = 0
+        try:
             body = vault.read(path)
         except FileNotFoundError as e:
             return ToolOutcome(content=str(e), is_error=True)
         except (IsADirectoryError, ValueError) as e:
             return ToolOutcome(content=str(e), is_error=True)
-        shown = body[:MAX_CONTENT_ECHO]
-        suffix = (
-            f"\n\n[truncated — {len(body)} chars, shown {MAX_CONTENT_ECHO}]"
-            if len(body) > MAX_CONTENT_ECHO
-            else ""
-        )
+        total = len(body)
+        if offset >= total and total > 0:
+            return ToolOutcome(
+                content=(
+                    f"{path}\n\n[empty range — note is {total} chars, "
+                    f"requested offset {offset}]"
+                ),
+                data={"path": path, "chars": total, "offset": offset},
+            )
+        window = body[offset : offset + MAX_CONTENT_ECHO]
+        end = offset + len(window)
+        if end < total:
+            suffix = (
+                f"\n\n[partial read — chars {offset}-{end} of {total}; "
+                f"call again with offset={end} to continue]"
+            )
+        elif offset > 0:
+            suffix = f"\n\n[end of note — chars {offset}-{end} of {total}]"
+        else:
+            suffix = ""
         return ToolOutcome(
-            content=f"{path}\n\n{shown}{suffix}",
-            data={"path": path, "chars": len(body)},
+            content=f"{path}\n\n{window}{suffix}",
+            data={
+                "path": path,
+                "chars": total,
+                "offset": offset,
+                "next_offset": end if end < total else None,
+            },
         )
 
     return Tool(
@@ -68,8 +98,11 @@ def _read_tool(vault: Vault) -> Tool:
         description=(
             "Read one markdown note from PILK's long-term brain vault. "
             "Path is relative to the vault root; a trailing `.md` is "
-            "added if missing. Returns the note body (truncated to "
-            f"{MAX_CONTENT_ECHO} chars in the tool output)."
+            f"added if missing. Returns up to {MAX_CONTENT_ECHO} chars "
+            "per call. For longer notes (multi-hour Telegram session "
+            "logs, daily digests), pass `offset` to continue from where "
+            "the previous read stopped — the response includes the "
+            "next offset to use."
         ),
         input_schema={
             "type": "object",
@@ -80,7 +113,16 @@ def _read_tool(vault: Vault) -> Tool:
                         "Vault-relative path, e.g. 'clients/skyway/offer-A.md' "
                         "or just 'north-star'."
                     ),
-                }
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": (
+                        "Character offset to start reading from. Default 0 "
+                        "(start of file). Use the `next_offset` returned "
+                        "by a previous partial read to continue."
+                    ),
+                },
             },
             "required": ["path"],
         },
@@ -362,35 +404,89 @@ def _list_tool(vault: Vault) -> Tool:
             paths = vault.list(folder_str)
         except ValueError as e:
             return ToolOutcome(content=str(e), is_error=True)
-        truncated = len(paths) > MAX_LIST_SHOWN
-        shown = paths[:MAX_LIST_SHOWN]
+        sort = str(args.get("sort") or "path").strip().lower()
+        if sort not in {"path", "size", "mtime"}:
+            sort = "path"
+
+        from datetime import datetime, timezone
+
+        rows: list[dict[str, Any]] = []
+        for p in paths:
+            try:
+                st = (vault.root / p).stat()
+                rows.append(
+                    {
+                        "path": p,
+                        "size": st.st_size,
+                        "mtime": datetime.fromtimestamp(
+                            st.st_mtime, tz=timezone.utc
+                        ).isoformat(timespec="seconds"),
+                        "_mtime_raw": st.st_mtime,
+                    }
+                )
+            except OSError:
+                rows.append(
+                    {"path": p, "size": 0, "mtime": "", "_mtime_raw": 0.0}
+                )
+        if sort == "size":
+            rows.sort(key=lambda r: r["size"], reverse=True)
+        elif sort == "mtime":
+            rows.sort(key=lambda r: r["_mtime_raw"], reverse=True)
+        else:
+            rows.sort(key=lambda r: r["path"])
+
+        truncated = len(rows) > MAX_LIST_SHOWN
+        shown = rows[:MAX_LIST_SHOWN]
         header = (
-            f"{len(paths)} note(s) in "
+            f"{len(rows)} note(s) in "
             f"{folder_str or 'vault root'}"
+            f" (sorted by {sort})"
         )
-        if not paths:
+        if not rows:
             return ToolOutcome(
-                content=f"{header}. Vault is empty — use brain_note_write to create one.",
-                data={"folder": folder_str, "paths": []},
+                content=(
+                    f"{header}. Vault is empty — use brain_note_write to create one."
+                ),
+                data={"folder": folder_str, "paths": [], "rows": []},
             )
-        body = "\n".join(f"- {p}" for p in shown)
+
+        def _fmt_size(n: int) -> str:
+            if n >= 1024:
+                return f"{n / 1024:.1f}KB"
+            return f"{n}B"
+
+        body = "\n".join(
+            f"- {r['path']} — {_fmt_size(r['size'])} — {r['mtime']} UTC"
+            for r in shown
+        )
         suffix = (
-            f"\n\n[showing first {MAX_LIST_SHOWN} of {len(paths)}]"
+            f"\n\n[showing first {MAX_LIST_SHOWN} of {len(rows)}]"
             if truncated
             else ""
         )
         return ToolOutcome(
             content=f"{header}:\n{body}{suffix}",
-            data={"folder": folder_str, "paths": shown, "total": len(paths)},
+            data={
+                "folder": folder_str,
+                "paths": [r["path"] for r in shown],
+                "rows": [
+                    {k: v for k, v in r.items() if not k.startswith("_")}
+                    for r in shown
+                ],
+                "total": len(rows),
+            },
         )
 
     return Tool(
         name="brain_note_list",
         description=(
-            "List markdown notes in the brain vault. Pass `folder` to "
-            "scope the listing (e.g. 'clients/' or 'daily-notes/'); "
-            "omit for the whole vault. Paths returned are vault-"
-            "relative."
+            "List markdown notes in the brain vault with size + last-"
+            "modified time so you can spot the long / recent ones at a "
+            "glance. Pass `folder` to scope the listing (e.g. "
+            "'sessions/telegram/'); omit for the whole vault. Pass "
+            "`sort='size'` to find the biggest conversations (long "
+            "Telegram sessions), `sort='mtime'` for most-recent-first. "
+            "Paths returned are vault-relative; timestamps are in UTC."
         ),
         input_schema={
             "type": "object",
@@ -401,7 +497,16 @@ def _list_tool(vault: Vault) -> Tool:
                         "Optional vault-relative folder path. Omit to "
                         "list everything."
                     ),
-                }
+                },
+                "sort": {
+                    "type": "string",
+                    "enum": ["path", "size", "mtime"],
+                    "description": (
+                        "Sort order. 'path' (default) for alphabetical, "
+                        "'size' for biggest first (best for finding long "
+                        "session logs), 'mtime' for most recent first."
+                    ),
+                },
             },
         },
         risk=RiskClass.READ,

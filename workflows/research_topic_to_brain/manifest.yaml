@@ -1,0 +1,56 @@
+name: research_topic_to_brain
+description: |
+  Pause for operator approval on a research topic, then pull any
+  intelligence items already on file for that topic and save them
+  into a topic-scoped note. Useful as a shell — agent-driven web
+  research lands later when the research master agent is wired.
+
+trigger: operator
+
+inputs:
+  - name: topic
+    description: Topic slug or keyword (e.g. ai-agents).
+    required: true
+  - name: project_slug
+    description: Optional project tag.
+    required: false
+
+steps:
+  - name: confirm_topic
+    kind: approval
+    approval_message: |
+      Run research bundle for topic "${inputs.topic}". This pulls
+      every existing intel item for the topic and writes a single
+      consolidated note into the brain. Resume to proceed.
+
+  - name: pull_existing
+    kind: tool
+    tool: intelligence_digest_read
+    description: Fetch every scored item for the topic.
+    args:
+      topic: "${inputs.topic}"
+      project: "${inputs.project_slug}"
+      include_global: true
+      limit: 200
+
+  - name: write_research_note
+    kind: note
+    description: Save a topic-scoped research note.
+    path: "ingested/research/${inputs.topic}/${run_id}.md"
+    body_template: |
+      ---
+      kind: research_bundle
+      topic: ${inputs.topic}
+      project: ${inputs.project_slug}
+      run_id: ${run_id}
+      ---
+
+      # Research bundle: ${inputs.topic}
+
+      ${steps.pull_existing.text}
+
+success_criteria: |
+  pull_existing returned results (or a clean empty set).
+  write_research_note succeeded.
+
+failure_behavior: stop
