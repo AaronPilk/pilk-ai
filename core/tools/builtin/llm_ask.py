@@ -61,6 +61,11 @@ def make_llm_ask_tool(client: AsyncAnthropic, ledger: Ledger, default_model: str
             agent_name=ctx.agent_name,
             model=model,
             usage=UsageSnapshot.from_anthropic(response.usage),
+            # llm_ask always hits the Anthropic SDK directly (no
+            # claude_code subscription path), so tag every entry
+            # as ``anthropic``. Without this the dashboard's
+            # "by provider" rollup misses every llm_ask call.
+            tier_provider="anthropic",
         )
         return ToolOutcome(content=text, data={"model": model})
 

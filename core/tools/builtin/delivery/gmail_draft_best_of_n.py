@@ -309,6 +309,7 @@ def make_gmail_draft_best_of_n_tool(
     *,
     openai_caller: OpenAICaller | None = None,
     save_draft_caller: SaveDraftCaller | None = None,
+    ledger: Any | None = None,
 ) -> Tool:
     """Build the role-specific BoN tool. Two test seams: ``openai_caller``
     (defaults to httpx → OpenAI) and ``save_draft_caller`` (defaults to
@@ -401,6 +402,18 @@ def make_gmail_draft_best_of_n_tool(
         except Exception:
             log.exception("gmail_bon_judge_failed")
             return None
+        # Cost-tracking — best-effort; never let ledger failure
+        # break the actual ranking flow. Previously bypassed
+        # cost_entries and showed up as untracked Anthropic spend.
+        if ledger is not None:
+            try:
+                await ledger.record_anthropic_response(
+                    model=HAIKU_JUDGE_MODEL,
+                    response=resp,
+                    agent_name=f"gmail_draft_best_of_n_{role}",
+                )
+            except Exception:  # noqa: BLE001
+                pass
         text = ""
         for block in resp.content or []:
             if getattr(block, "type", None) == "text":

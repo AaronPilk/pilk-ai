@@ -223,6 +223,19 @@ async def distill_from_conversations(
             detail=f"distill LLM call failed: {type(e).__name__}: {e}",
         ) from e
 
+    # Cost-tracking — record the distill call so it shows up in
+    # the dashboard. Best-effort; never crashes the route.
+    ledger = getattr(request.app.state, "ledger", None)
+    if ledger is not None:
+        try:
+            await ledger.record_anthropic_response(
+                model="claude-haiku-4-5",
+                response=resp,
+                agent_name="memory_distill",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
     text = ""
     for block in resp.content or []:
         if getattr(block, "type", None) == "text":
@@ -238,7 +251,9 @@ async def distill_from_conversations(
 
     proposals = candidates
     if _grpo_enabled() and len(candidates) > 1:
-        ranked = await _rank_candidates(client, candidates)
+        ranked = await _rank_candidates(
+            client, candidates, ledger=ledger,
+        )
         if ranked is None:
             log.info("distill_judge_fallback", reason="rank_unavailable")
         else:
@@ -258,7 +273,10 @@ async def distill_from_conversations(
 
 
 async def _rank_candidates(
-    client: Any, candidates: list[dict[str, Any]]
+    client: Any,
+    candidates: list[dict[str, Any]],
+    *,
+    ledger: Any | None = None,
 ) -> list[dict[str, Any]] | None:
     """Run the judge pass: ask Haiku to score the candidates relative
     to one another and return them sorted high-to-low with a ``score``
@@ -282,6 +300,15 @@ async def _rank_candidates(
     except Exception:
         log.exception("distill_judge_failed")
         return None
+    if ledger is not None:
+        try:
+            await ledger.record_anthropic_response(
+                model="claude-haiku-4-5",
+                response=resp,
+                agent_name="memory_distill_judge",
+            )
+        except Exception:  # noqa: BLE001
+            pass
     text = ""
     for block in resp.content or []:
         if getattr(block, "type", None) == "text":

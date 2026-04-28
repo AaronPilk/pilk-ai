@@ -90,11 +90,13 @@ class SelfCapabilitiesRefresher:
         repo_root: Path,
         anthropic_client: anthropic.AsyncAnthropic | None,
         model: str = DEFAULT_MODEL,
+        ledger: Any | None = None,
     ) -> None:
         self._vault = vault
         self._repo_root = Path(repo_root)
         self._client = anthropic_client
         self._model = model
+        self._ledger = ledger
 
     async def refresh_if_stale(
         self,
@@ -331,6 +333,18 @@ class SelfCapabilitiesRefresher:
             max_tokens=MAX_OUTPUT_TOKENS,
             messages=[{"role": "user", "content": prompt}],
         )
+        # Cost-tracking — every refresh costs ~5-10¢; without this
+        # the spend disappeared from the dashboard's anthropic
+        # rollup. Best-effort.
+        if self._ledger is not None:
+            try:
+                await self._ledger.record_anthropic_response(
+                    model=self._model,
+                    response=resp,
+                    agent_name="self_capabilities_refresher",
+                )
+            except Exception:  # noqa: BLE001
+                pass
         # Anthropic returns blocks; concat the text.
         parts: list[str] = []
         for block in getattr(resp, "content", []) or []:

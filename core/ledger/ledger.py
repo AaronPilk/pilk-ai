@@ -109,6 +109,46 @@ class Ledger:
             await conn.commit()
         return usd
 
+    async def record_anthropic_response(
+        self,
+        *,
+        model: str,
+        response: Any,
+        agent_name: str | None = None,
+        tier_provider: str = "anthropic",
+        tier: str | None = None,
+        plan_id: str | None = None,
+        step_id: str | None = None,
+    ) -> float:
+        """One-liner shortcut for ad-hoc Anthropic ``messages.create``
+        calls outside the orchestrator's planner loop.
+
+        Several tools call the Anthropic client directly (video
+        analysis, best-of-N email drafting, memory consolidation,
+        the self-capabilities refresher). Without this helper they
+        bypass ``cost_entries`` entirely — the call hits Anthropic's
+        billing but the dashboard sees nothing.
+
+        Pulls the usage block off the response and routes through
+        ``record_llm`` so cost rolls up the same way as planner
+        spend. ``tier_provider`` defaults to ``anthropic`` because
+        every direct ``messages.create`` against the Anthropic SDK
+        is API-billed (subscription paths go through the Claude
+        Code provider, not the SDK).
+        """
+        usage = UsageSnapshot.from_anthropic(
+            getattr(response, "usage", None)
+        )
+        return await self.record_llm(
+            plan_id=plan_id,
+            step_id=step_id,
+            agent_name=agent_name,
+            model=model,
+            usage=usage,
+            tier=tier,
+            tier_provider=tier_provider,
+        )
+
     async def record_embedding(
         self,
         *,

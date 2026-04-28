@@ -309,7 +309,9 @@ def _make_default_transcriber(api_key: str | None) -> Transcriber:
 
 
 def _make_default_analyzer(
-    client: AsyncAnthropic, model: str,
+    client: AsyncAnthropic,
+    model: str,
+    ledger: Any | None = None,
 ) -> VideoAnalyzer:
     async def _analyze(
         frame_paths: list[Path],
@@ -355,6 +357,19 @@ def _make_default_analyzer(
             system=ANALYSIS_SYSTEM,
             messages=[{"role": "user", "content": content_blocks}],
         )
+        # Cost-tracking — vision calls are expensive (multiple frames
+        # base64'd + a transcript) and previously bypassed the ledger
+        # entirely. Best-effort: never let a ledger failure break
+        # the actual analysis.
+        if ledger is not None:
+            try:
+                await ledger.record_anthropic_response(
+                    model=model,
+                    response=resp,
+                    agent_name="analyze_video",
+                )
+            except Exception:  # noqa: BLE001
+                pass
         text = ""
         for block in resp.content or []:
             if getattr(block, "type", None) == "text":
@@ -375,11 +390,13 @@ def make_analyze_video_url_tool(
     audio_extractor: AudioExtractor | None = None,
     transcriber: Transcriber | None = None,
     analyzer: VideoAnalyzer | None = None,
+    ledger: Any | None = None,
 ) -> Tool:
     """Factory. ``anthropic_client`` is used for the multimodal
     analysis call. The OpenAI key is for Whisper transcription —
-    omit if you want visuals-only analysis. Tests inject the seam
-    callables to keep the run offline."""
+    omit if you want visuals-only analysis. ``ledger`` records cost
+    of the Anthropic vision call so it shows up in the dashboard
+    rollup. Tests inject the seam callables to keep the run offline."""
 
     download = downloader or _default_download
     probe_duration = duration_prober or _default_probe_duration
@@ -388,7 +405,7 @@ def make_analyze_video_url_tool(
     api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
     transcribe = transcriber or _make_default_transcriber(api_key)
     analyze = analyzer or _make_default_analyzer(
-        anthropic_client, analysis_model,
+        anthropic_client, analysis_model, ledger=ledger,
     )
 
     async def _handler(args: dict, ctx: ToolContext) -> ToolOutcome:
@@ -584,6 +601,7 @@ def make_analyze_video_file_tool(
     audio_extractor: AudioExtractor | None = None,
     transcriber: Transcriber | None = None,
     analyzer: VideoAnalyzer | None = None,
+    ledger: Any | None = None,
 ) -> Tool:
     """Sibling of ``make_analyze_video_url_tool`` that runs the same
     frame + audio + Claude pipeline against an UPLOADED video file
@@ -600,7 +618,7 @@ def make_analyze_video_file_tool(
     api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
     transcribe = transcriber or _make_default_transcriber(api_key)
     analyze = analyzer or _make_default_analyzer(
-        anthropic_client, analysis_model,
+        anthropic_client, analysis_model, ledger=ledger,
     )
 
     async def _handler(args: dict, ctx: ToolContext) -> ToolOutcome:

@@ -863,6 +863,7 @@ async def lifespan(app: FastAPI):
                     anthropic_client=client,
                     openai_api_key=settings.openai_api_key,
                     vault=brain,
+                    ledger=ledger,
                 )
             )
         log.info(
@@ -1242,6 +1243,7 @@ async def lifespan(app: FastAPI):
             make_analyze_video_url_tool(
                 anthropic_client=client,
                 openai_api_key=settings.openai_api_key,
+                ledger=ledger,
             )
         )
         log.info(
@@ -1615,6 +1617,7 @@ async def lifespan(app: FastAPI):
         vault=Vault(settings.brain_vault_path),
         repo_root=Path(__file__).resolve().parents[2],
         anthropic_client=client,
+        ledger=ledger,
     )
     app.state.self_capabilities_refresher = self_caps_refresher
     if settings.self_capabilities_auto_refresh:
@@ -1684,6 +1687,7 @@ async def lifespan(app: FastAPI):
                 anthropic_client=client,
                 attachment_store=chat_attachments,
                 openai_api_key=settings.openai_api_key,
+                ledger=ledger,
             )
         )
         log.info(
