@@ -383,9 +383,26 @@ def _build_prompt(
         "Write a markdown note (no surrounding code fences). Keep it "
         "under ~700 words. Use these section headings:\n"
         "  ## What I can do today\n"
-        "  ## What's new since the last summary\n"
-        "  ## What's OFF by default\n"
+        "  ## What's shipped recently\n"
+        "  ## What's wired but OFF by default\n"
         "  ## How I should think about using these\n\n"
+        "Critical framing rules:\n"
+        "- For \"What's shipped recently\": summarize EVERYTHING in "
+        "the recent commit log below, regardless of when the previous "
+        "self-summary was written. The previous-commit hash is only "
+        "metadata for the file; it must NOT constrain what counts as "
+        "\"recent.\" If the commit log shows vector brain, alerts, "
+        "ingestion, workflows, etc., describe them — even if a "
+        "previous summary already covered them.\n"
+        "- For \"What's wired but OFF by default\": list features "
+        "that are fully built and live in the running code but "
+        "require an explicit operator opt-in (a setting flag, an "
+        "approval, or a one-time index build). Distinguish these "
+        "clearly from \"not built\" — everything in the current "
+        "code is built and live; the only question is whether it's "
+        "auto-active or operator-pulled. Never say a feature is "
+        "\"staged\" or \"not live\" if the commit is in the recent "
+        "log — it IS live, just possibly off-by-default.\n\n"
         "Style: plain English from your POV (\"I can…\"). No file "
         "paths, no commit hashes, no jargon. Talk features. Do NOT "
         "include a top-level # heading — the file already has "
@@ -393,9 +410,16 @@ def _build_prompt(
     )
     parts.append(f"\nCURRENT COMMIT: {head or 'unknown'}")
     if previous:
-        parts.append(f"PREVIOUS SUMMARIZED COMMIT: {previous}")
+        parts.append(
+            f"PREVIOUS SUMMARIZED COMMIT (file metadata only — does "
+            f"NOT bound what counts as \"recent\" below): {previous}"
+        )
     if commit_log:
-        parts.append("\nRECENT COMMITS (newest first):")
+        parts.append(
+            "\nRECENT COMMITS (newest first — summarize ALL of these "
+            "under \"What's shipped recently,\" not just commits past "
+            "the previous summary):"
+        )
         for ln in commit_log:
             parts.append(f"  {ln}")
     if tool_inventory:
